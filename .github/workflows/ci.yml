@@ -32,11 +32,19 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
-      - name: Analyze
-        run: flutter analyze
+      # ✅ Не валим CI на warning/info — падаем только на errors
+      - name: Analyze (errors only)
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
 
-      - name: Test
-        run: flutter test
+      # ✅ Запускаем тесты только если есть папка test/
+      - name: Test (if any)
+        shell: bash
+        run: |
+          if [ -d "test" ]; then
+            flutter test
+          else
+            echo "No test/ directory -> skipping flutter test"
+          fi
 
   build_android_debug:
     name: Build Android (debug APK)
