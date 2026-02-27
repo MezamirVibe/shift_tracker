@@ -13,14 +13,16 @@ class RolesEditorPage extends StatefulWidget {
 class _RolesEditorPageState extends State<RolesEditorPage> {
   UserRole _selected = UserRole.manager;
 
-  void _snack(String t) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+  void _snack(String t) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
 
   @override
   Widget build(BuildContext context) {
     final auth = AuthService.instance;
 
     // нельзя редактировать superAdmin
-    final editableRoles = UserRole.values.where((r) => r != UserRole.superAdmin).toList();
+    final editableRoles =
+        UserRole.values.where((r) => r != UserRole.superAdmin).toList();
 
     if (!editableRoles.contains(_selected)) {
       _selected = editableRoles.first;
@@ -40,7 +42,8 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Выбери роль', style: Theme.of(context).textTheme.titleMedium),
+                Text('Выбери роль',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<UserRole>(
                   initialValue: _selected,
@@ -49,7 +52,8 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
                     border: OutlineInputBorder(),
                   ),
                   items: editableRoles.map((r) {
-                    return DropdownMenuItem(value: r, child: Text(roleLabel(r)));
+                    return DropdownMenuItem(
+                        value: r, child: Text(roleLabel(r)));
                   }).toList(),
                   onChanged: (v) {
                     if (v == null) return;
@@ -80,7 +84,8 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
                     next.remove(p);
                   }
 
-                  final ok = await auth.setRolePolicy(role: _selected, permissions: next);
+                  final ok = await auth.setRolePolicy(
+                      role: _selected, permissions: next);
                   if (!mounted) return;
                   if (!ok) {
                     _snack('Не удалось сохранить');

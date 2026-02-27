@@ -37,7 +37,8 @@ class AppRouter {
           return loc == splash ? null : splash;
         }
 
-        final isAuthRoute = loc == splash || loc.startsWith(login) || loc.startsWith(bootstrap);
+        final isAuthRoute =
+            loc == splash || loc.startsWith(login) || loc.startsWith(bootstrap);
 
         if (!auth.hasUsers) {
           return loc == bootstrap ? null : bootstrap;
@@ -65,10 +66,9 @@ class AppRouter {
       routes: [
         GoRoute(path: splash, builder: (_, __) => const SplashPage()),
         GoRoute(path: login, builder: (_, __) => const LoginPage()),
-        GoRoute(path: bootstrap, builder: (_, __) => const BootstrapAdminPage()),
-
+        GoRoute(
+            path: bootstrap, builder: (_, __) => const BootstrapAdminPage()),
         GoRoute(path: admin, builder: (_, __) => const AdminPage()),
-
         GoRoute(
           path: calendar,
           builder: (_, __) => const cal.CalendarPage(),

@@ -64,7 +64,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     });
   }
 
-  void _snack(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  void _snack(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   void _resetBindingsForRole(UserRole r) {
     // обнуляем "не свои" поля
@@ -96,25 +97,36 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
-  String _bindingSummaryForUser(AuthService auth, String? depId, String? groupId, String? empId, UserRole role) {
+  String _bindingSummaryForUser(AuthService auth, String? depId,
+      String? groupId, String? empId, UserRole role) {
     if (role == UserRole.superAdmin) return 'Привязка не требуется';
 
     switch (role) {
       case UserRole.manager:
-        final d = _departments.where((x) => x.id == depId).cast<DepartmentModel?>().firstOrNull;
+        final d = _departments
+            .where((x) => x.id == depId)
+            .cast<DepartmentModel?>()
+            .firstOrNull;
         return 'Подразделение: ${d?.name ?? '—'}';
       case UserRole.master:
-        final g = _groups.where((x) => x.id == groupId).cast<GroupModel?>().firstOrNull;
+        final g = _groups
+            .where((x) => x.id == groupId)
+            .cast<GroupModel?>()
+            .firstOrNull;
         return 'Группа: ${g?.name ?? '—'}';
       case UserRole.worker:
-        final e = _employees.where((x) => x.id == empId).cast<EmployeeModel?>().firstOrNull;
+        final e = _employees
+            .where((x) => x.id == empId)
+            .cast<EmployeeModel?>()
+            .firstOrNull;
         return 'Сотрудник: ${e?.fullName ?? '—'}';
       case UserRole.superAdmin:
         return 'Привязка не требуется';
     }
   }
 
-  bool _isBindingValidForRole(UserRole r, {String? depId, String? groupId, String? empId}) {
+  bool _isBindingValidForRole(UserRole r,
+      {String? depId, String? groupId, String? empId}) {
     switch (r) {
       case UserRole.manager:
         return depId != null;
@@ -141,7 +153,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       return;
     }
 
-    if (!_isBindingValidForRole(_role, depId: _departmentId, groupId: _groupId, empId: _employeeId)) {
+    if (!_isBindingValidForRole(_role,
+        depId: _departmentId, groupId: _groupId, empId: _employeeId)) {
       _snack(AuthService.instance.requiredBindingHint(_role));
       return;
     }
@@ -175,8 +188,12 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
         title: const Text('Удалить пользователя?'),
         content: Text('Удалить "$login"?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Удалить')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Удалить')),
         ],
       ),
     );
@@ -196,7 +213,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
   Future<void> _editUserDialog(String userId) async {
     final auth = AuthService.instance;
-    final u = auth.users.where((x) => x.id == userId).cast<dynamic>().firstOrNull;
+    final u =
+        auth.users.where((x) => x.id == userId).cast<dynamic>().firstOrNull;
     if (u == null) return;
 
     UserRole role = (u.role as UserRole);
@@ -230,10 +248,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           if (role == UserRole.manager) {
             return DropdownButtonFormField<String?>(
               initialValue: depId,
-              decoration: const InputDecoration(labelText: 'Подразделение', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: 'Подразделение', border: OutlineInputBorder()),
               items: [
-                const DropdownMenuItem<String?>(value: null, child: Text('— выбери подразделение —')),
-                ..._departments.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+                const DropdownMenuItem<String?>(
+                    value: null, child: Text('— выбери подразделение —')),
+                ..._departments.map((d) => DropdownMenuItem<String?>(
+                    value: d.id, child: Text(d.name))),
               ],
               onChanged: (v) => depId = v,
             );
@@ -249,8 +270,10 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                     border: OutlineInputBorder(),
                   ),
                   items: [
-                    const DropdownMenuItem<String?>(value: null, child: Text('— выбери подразделение —')),
-                    ..._departments.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+                    const DropdownMenuItem<String?>(
+                        value: null, child: Text('— выбери подразделение —')),
+                    ..._departments.map((d) => DropdownMenuItem<String?>(
+                        value: d.id, child: Text(d.name))),
                   ],
                   onChanged: (v) {
                     depId = v;
@@ -261,10 +284,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
                   initialValue: groupId,
-                  decoration: const InputDecoration(labelText: 'Группа', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Группа', border: OutlineInputBorder()),
                   items: [
-                    const DropdownMenuItem<String?>(value: null, child: Text('— выбери группу —')),
-                    ...groupsForDep.map((g) => DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
+                    const DropdownMenuItem<String?>(
+                        value: null, child: Text('— выбери группу —')),
+                    ...groupsForDep.map((g) => DropdownMenuItem<String?>(
+                        value: g.id, child: Text(g.name))),
                   ],
                   onChanged: (v) => groupId = v,
                 ),
@@ -275,10 +301,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           if (role == UserRole.worker) {
             return DropdownButtonFormField<String?>(
               initialValue: empId,
-              decoration: const InputDecoration(labelText: 'Сотрудник', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: 'Сотрудник', border: OutlineInputBorder()),
               items: [
-                const DropdownMenuItem<String?>(value: null, child: Text('— выбери сотрудника —')),
-                ..._employees.map((e) => DropdownMenuItem<String?>(value: e.id, child: Text(e.fullName))),
+                const DropdownMenuItem<String?>(
+                    value: null, child: Text('— выбери сотрудника —')),
+                ..._employees.map((e) => DropdownMenuItem<String?>(
+                    value: e.id, child: Text(e.fullName))),
               ],
               onChanged: (v) => empId = v,
             );
@@ -297,9 +326,11 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 children: [
                   DropdownButtonFormField<UserRole>(
                     initialValue: role,
-                    decoration: const InputDecoration(labelText: 'Роль', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                        labelText: 'Роль', border: OutlineInputBorder()),
                     items: UserRole.values
-                        .map((r) => DropdownMenuItem<UserRole>(value: r, child: Text(roleLabel(r))))
+                        .map((r) => DropdownMenuItem<UserRole>(
+                            value: r, child: Text(roleLabel(r))))
                         .toList(),
                     onChanged: (v) {
                       if (v == null) return;
@@ -340,10 +371,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Отмена')),
               FilledButton(
                 onPressed: () {
-                  if (!_isBindingValidForRole(role, depId: depId, groupId: groupId, empId: empId)) {
+                  if (!_isBindingValidForRole(role,
+                      depId: depId, groupId: groupId, empId: empId)) {
                     _snack(AuthService.instance.requiredBindingHint(role));
                     return;
                   }
@@ -388,10 +422,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     if (_role == UserRole.manager) {
       return DropdownButtonFormField<String?>(
         initialValue: _departmentId,
-        decoration: const InputDecoration(labelText: 'Подразделение', border: OutlineInputBorder()),
+        decoration: const InputDecoration(
+            labelText: 'Подразделение', border: OutlineInputBorder()),
         items: [
-          const DropdownMenuItem<String?>(value: null, child: Text('— выбери подразделение —')),
-          ..._departments.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+          const DropdownMenuItem<String?>(
+              value: null, child: Text('— выбери подразделение —')),
+          ..._departments.map((d) =>
+              DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
         ],
         onChanged: (v) => setState(() => _departmentId = v),
       );
@@ -408,8 +445,10 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               border: OutlineInputBorder(),
             ),
             items: [
-              const DropdownMenuItem<String?>(value: null, child: Text('— выбери подразделение —')),
-              ..._departments.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+              const DropdownMenuItem<String?>(
+                  value: null, child: Text('— выбери подразделение —')),
+              ..._departments.map((d) =>
+                  DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
             ],
             onChanged: (v) => setState(() {
               _departmentId = v;
@@ -419,12 +458,17 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           const SizedBox(height: 12),
           DropdownButtonFormField<String?>(
             initialValue: _groupId,
-            decoration: const InputDecoration(labelText: 'Группа', border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+                labelText: 'Группа', border: OutlineInputBorder()),
             items: [
-              const DropdownMenuItem<String?>(value: null, child: Text('— выбери группу —')),
-              ...groups.map((g) => DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
+              const DropdownMenuItem<String?>(
+                  value: null, child: Text('— выбери группу —')),
+              ...groups.map((g) =>
+                  DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
             ],
-            onChanged: (_departmentId == null) ? null : (v) => setState(() => _groupId = v),
+            onChanged: (_departmentId == null)
+                ? null
+                : (v) => setState(() => _groupId = v),
           ),
         ],
       );
@@ -433,10 +477,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     if (_role == UserRole.worker) {
       return DropdownButtonFormField<String?>(
         initialValue: _employeeId,
-        decoration: const InputDecoration(labelText: 'Сотрудник', border: OutlineInputBorder()),
+        decoration: const InputDecoration(
+            labelText: 'Сотрудник', border: OutlineInputBorder()),
         items: [
-          const DropdownMenuItem<String?>(value: null, child: Text('— выбери сотрудника —')),
-          ..._employees.map((e) => DropdownMenuItem<String?>(value: e.id, child: Text(e.fullName))),
+          const DropdownMenuItem<String?>(
+              value: null, child: Text('— выбери сотрудника —')),
+          ..._employees.map((e) =>
+              DropdownMenuItem<String?>(value: e.id, child: Text(e.fullName))),
         ],
         onChanged: (v) => setState(() => _employeeId = v),
       );
@@ -459,23 +506,30 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Создать пользователя', style: Theme.of(context).textTheme.titleMedium),
+                Text('Создать пользователя',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _login,
-                  decoration: const InputDecoration(labelText: 'Логин', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Логин', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _pass,
                   obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Пароль', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                      labelText: 'Пароль', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<UserRole>(
                   initialValue: _role,
-                  decoration: const InputDecoration(labelText: 'Роль', border: OutlineInputBorder()),
-                  items: UserRole.values.map((r) => DropdownMenuItem(value: r, child: Text(roleLabel(r)))).toList(),
+                  decoration: const InputDecoration(
+                      labelText: 'Роль', border: OutlineInputBorder()),
+                  items: UserRole.values
+                      .map((r) =>
+                          DropdownMenuItem(value: r, child: Text(roleLabel(r))))
+                      .toList(),
                   onChanged: (v) {
                     if (v == null) return;
                     setState(() => _role = v);
@@ -487,7 +541,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    FilledButton(onPressed: _create, child: const Text('Создать')),
+                    FilledButton(
+                        onPressed: _create, child: const Text('Создать')),
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: _loadLists,
@@ -506,7 +561,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
         ...users.map((u) {
           final isMe = auth.currentUser?.id == u.id;
 
-          final binding = _bindingSummaryForUser(auth, u.departmentId, u.groupId, u.employeeId, u.role);
+          final binding = _bindingSummaryForUser(
+              auth, u.departmentId, u.groupId, u.employeeId, u.role);
 
           return Card(
             child: ListTile(
@@ -523,7 +579,9 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                   IconButton(
                     tooltip: 'Удалить',
                     icon: const Icon(Icons.delete_outline),
-                    onPressed: (u.role == UserRole.superAdmin || isMe) ? null : () => _deleteUser(u.id, u.login),
+                    onPressed: (u.role == UserRole.superAdmin || isMe)
+                        ? null
+                        : () => _deleteUser(u.id, u.login),
                   ),
                 ],
               ),

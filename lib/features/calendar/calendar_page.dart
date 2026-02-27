@@ -150,7 +150,10 @@ class _CalendarPageState extends State<CalendarPage> {
         _selectedDepartmentId = u.departmentId;
         // группа может быть выбрана внутри отдела
         if (_selectedGroupId != null) {
-          final g = _groups.where((x) => x.id == _selectedGroupId).cast<GroupModel?>().firstOrNull;
+          final g = _groups
+              .where((x) => x.id == _selectedGroupId)
+              .cast<GroupModel?>()
+              .firstOrNull;
           if (g == null || g.departmentId != _selectedDepartmentId) {
             _selectedGroupId = null;
           }
@@ -159,7 +162,10 @@ class _CalendarPageState extends State<CalendarPage> {
 
       if (u.role == UserRole.master) {
         _selectedGroupId = u.groupId;
-        final g = _groups.where((x) => x.id == _selectedGroupId).cast<GroupModel?>().firstOrNull;
+        final g = _groups
+            .where((x) => x.id == _selectedGroupId)
+            .cast<GroupModel?>()
+            .firstOrNull;
         _selectedDepartmentId = g?.departmentId;
       }
 
@@ -170,7 +176,8 @@ class _CalendarPageState extends State<CalendarPage> {
     });
   }
 
-  List<EmployeeModel> _applyFiltersWithinVisible(List<EmployeeModel> visibleEmployees) {
+  List<EmployeeModel> _applyFiltersWithinVisible(
+      List<EmployeeModel> visibleEmployees) {
     Iterable<EmployeeModel> out = visibleEmployees;
 
     final depId = _selectedDepartmentId;
@@ -238,7 +245,8 @@ class _CalendarPageState extends State<CalendarPage> {
       final iso = _isoDate(d);
 
       final plannedEmployees = employeesForCalc.where((e) {
-        return isWorkDay(day: d, type: e.scheduleType, startDate: e.scheduleStartDate);
+        return isWorkDay(
+            day: d, type: e.scheduleType, startDate: e.scheduleStartDate);
       }).toList();
 
       final plannedIds = plannedEmployees.map((e) => e.id).toSet();
@@ -304,10 +312,15 @@ class _CalendarPageState extends State<CalendarPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Выйти из аккаунта?'),
-        content: const Text('Ты выйдешь из приложения и попадёшь на экран входа.'),
+        content:
+            const Text('Ты выйдешь из приложения и попадёшь на экран входа.'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Выйти')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Выйти')),
         ],
       ),
     );
@@ -349,10 +362,13 @@ class _CalendarPageState extends State<CalendarPage> {
           width: 320,
           child: DropdownButtonFormField<String?>(
             initialValue: _selectedDepartmentId,
-            decoration: const InputDecoration(labelText: 'Подразделение', border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+                labelText: 'Подразделение', border: OutlineInputBorder()),
             items: [
-              const DropdownMenuItem<String?>(value: null, child: Text('Все подразделения')),
-              ..._departments.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+              const DropdownMenuItem<String?>(
+                  value: null, child: Text('Все подразделения')),
+              ..._departments.map((d) =>
+                  DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
             ],
             onChanged: depLocked
                 ? null
@@ -369,10 +385,13 @@ class _CalendarPageState extends State<CalendarPage> {
           width: 320,
           child: DropdownButtonFormField<String?>(
             initialValue: _selectedGroupId,
-            decoration: const InputDecoration(labelText: 'Группа', border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+                labelText: 'Группа', border: OutlineInputBorder()),
             items: [
-              const DropdownMenuItem<String?>(value: null, child: Text('Все группы')),
-              ...groups.map((g) => DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
+              const DropdownMenuItem<String?>(
+                  value: null, child: Text('Все группы')),
+              ...groups.map((g) =>
+                  DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
             ],
             onChanged: grpLocked
                 ? null
@@ -397,7 +416,8 @@ class _CalendarPageState extends State<CalendarPage> {
     );
 
     if (!isPhone) {
-      return Card(child: Padding(padding: const EdgeInsets.all(12), child: content));
+      return Card(
+          child: Padding(padding: const EdgeInsets.all(12), child: content));
     }
 
     return Card(
@@ -415,7 +435,9 @@ class _CalendarPageState extends State<CalendarPage> {
     return Row(
       children: names
           .map((n) => Expanded(
-                child: Center(child: Text(n, style: Theme.of(context).textTheme.labelMedium)),
+                child: Center(
+                    child: Text(n,
+                        style: Theme.of(context).textTheme.labelMedium)),
               ))
           .toList(),
     );
@@ -437,15 +459,23 @@ class _CalendarPageState extends State<CalendarPage> {
       title: _titleForMonth(_month),
       selectedIndex: 0,
       items: [
-        NavItem(label: 'Календарь', icon: Icons.calendar_month, onTap: () => context.go('/')),
-        NavItem(label: 'Сотрудники', icon: Icons.people, onTap: () => context.go('/employees')),
+        NavItem(
+            label: 'Календарь',
+            icon: Icons.calendar_month,
+            onTap: () => context.go('/')),
+        NavItem(
+            label: 'Сотрудники',
+            icon: Icons.people,
+            onTap: () => context.go('/employees')),
         NavItem(label: 'Ещё', icon: Icons.more_horiz, onTap: () {}),
       ],
       actions: [
         if (user != null)
           Padding(
             padding: const EdgeInsets.only(right: 6),
-            child: Center(child: Text(user.login, style: Theme.of(context).textTheme.labelMedium)),
+            child: Center(
+                child: Text(user.login,
+                    style: Theme.of(context).textTheme.labelMedium)),
           ),
         if (canAdmin)
           IconButton(
@@ -459,14 +489,18 @@ class _CalendarPageState extends State<CalendarPage> {
           tooltip: 'Предыдущий месяц',
           icon: const Icon(Icons.chevron_left),
           onPressed: () {
-            _pageController.previousPage(duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+            _pageController.previousPage(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut);
           },
         ),
         IconButton(
           tooltip: 'Следующий месяц',
           icon: const Icon(Icons.chevron_right),
           onPressed: () {
-            _pageController.nextPage(duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+            _pageController.nextPage(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut);
           },
         ),
 
@@ -505,14 +539,17 @@ class _CalendarPageState extends State<CalendarPage> {
                             const cross = 7;
                             const spacing = 6.0;
 
-                            final cellW = (c.maxWidth - (cross - 1) * spacing) / cross;
-                            final cellH = (c.maxHeight - (rows - 1) * spacing) / rows;
+                            final cellW =
+                                (c.maxWidth - (cross - 1) * spacing) / cross;
+                            final cellH =
+                                (c.maxHeight - (rows - 1) * spacing) / rows;
                             final aspect = cellW / math.max(1.0, cellH);
 
                             return GridView.builder(
                               physics: const NeverScrollableScrollPhysics(),
                               padding: EdgeInsets.zero,
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: cross,
                                 crossAxisSpacing: spacing,
                                 mainAxisSpacing: spacing,
@@ -583,11 +620,14 @@ class _DayCell extends StatelessWidget {
     final isToday = dateOnly(day) == dateOnly(DateTime.now());
     final hasFacts = summary.factsTotal > 0;
 
-    final borderColor = isToday ? Theme.of(context).colorScheme.primary : Colors.white24;
+    final borderColor =
+        isToday ? Theme.of(context).colorScheme.primary : Colors.white24;
 
     // На телефоне показываем меньше строк, чтобы точно не было overflow
     final padding = compact ? 6.0 : 10.0;
-    final titleStyle = compact ? Theme.of(context).textTheme.labelLarge : Theme.of(context).textTheme.titleMedium;
+    final titleStyle = compact
+        ? Theme.of(context).textTheme.labelLarge
+        : Theme.of(context).textTheme.titleMedium;
     final small = Theme.of(context).textTheme.labelSmall;
 
     return InkWell(
@@ -615,7 +655,8 @@ class _DayCell extends StatelessWidget {
             const Spacer(),
 
             // Низ: план/факт (в компактном режиме — максимум 2 строки)
-            Text('План: ${summary.planned}', style: small, maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text('План: ${summary.planned}',
+                style: small, maxLines: 1, overflow: TextOverflow.ellipsis),
             if (hasFacts)
               Text(
                 compact

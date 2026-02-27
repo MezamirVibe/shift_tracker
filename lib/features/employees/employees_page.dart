@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/extensions/iterable_x.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
-
+import 'schedule_utils.dart';
 
 class EmployeesPage extends StatefulWidget {
   const EmployeesPage({super.key});
@@ -22,17 +23,20 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   bool _loading = true;
 
-  List<EmployeeModel> _employeesAll = [];
-  List<EmployeeModel> _employeesVisible = [];
+  List<EmployeeModel> _employeesAll = <EmployeeModel>[];
+  List<EmployeeModel> _employeesVisible = <EmployeeModel>[];
 
-  List<DepartmentModel> _departments = [];
-  List<GroupModel> _groups = [];
+  List<dynamic> _departments = <dynamic>[];
+  List<dynamic> _groups = <dynamic>[];
 
-  String? _selectedDepartmentId; // null = все доступные (но может быть зажато ролью)
+  String?
+      _selectedDepartmentId; // null = все доступные (но может быть зажато ролью)
   String? _selectedGroupId; // null = все доступные (но может быть зажато ролью)
 
-  bool get _canViewEmployees => AuthService.instance.hasPerm(AppPermission.viewEmployees);
-  bool get _canEditEmployees => AuthService.instance.hasPerm(AppPermission.editEmployees);
+  bool get _canViewEmployees =>
+      AuthService.instance.hasPerm(AppPermission.viewEmployees);
+  bool get _canEditEmployees =>
+      AuthService.instance.hasPerm(AppPermission.editEmployees);
 
   @override
   void initState() {
@@ -50,7 +54,6 @@ class _EmployeesPageState extends State<EmployeesPage> {
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
 
-    // ✅ главное: видимость по роли/привязке
     final visible = AuthService.instance.filterEmployeesByScope(employees);
 
     if (!mounted) return;
@@ -69,23 +72,20 @@ class _EmployeesPageState extends State<EmployeesPage> {
   void _applyRoleLockToFilters() {
     final u = AuthService.instance.currentUser;
     if (u == null) return;
-
     if (u.role == UserRole.superAdmin) return;
 
     setState(() {
       if (u.role == UserRole.manager) {
-        // руководитель: отдел фиксируем
         _selectedDepartmentId = u.departmentId;
         _selectedGroupId = null;
       } else if (u.role == UserRole.master) {
-        // мастер: группа фиксируется
         _selectedGroupId = u.groupId;
-
-        // для красоты можем поставить отдел группы
-        final g = _groups.where((x) => x.id == _selectedGroupId).cast<GroupModel?>().firstOrNull;
+        final g = _groups
+            .where((x) => x.id == _selectedGroupId)
+            .cast<dynamic?>()
+            .firstOrNull;
         _selectedDepartmentId = g?.departmentId;
       } else if (u.role == UserRole.worker) {
-        // рабочий: фильтры не нужны
         _selectedDepartmentId = null;
         _selectedGroupId = null;
       }
@@ -105,10 +105,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
       }
       return;
     }
-
     if (_selectedGroupId == null) return;
 
-    final g = _groups.where((x) => x.id == _selectedGroupId).cast<GroupModel?>().firstOrNull;
+    final g = _groups
+        .where((x) => x.id == _selectedGroupId)
+        .cast<dynamic?>()
+        .firstOrNull;
     if (g == null || g.departmentId != _selectedDepartmentId) {
       setState(() => _selectedGroupId = null);
     }
@@ -125,7 +127,6 @@ class _EmployeesPageState extends State<EmployeesPage> {
       context: context,
       builder: (context) => const EmployeeEditorDialog(),
     );
-
     if (draft == null) return;
 
     final newEmployee = EmployeeModel(
@@ -144,7 +145,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     await _loadAll();
   }
 
-  Future<void> _applyEmployeeResult(EmployeeModel current, Map<String, dynamic> res) async {
+  Future<void> _applyEmployeeResult(EmployeeModel current, Map res) async {
     if (res['deleted'] == true) {
       setState(() {
         _employeesAll = _employeesAll.where((x) => x.id != current.id).toList();
@@ -162,8 +163,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
       position: (res['position'] as String?) ?? current.position,
       salary: (res['salary'] as int?) ?? current.salary,
       bonus: (res['bonus'] as int?) ?? current.bonus,
-      scheduleType: scheduleTypeRaw != null ? scheduleTypeFromString(scheduleTypeRaw) : null,
-      scheduleStartDate: scheduleStartDateRaw != null ? DateTime.tryParse(scheduleStartDateRaw) : null,
+      scheduleType: scheduleTypeRaw != null
+          ? scheduleTypeFromString(scheduleTypeRaw)
+          : null,
+      scheduleStartDate: scheduleStartDateRaw != null
+          ? DateTime.tryParse(scheduleStartDateRaw)
+          : null,
       shiftHours: (res['shiftHours'] as int?) ?? current.shiftHours,
       breakHours: (res['breakHours'] as int?) ?? current.breakHours,
       departmentId: (res['departmentId'] as String?) ?? current.departmentId,
@@ -173,7 +178,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
     );
 
     setState(() {
-      _employeesAll = _employeesAll.map((x) => x.id == current.id ? updated : x).toList();
+      _employeesAll =
+          _employeesAll.map((x) => x.id == current.id ? updated : x).toList();
     });
 
     await _saveEmployees();
@@ -182,17 +188,19 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   String _depName(String? depId) {
     if (depId == null || depId.isEmpty) return '—';
-    final d = _departments.where((x) => x.id == depId).cast<DepartmentModel?>().firstOrNull;
-    return d?.name ?? '—';
+    final d =
+        _departments.where((x) => x.id == depId).cast<dynamic?>().firstOrNull;
+    return (d?.name as String?) ?? '—';
   }
 
   String _groupName(String? groupId) {
     if (groupId == null || groupId.isEmpty) return '—';
-    final g = _groups.where((x) => x.id == groupId).cast<GroupModel?>().firstOrNull;
-    return g?.name ?? '—';
+    final g =
+        _groups.where((x) => x.id == groupId).cast<dynamic?>().firstOrNull;
+    return (g?.name as String?) ?? '—';
   }
 
-  List<GroupModel> get _groupsForSelectedDepartment {
+  List<dynamic> get _groupsForSelectedDepartment {
     final depId = _selectedDepartmentId;
     if (depId == null) return const [];
     return _groups.where((g) => g.departmentId == depId).toList();
@@ -226,10 +234,21 @@ class _EmployeesPageState extends State<EmployeesPage> {
               width: 320,
               child: DropdownButtonFormField<String?>(
                 initialValue: _selectedDepartmentId,
-                decoration: const InputDecoration(labelText: 'Подразделение', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Подразделение',
+                  border: OutlineInputBorder(),
+                ),
                 items: [
-                  const DropdownMenuItem<String?>(value: null, child: Text('Все подразделения')),
-                  ..._departments.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+                  const DropdownMenuItem(
+                    value: null,
+                    child: Text('Все подразделения'),
+                  ),
+                  ..._departments.map(
+                    (d) => DropdownMenuItem<String?>(
+                      value: d.id as String?,
+                      child: Text(d.name as String),
+                    ),
+                  ),
                 ],
                 onChanged: _filtersLockedByRole
                     ? null
@@ -243,10 +262,21 @@ class _EmployeesPageState extends State<EmployeesPage> {
               width: 320,
               child: DropdownButtonFormField<String?>(
                 initialValue: _selectedGroupId,
-                decoration: const InputDecoration(labelText: 'Группа', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: 'Группа',
+                  border: OutlineInputBorder(),
+                ),
                 items: [
-                  const DropdownMenuItem<String?>(value: null, child: Text('Все группы')),
-                  ...groups.map((g) => DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
+                  const DropdownMenuItem(
+                    value: null,
+                    child: Text('Все группы'),
+                  ),
+                  ...groups.map(
+                    (g) => DropdownMenuItem<String?>(
+                      value: g.id as String?,
+                      child: Text(g.name as String),
+                    ),
+                  ),
                 ],
                 onChanged: _filtersLockedByRole
                     ? null
@@ -274,32 +304,50 @@ class _EmployeesPageState extends State<EmployeesPage> {
   Widget build(BuildContext context) {
     final canView = _canViewEmployees;
     final canEdit = _canEditEmployees;
-
     final list = _filteredEmployees;
 
     final u = AuthService.instance.currentUser;
-    final noBinding = (u != null && u.role != UserRole.superAdmin && _employeesVisible.isEmpty);
+    final noBinding = (u != null &&
+        u.role != UserRole.superAdmin &&
+        _employeesVisible.isEmpty);
 
     return AdaptiveScaffold(
       title: 'Сотрудники',
       selectedIndex: 1,
       items: [
-        NavItem(label: 'Календарь', icon: Icons.calendar_month, onTap: () => context.go('/')),
-        NavItem(label: 'Сотрудники', icon: Icons.people, onTap: () => context.go('/employees')),
+        NavItem(
+          label: 'Календарь',
+          icon: Icons.calendar_month,
+          onTap: () => context.go('/'),
+        ),
+        NavItem(
+          label: 'Сотрудники',
+          icon: Icons.people,
+          onTap: () => context.go('/employees'),
+        ),
         NavItem(label: 'Ещё', icon: Icons.more_horiz, onTap: () {}),
       ],
-      floatingActionButton: canEdit ? FloatingActionButton(onPressed: _addEmployee, child: const Icon(Icons.add)) : null,
+      floatingActionButton: canEdit
+          ? FloatingActionButton(
+              onPressed: _addEmployee,
+              child: const Icon(Icons.add),
+            )
+          : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: !canView
-            ? Card(
+            ? const Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      const Icon(Icons.lock_outline),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text('Нет доступа: у твоей роли нет права "Просмотр сотрудников".')),
+                      Icon(Icons.lock_outline),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Нет доступа: у твоей роли нет права "Просмотр сотрудников".',
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -309,16 +357,16 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 : Column(
                     children: [
                       if (noBinding)
-                        Card(
+                        const Card(
                           child: Padding(
-                            padding: const EdgeInsets.all(12),
+                            padding: EdgeInsets.all(12),
                             child: Row(
-                              children: const [
+                              children: [
                                 Icon(Icons.warning_amber),
                                 SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
-                                    'Для вашей роли не настроена привязка (сотрудник/группа/подразделение). '
+                                    'Для вашей роли не настроена привязка (сотрудник/группа/подразделение).\n'
                                     'Попросите руководителя настроить доступ в "Админ → Пользователи".',
                                   ),
                                 ),
@@ -340,12 +388,14 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                               : 'Список сотрудников пуст.')
                                           : 'По выбранным фильтрам сотрудников нет.'),
                                   textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.titleMedium,
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
                                 ),
                               )
                             : ListView.separated(
                                 itemCount: list.length,
-                                separatorBuilder: (_, __) => const Divider(height: 1),
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
                                 itemBuilder: (context, index) {
                                   final e = list[index];
                                   final dep = _depName(e.departmentId);
@@ -354,7 +404,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                   return ListTile(
                                     title: Text(e.fullName),
                                     subtitle: Text(
-                                      '${e.position} • $dep • $grp\nоклад ${e.salary} ₽ • премия ${e.bonus} ₽',
+                                      '${e.position} • $dep • $grp\n'
+                                      'оклад ${e.salary} ₽ • премия ${e.bonus} ₽',
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -364,20 +415,29 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                         if (!canEdit)
                                           const Padding(
                                             padding: EdgeInsets.only(right: 8),
-                                            child: Chip(label: Text('Просмотр')),
+                                            child:
+                                                Chip(label: Text('Просмотр')),
                                           ),
                                         const Icon(Icons.chevron_right),
                                       ],
                                     ),
                                     onTap: () async {
                                       if (!canEdit) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Нет прав на редактирование сотрудников')),
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Нет прав на редактирование сотрудников',
+                                            ),
+                                          ),
                                         );
                                         return;
                                       }
-                                      final res = await context.push<Map<String, dynamic>>('/employee/${e.id}');
+
+                                      final res = await context
+                                          .push<Map>('/employee/${e.id}');
                                       if (res == null) return;
+
                                       await _applyEmployeeResult(e, res);
                                     },
                                   );
@@ -389,8 +449,4 @@ class _EmployeesPageState extends State<EmployeesPage> {
       ),
     );
   }
-}
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }

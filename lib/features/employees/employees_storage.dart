@@ -73,7 +73,8 @@ class EmployeeModel {
       position: position ?? this.position,
       salary: salary ?? this.salary,
       bonus: bonus ?? this.bonus,
-      departmentId: clearDepartment ? null : (departmentId ?? this.departmentId),
+      departmentId:
+          clearDepartment ? null : (departmentId ?? this.departmentId),
       groupId: clearGroup ? null : (groupId ?? this.groupId),
       scheduleType: scheduleType ?? this.scheduleType,
       scheduleStartDate: scheduleStartDate ?? this.scheduleStartDate,
@@ -104,7 +105,8 @@ class EmployeeModel {
 
   static EmployeeModel fromJson(Map json) {
     // миграция графика
-    final scheduleType = scheduleTypeFromString(json['scheduleType'] as String?);
+    final scheduleType =
+        scheduleTypeFromString(json['scheduleType'] as String?);
 
     DateTime startDate;
     final startRaw = json['scheduleStartDate'];
@@ -114,8 +116,10 @@ class EmployeeModel {
       startDate = DateTime.now();
     }
 
-    final shiftHours = (json['shiftHours'] is num) ? (json['shiftHours'] as num).toInt() : 12;
-    final breakHours = (json['breakHours'] is num) ? (json['breakHours'] as num).toInt() : 1;
+    final shiftHours =
+        (json['shiftHours'] is num) ? (json['shiftHours'] as num).toInt() : 12;
+    final breakHours =
+        (json['breakHours'] is num) ? (json['breakHours'] as num).toInt() : 1;
 
     // миграция структуры
     final depId = (json['departmentId'] as String?)?.trim();

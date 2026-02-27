@@ -40,14 +40,11 @@ enum AppPermission {
   viewCalendar,
   viewEmployees,
   viewAttendance,
-
   editAttendance, // отмечать факт, закрывать/переоткрывать день
   editEmployees, // редактировать сотрудников/графики
-
   manageUsers, // создавать пользователей, назначать роли
   editRolePolicies, // менять права ролей
-
-  viewMoney, // оклады/премии/финансы (на будущее)
+  viewMoney, // финансы (на будущее)
 }
 
 AppPermission permFromString(String? s) {
@@ -98,9 +95,9 @@ class RolePolicy {
 
   static RolePolicy fromJson(Map<String, dynamic> json) {
     final role = userRoleFromString(json['role'] as String?);
-    final permsRaw = json['permissions'];
-    final perms = <AppPermission>{};
 
+    final perms = <AppPermission>{};
+    final permsRaw = json['permissions'];
     if (permsRaw is List) {
       for (final x in permsRaw) {
         if (x is String) perms.add(permFromString(x));

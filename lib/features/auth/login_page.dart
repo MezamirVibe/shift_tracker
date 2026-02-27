@@ -78,7 +78,8 @@ class _LoginPageState extends State<LoginPage> {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       _error!,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                      style:
+                          TextStyle(color: Theme.of(context).colorScheme.error),
                     ),
                   ),
                 const SizedBox(height: 12),
@@ -87,7 +88,10 @@ class _LoginPageState extends State<LoginPage> {
                   child: FilledButton(
                     onPressed: _busy ? null : _doLogin,
                     child: _busy
-                        ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
                         : const Text('Войти'),
                   ),
                 ),

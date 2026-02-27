@@ -41,7 +41,8 @@ class _BootstrapAdminPageState extends State<BootstrapAdminPage> {
       _error = null;
     });
 
-    final id = await AuthService.instance.createFirstAdmin(login: login, password: p1);
+    final id =
+        await AuthService.instance.createFirstAdmin(login: login, password: p1);
 
     if (!mounted) return;
 
@@ -113,7 +114,8 @@ class _BootstrapAdminPageState extends State<BootstrapAdminPage> {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       _error!,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                      style:
+                          TextStyle(color: Theme.of(context).colorScheme.error),
                     ),
                   ),
                 const SizedBox(height: 12),
@@ -122,7 +124,10 @@ class _BootstrapAdminPageState extends State<BootstrapAdminPage> {
                   child: FilledButton(
                     onPressed: _busy ? null : _create,
                     child: _busy
-                        ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
                         : const Text('Создать и войти'),
                   ),
                 ),

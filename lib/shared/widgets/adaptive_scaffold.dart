@@ -19,7 +19,6 @@ class AdaptiveScaffold extends StatelessWidget {
   final List<Widget> actions;
   final Widget child;
 
-  /// <-- ВОТ ЭТО ДОБАВИЛИ
   final Widget? floatingActionButton;
 
   const AdaptiveScaffold({
@@ -29,7 +28,7 @@ class AdaptiveScaffold extends StatelessWidget {
     required this.items,
     required this.child,
     this.actions = const [],
-    this.floatingActionButton, // <-- и это
+    this.floatingActionButton,
   });
 
   static bool isDesktop(BuildContext context) =>
@@ -46,7 +45,7 @@ class AdaptiveScaffold extends StatelessWidget {
           actions: actions,
         ),
         body: child,
-        floatingActionButton: floatingActionButton, // <-- и это
+        floatingActionButton: floatingActionButton,
         bottomNavigationBar: NavigationBar(
           selectedIndex: selectedIndex,
           onDestinationSelected: (idx) => items[idx].onTap(),
@@ -84,7 +83,7 @@ class AdaptiveScaffold extends StatelessWidget {
                 actions: actions,
               ),
               body: child,
-              floatingActionButton: floatingActionButton, // <-- и это
+              floatingActionButton: floatingActionButton,
             ),
           ),
         ],

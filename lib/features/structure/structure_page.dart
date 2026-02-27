@@ -9,7 +9,8 @@ class StructurePage extends StatefulWidget {
   State<StructurePage> createState() => _StructurePageState();
 }
 
-class _StructurePageState extends State<StructurePage> with SingleTickerProviderStateMixin {
+class _StructurePageState extends State<StructurePage>
+    with SingleTickerProviderStateMixin {
   late final TabController _tabs = TabController(length: 2, vsync: this);
   final _storage = StructureStorage();
 
@@ -41,7 +42,8 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
     });
   }
 
-  void _snack(String t) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+  void _snack(String t) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
 
   Future<String?> _askName({
     required String title,
@@ -59,8 +61,12 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
           onSubmitted: (_) => Navigator.of(context).pop(true),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Сохранить')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Сохранить')),
         ],
       ),
     );
@@ -81,18 +87,22 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
       name: name,
     );
 
-    final next = [..._departments, dep]..sort((a, b) => a.name.compareTo(b.name));
+    final next = [..._departments, dep]
+      ..sort((a, b) => a.name.compareTo(b.name));
     setState(() => _departments = next);
     await _storage.saveDepartments(_departments);
     _snack('Подразделение добавлено');
   }
 
   Future<void> _renameDepartment(DepartmentModel dep) async {
-    final name = await _askName(title: 'Переименовать подразделение', initial: dep.name);
+    final name =
+        await _askName(title: 'Переименовать подразделение', initial: dep.name);
     if (name == null) return;
 
     setState(() {
-      _departments = _departments.map((d) => d.id == dep.id ? d.copyWith(name: name) : d).toList()
+      _departments = _departments
+          .map((d) => d.id == dep.id ? d.copyWith(name: name) : d)
+          .toList()
         ..sort((a, b) => a.name.compareTo(b.name));
     });
     await _storage.saveDepartments(_departments);
@@ -111,9 +121,12 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
               : 'Удалить "${dep.name}"?',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена')),
           FilledButton(
-            onPressed: linkedGroups > 0 ? null : () => Navigator.of(context).pop(true),
+            onPressed:
+                linkedGroups > 0 ? null : () => Navigator.of(context).pop(true),
             child: const Text('Удалить'),
           ),
         ],
@@ -154,7 +167,8 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
                 initialValue: selected.id,
                 decoration: const InputDecoration(labelText: 'Подразделение'),
                 items: _departments
-                    .map((d) => DropdownMenuItem(value: d.id, child: Text(d.name)))
+                    .map((d) =>
+                        DropdownMenuItem(value: d.id, child: Text(d.name)))
                     .toList(),
                 onChanged: (v) {
                   if (v == null) return;
@@ -172,8 +186,12 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Создать')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Создать')),
         ],
       ),
     );
@@ -219,7 +237,8 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
                 initialValue: depId,
                 decoration: const InputDecoration(labelText: 'Подразделение'),
                 items: _departments
-                    .map((d) => DropdownMenuItem(value: d.id, child: Text(d.name)))
+                    .map((d) =>
+                        DropdownMenuItem(value: d.id, child: Text(d.name)))
                     .toList(),
                 onChanged: (v) {
                   if (v == null) return;
@@ -235,8 +254,12 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Сохранить')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Сохранить')),
         ],
       ),
     );
@@ -248,7 +271,8 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
 
     setState(() {
       _groups = _groups
-          .map((x) => x.id == g.id ? x.copyWith(departmentId: depId, name: name) : x)
+          .map((x) =>
+              x.id == g.id ? x.copyWith(departmentId: depId, name: name) : x)
           .toList()
         ..sort((a, b) => a.name.compareTo(b.name));
     });
@@ -264,8 +288,12 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
         title: const Text('Удалить группу?'),
         content: Text('Удалить "${g.name}"?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Удалить')),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Удалить')),
         ],
       ),
     );
@@ -280,7 +308,10 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
   }
 
   String _depName(String depId) {
-    final d = _departments.where((x) => x.id == depId).cast<DepartmentModel?>().firstOrNull;
+    final d = _departments
+        .where((x) => x.id == depId)
+        .cast<DepartmentModel?>()
+        .firstOrNull;
     return d?.name ?? '—';
   }
 
@@ -338,7 +369,10 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
                       ),
                     ),
                     if (_departments.isEmpty)
-                      const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('Пока пусто'))),
+                      const Center(
+                          child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text('Пока пусто'))),
                   ],
                 ),
 
@@ -359,7 +393,8 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
                       (g) => Card(
                         child: ListTile(
                           title: Text(g.name),
-                          subtitle: Text('Подразделение: ${_depName(g.departmentId)}'),
+                          subtitle: Text(
+                              'Подразделение: ${_depName(g.departmentId)}'),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -379,7 +414,10 @@ class _StructurePageState extends State<StructurePage> with SingleTickerProvider
                       ),
                     ),
                     if (_groups.isEmpty)
-                      const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('Пока пусто'))),
+                      const Center(
+                          child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text('Пока пусто'))),
                   ],
                 ),
               ],

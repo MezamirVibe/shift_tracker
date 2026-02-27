@@ -52,7 +52,8 @@ class AttendanceRecord {
 
   Map<String, dynamic> toJson() => {
         'fact': factStatusToString(fact),
-        if (comment != null && comment!.trim().isNotEmpty) 'comment': comment!.trim(),
+        if (comment != null && comment!.trim().isNotEmpty)
+          'comment': comment!.trim(),
         if (workedMinutes != null) 'workedMinutes': workedMinutes,
         'updatedAt': updatedAt ?? DateTime.now().toIso8601String(),
       };
@@ -65,12 +66,14 @@ class AttendanceRecord {
 
     // Старый ключ status
     final oldStatus = json['status'] as String?;
-    final migratedFact = oldStatus != null ? factStatusFromString(oldStatus) : fact;
+    final migratedFact =
+        oldStatus != null ? factStatusFromString(oldStatus) : fact;
 
     // comment / note
     final comment = (json['comment'] as String?) ?? (json['note'] as String?);
 
-    final workedMinutes = (json['workedMinutes'] is int) ? json['workedMinutes'] as int : null;
+    final workedMinutes =
+        (json['workedMinutes'] is int) ? json['workedMinutes'] as int : null;
 
     return AttendanceRecord(
       fact: migratedFact,

@@ -10,7 +10,6 @@ import '../employees/schedule_utils.dart';
 
 class DayPage extends StatefulWidget {
   final String dateIso;
-
   const DayPage({super.key, required this.dateIso});
 
   @override
@@ -27,8 +26,8 @@ class _DayPageState extends State<DayPage> {
   late final DateTime _day;
   late final String _dateIso;
 
-  List<EmployeeModel> _planned = [];
-  Map<String, AttendanceRecord> _recordsById = {};
+  List<EmployeeModel> _planned = <EmployeeModel>[];
+  Map<String, AttendanceRecord> _recordsById = <String, AttendanceRecord>{};
 
   @override
   void initState() {
@@ -38,16 +37,17 @@ class _DayPageState extends State<DayPage> {
     _load();
   }
 
-  bool get _canEditAttendance => AuthService.instance.hasPerm(AppPermission.editAttendance);
+  bool get _canEditAttendance =>
+      AuthService.instance.hasPerm(AppPermission.editAttendance);
 
   Future<void> _load() async {
     final allEmployees = await _employeesStorage.load();
 
-    // ✅ ограничение видимости по роли/привязке
-    final visibleEmployees = AuthService.instance.filterEmployeesByScope(allEmployees);
+    // ✅ scope по роли
+    final visibleEmployees =
+        AuthService.instance.filterEmployeesByScope(allEmployees);
 
     final d = dateOnly(_day);
-
     final planned = visibleEmployees.where((e) {
       return isWorkDay(
         day: d,
@@ -99,7 +99,12 @@ class _DayPageState extends State<DayPage> {
     }
   }
 
-  Future<void> _setFact(EmployeeModel e, FactStatus fact, {String? comment, int? workedMinutes}) async {
+  Future<void> _setFact(
+    EmployeeModel e,
+    FactStatus fact, {
+    String? comment,
+    int? workedMinutes,
+  }) async {
     await _attendanceStorage.setFact(
       dateIso: _dateIso,
       employeeId: e.id,
@@ -113,89 +118,113 @@ class _DayPageState extends State<DayPage> {
 
   Future<void> _edit(EmployeeModel e) async {
     final canEditNow = _canEditAttendance && !_closed;
-
     final current = _recordOf(e);
-    FactStatus fact = current?.fact ?? FactStatus.none;
 
-    final commentController = TextEditingController(text: current?.comment ?? '');
+    FactStatus fact = current?.fact ?? FactStatus.none;
+    final commentController =
+        TextEditingController(text: current?.comment ?? '');
     final workedMinutesController = TextEditingController(
       text: (current?.workedMinutes ?? (e.paidShiftHours * 60)).toString(),
     );
 
     final saved = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(e.fullName),
-        content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<FactStatus>(
-                initialValue: fact,
-                items: const [
-                  DropdownMenuItem(value: FactStatus.none, child: Text('Без факта')),
-                  DropdownMenuItem(value: FactStatus.worked, child: Text('Вышел')),
-                  DropdownMenuItem(value: FactStatus.absent, child: Text('Прогул')),
-                  DropdownMenuItem(value: FactStatus.sick, child: Text('Больничный')),
-                  DropdownMenuItem(value: FactStatus.vacation, child: Text('Отпуск')),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) => AlertDialog(
+            title: Text(e.fullName),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<FactStatus>(
+                    initialValue: fact,
+                    items: const [
+                      DropdownMenuItem(
+                        value: FactStatus.none,
+                        child: Text('Без факта'),
+                      ),
+                      DropdownMenuItem(
+                        value: FactStatus.worked,
+                        child: Text('Вышел'),
+                      ),
+                      DropdownMenuItem(
+                        value: FactStatus.absent,
+                        child: Text('Прогул'),
+                      ),
+                      DropdownMenuItem(
+                        value: FactStatus.sick,
+                        child: Text('Больничный'),
+                      ),
+                      DropdownMenuItem(
+                        value: FactStatus.vacation,
+                        child: Text('Отпуск'),
+                      ),
+                    ],
+                    onChanged: canEditNow
+                        ? (v) {
+                            if (v == null) return;
+                            setLocalState(() => fact = v);
+                          }
+                        : null,
+                    decoration: const InputDecoration(labelText: 'Факт'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: workedMinutesController,
+                    enabled: canEditNow && fact == FactStatus.worked,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Минуты (оплачиваемые)',
+                      helperText: fact == FactStatus.worked
+                          ? 'По умолчанию: ${e.paidShiftHours} ч = ${e.paidShiftHours * 60} мин'
+                          : 'Для этого статуса минуты = 0',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: commentController,
+                    enabled: canEditNow,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Комментарий',
+                      hintText: 'Например: причина, примечание…',
+                    ),
+                  ),
+                  if (!canEditNow) ...[
+                    const SizedBox(height: 12),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Режим просмотра: нет прав или день закрыт.'),
+                    ),
+                  ],
                 ],
-                onChanged: canEditNow
-                    ? (v) {
-                        if (v == null) return;
-                        fact = v;
-                      }
-                    : null,
-                decoration: const InputDecoration(labelText: 'Факт'),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: workedMinutesController,
-                enabled: canEditNow && fact == FactStatus.worked,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Минуты (оплачиваемые)',
-                  helperText: fact == FactStatus.worked
-                      ? 'По умолчанию: ${e.paidShiftHours} ч = ${e.paidShiftHours * 60} мин'
-                      : 'Для этого статуса минуты = 0',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(canEditNow ? 'Отмена' : 'Закрыть'),
+              ),
+              if (canEditNow)
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Сохранить'),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: commentController,
-                enabled: canEditNow,
-                maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Комментарий'),
-              ),
-              if (!canEditNow) ...[
-                const SizedBox(height: 12),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Режим просмотра: нет прав или день закрыт.'),
-                ),
-              ],
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(canEditNow ? 'Отмена' : 'Закрыть'),
-          ),
-          if (canEditNow)
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Сохранить'),
-            ),
-        ],
-      ),
+        );
+      },
     );
 
     if (saved != true) return;
 
     final comment = commentController.text.trim();
     final parsedMinutes = int.tryParse(workedMinutesController.text.trim());
-    final minutesToSave = (fact == FactStatus.worked) ? (parsedMinutes ?? (e.paidShiftHours * 60)) : 0;
+    final minutesToSave = (fact == FactStatus.worked)
+        ? (parsedMinutes ?? (e.paidShiftHours * 60))
+        : 0;
 
     await _setFact(
       e,
@@ -216,8 +245,14 @@ class _DayPageState extends State<DayPage> {
           'После закрытия дня все, кто остался "Без факта", автоматически станут "Прогул".\n\nПродолжить?',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Закрыть день')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Закрыть день'),
+          ),
         ],
       ),
     );
@@ -240,10 +275,17 @@ class _DayPageState extends State<DayPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Переоткрыть день?'),
-        content: const Text('День снова станет доступен для изменений.\n\nПродолжить?'),
+        content: const Text(
+            'День снова станет доступен для изменений.\n\nПродолжить?'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Переоткрыть')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Переоткрыть'),
+          ),
         ],
       ),
     );
@@ -262,24 +304,39 @@ class _DayPageState extends State<DayPage> {
         '${_day.day.toString().padLeft(2, '0')}.${_day.month.toString().padLeft(2, '0')}.${_day.year}';
 
     final plannedCount = _planned.length;
-    final workedCount = _planned.where((e) => _factOf(e) == FactStatus.worked).length;
-    final absentCount = _planned.where((e) => _factOf(e) == FactStatus.absent).length;
+    final workedCount =
+        _planned.where((e) => _factOf(e) == FactStatus.worked).length;
+    final absentCount =
+        _planned.where((e) => _factOf(e) == FactStatus.absent).length;
+    final sickCount =
+        _planned.where((e) => _factOf(e) == FactStatus.sick).length;
+    final vacationCount =
+        _planned.where((e) => _factOf(e) == FactStatus.vacation).length;
 
     final canEditNow = _canEditAttendance && !_closed;
-
-    final u = AuthService.instance.currentUser;
-    final noBinding = (u != null && u.role != UserRole.superAdmin && plannedCount == 0);
 
     return AdaptiveScaffold(
       title: 'День: $title',
       selectedIndex: 0,
       items: [
-        NavItem(label: 'Календарь', icon: Icons.calendar_month, onTap: () => context.go('/')),
-        NavItem(label: 'Сотрудники', icon: Icons.people, onTap: () => context.go('/employees')),
+        NavItem(
+          label: 'Календарь',
+          icon: Icons.calendar_month,
+          onTap: () => context.go('/'),
+        ),
+        NavItem(
+          label: 'Сотрудники',
+          icon: Icons.people,
+          onTap: () => context.go('/employees'),
+        ),
         NavItem(label: 'Ещё', icon: Icons.more_horiz, onTap: () {}),
       ],
       actions: [
-        IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _load),
+        IconButton(
+          tooltip: 'Обновить',
+          icon: const Icon(Icons.refresh),
+          onPressed: _load,
+        ),
         if (!_loading && !_closed)
           FilledButton.icon(
             onPressed: (canEditNow && _planned.isNotEmpty) ? _closeDay : null,
@@ -287,7 +344,10 @@ class _DayPageState extends State<DayPage> {
             label: const Text('Закрыть день'),
           ),
         if (!_loading && _closed) ...[
-          const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Chip(label: Text('День закрыт'))),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Chip(label: Text('День закрыт')),
+          ),
           OutlinedButton.icon(
             onPressed: _canEditAttendance ? _reopenDay : null,
             icon: const Icon(Icons.lock_open),
@@ -302,18 +362,34 @@ class _DayPageState extends State<DayPage> {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (noBinding)
-                    Card(
+                  if (!_canEditAttendance)
+                    const Card(
                       child: Padding(
-                        padding: const EdgeInsets.all(12),
+                        padding: EdgeInsets.all(12),
                         child: Row(
-                          children: const [
-                            Icon(Icons.warning_amber),
+                          children: [
+                            Icon(Icons.visibility_outlined),
                             SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'У вашей роли не настроена привязка (сотрудник/группа/подразделение). '
-                                'Попросите руководителя настроить доступ в "Админ → Пользователи".',
+                                'Режим просмотра: у твоей роли нет права "Редактирование факта".',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (_closed)
+                    const Card(
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            Icon(Icons.lock),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'День закрыт.\nИзменение факта отключено.',
                               ),
                             ),
                           ],
@@ -330,6 +406,8 @@ class _DayPageState extends State<DayPage> {
                           Text('По плану: $plannedCount'),
                           Text('Вышли: $workedCount'),
                           Text('Прогул: $absentCount'),
+                          Text('Бол.: $sickCount'),
+                          Text('Отп.: $vacationCount'),
                         ],
                       ),
                     ),
@@ -337,24 +415,84 @@ class _DayPageState extends State<DayPage> {
                   const SizedBox(height: 12),
                   Expanded(
                     child: _planned.isEmpty
-                        ? const Center(child: Text('Нет сотрудников по плану (или нет доступа).'))
+                        ? const Center(
+                            child: Text(
+                                'Никто не запланирован в смену по графику.'),
+                          )
                         : ListView.separated(
                             itemCount: _planned.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
                             itemBuilder: (context, index) {
                               final e = _planned[index];
                               final fact = _factOf(e);
+
                               final minutes = _minutesFor(e, fact);
-                              final hours = (minutes / 60).toStringAsFixed(minutes % 60 == 0 ? 0 : 1);
+                              final hours = (minutes / 60)
+                                  .toStringAsFixed(minutes % 60 == 0 ? 0 : 1);
+
+                              final rec = _recordOf(e);
+                              final comment = rec?.comment?.trim();
+                              final hasComment =
+                                  comment != null && comment.isNotEmpty;
 
                               return ListTile(
                                 title: Text(e.fullName),
-                                subtitle: Text('${e.position} • ${_factLabel(fact)}'),
+                                subtitle: Text(
+                                  '${e.position} • ${_factLabel(fact)}${hasComment ? ' • $comment' : ''}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text('$hours ч'),
                                     const SizedBox(width: 12),
+                                    SegmentedButton<FactStatus>(
+                                      segments: const [
+                                        ButtonSegment(
+                                          value: FactStatus.worked,
+                                          label: Text('Вышел'),
+                                          icon: Icon(Icons.check),
+                                        ),
+                                        ButtonSegment(
+                                          value: FactStatus.absent,
+                                          label: Text('Прогул'),
+                                          icon: Icon(Icons.close),
+                                        ),
+                                      ],
+                                      selected: {
+                                        if (fact == FactStatus.worked)
+                                          FactStatus.worked,
+                                        if (fact == FactStatus.absent)
+                                          FactStatus.absent,
+                                      },
+                                      emptySelectionAllowed: true,
+                                      onSelectionChanged: canEditNow
+                                          ? (set) async {
+                                              if (set.isEmpty) {
+                                                await _setFact(
+                                                  e,
+                                                  FactStatus.none,
+                                                  workedMinutes:
+                                                      e.paidShiftHours * 60,
+                                                );
+                                                return;
+                                              }
+                                              final v = set.first;
+                                              final minutesToSave =
+                                                  v == FactStatus.worked
+                                                      ? (e.paidShiftHours * 60)
+                                                      : 0;
+                                              await _setFact(
+                                                e,
+                                                v,
+                                                workedMinutes: minutesToSave,
+                                              );
+                                            }
+                                          : null,
+                                    ),
+                                    const SizedBox(width: 8),
                                     IconButton(
                                       tooltip: 'Подробно',
                                       icon: const Icon(Icons.tune),

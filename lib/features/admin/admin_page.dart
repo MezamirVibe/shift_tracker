@@ -13,7 +13,8 @@ class AdminPage extends StatefulWidget {
   State<AdminPage> createState() => _AdminPageState();
 }
 
-class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMixin {
+class _AdminPageState extends State<AdminPage>
+    with SingleTickerProviderStateMixin {
   late final TabController _tabs = TabController(length: 3, vsync: this);
 
   @override
@@ -26,9 +27,12 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
   Widget build(BuildContext context) {
     final auth = AuthService.instance;
 
-    final canUsers = auth.currentUser?.role == UserRole.superAdmin || auth.hasPerm(AppPermission.manageUsers);
-    final canRoles = auth.currentUser?.role == UserRole.superAdmin || auth.hasPerm(AppPermission.editRolePolicies);
-    final canStructure = auth.currentUser?.role == UserRole.superAdmin || auth.hasPerm(AppPermission.editEmployees);
+    final canUsers = auth.currentUser?.role == UserRole.superAdmin ||
+        auth.hasPerm(AppPermission.manageUsers);
+    final canRoles = auth.currentUser?.role == UserRole.superAdmin ||
+        auth.hasPerm(AppPermission.editRolePolicies);
+    final canStructure = auth.currentUser?.role == UserRole.superAdmin ||
+        auth.hasPerm(AppPermission.editEmployees);
 
     return Scaffold(
       appBar: AppBar(
@@ -45,9 +49,15 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
       body: TabBarView(
         controller: _tabs,
         children: [
-          canUsers ? const UsersAdminPage() : const _NoAccess(text: 'Нет прав на управление пользователями'),
-          canRoles ? const RolesEditorPage() : const _NoAccess(text: 'Нет прав на настройку ролей'),
-          canStructure ? const StructurePage() : const _NoAccess(text: 'Нет прав на изменение структуры'),
+          canUsers
+              ? const UsersAdminPage()
+              : const _NoAccess(text: 'Нет прав на управление пользователями'),
+          canRoles
+              ? const RolesEditorPage()
+              : const _NoAccess(text: 'Нет прав на настройку ролей'),
+          canStructure
+              ? const StructurePage()
+              : const _NoAccess(text: 'Нет прав на изменение структуры'),
         ],
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../shared/extensions/iterable_x.dart';
 import '../employees/employees_storage.dart';
 import 'auth_models.dart';
 import 'auth_storage.dart';
@@ -19,7 +20,6 @@ class AuthService extends ChangeNotifier {
   UserAccount? _currentUser;
   UserAccount? get currentUser => _currentUser;
 
-  // role -> policy
   final Map<UserRole, RolePolicy> _policies = {};
   Map<UserRole, RolePolicy> get policies => Map.unmodifiable(_policies);
 
@@ -36,7 +36,10 @@ class AuthService extends ChangeNotifier {
 
     final sessionId = await _storage.loadSessionUserId();
     if (sessionId != null) {
-      _currentUser = _users.where((u) => u.id == sessionId).cast<UserAccount?>().firstOrNull;
+      _currentUser = _users
+          .where((u) => u.id == sessionId)
+          .cast<UserAccount?>()
+          .firstOrNull;
     }
 
     _initialized = true;
@@ -57,11 +60,6 @@ class AuthService extends ChangeNotifier {
 
   // -------- scope/visibility
 
-  /// Возвращает список сотрудников, которых текущий пользователь имеет право ВИДЕТЬ по привязке роли.
-  /// superAdmin -> все
-  /// manager -> departmentId
-  /// master -> groupId
-  /// worker -> employeeId
   List<EmployeeModel> filterEmployeesByScope(List<EmployeeModel> employees) {
     final u = _currentUser;
     if (u == null) return const [];
@@ -89,7 +87,6 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  /// Подсказка для UI: какая привязка нужна роли
   String requiredBindingHint(UserRole role) {
     switch (role) {
       case UserRole.worker:
@@ -106,7 +103,10 @@ class AuthService extends ChangeNotifier {
   // -------- auth
 
   Future<bool> login(String login, String password) async {
-    final user = _users.where((u) => u.login == login.trim()).cast<UserAccount?>().firstOrNull;
+    final user = _users
+        .where((u) => u.login == login.trim())
+        .cast<UserAccount?>()
+        .firstOrNull;
     if (user == null) return false;
 
     final ok = _storage.verifyPassword(
@@ -129,7 +129,6 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Создаёт первого суперадмина (только если пользователей нет)
   Future<String?> createFirstAdmin({
     required String login,
     required String password,
@@ -144,6 +143,9 @@ class AuthService extends ChangeNotifier {
       saltB64: p.saltB64,
       hashB64: p.hashB64,
       iterations: p.iterations,
+      departmentId: null,
+      groupId: null,
+      employeeId: null,
     );
 
     _users = [user];
@@ -168,11 +170,18 @@ class AuthService extends ChangeNotifier {
     String? groupId,
     String? employeeId,
   }) async {
-    if (!hasPerm(AppPermission.manageUsers) && (currentUser?.role != UserRole.superAdmin)) return false;
+    if (!hasPerm(AppPermission.manageUsers) &&
+        (currentUser?.role != UserRole.superAdmin)) {
+      return false;
+    }
 
     final normalized = login.trim();
-    if (normalized.isEmpty) return false;
-    if (_users.any((u) => u.login == normalized)) return false;
+    if (normalized.isEmpty) {
+      return false;
+    }
+    if (_users.any((u) => u.login == normalized)) {
+      return false;
+    }
 
     final p = _storage.createPasswordHash(password);
 
@@ -201,16 +210,20 @@ class AuthService extends ChangeNotifier {
     String? groupId,
     String? employeeId,
   }) async {
-    if (!hasPerm(AppPermission.manageUsers) && (currentUser?.role != UserRole.superAdmin)) return false;
-
-    final target = _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
-    if (target == null) return false;
-
-    if (target.role == UserRole.superAdmin && currentUser?.role != UserRole.superAdmin) {
+    if (!hasPerm(AppPermission.manageUsers) &&
+        (currentUser?.role != UserRole.superAdmin)) {
       return false;
     }
 
-    // при смене роли сбрасываем "не свои" привязки
+    final target =
+        _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
+    if (target == null) return false;
+
+    if (target.role == UserRole.superAdmin &&
+        currentUser?.role != UserRole.superAdmin) {
+      return false;
+    }
+
     String? dep = departmentId;
     String? grp = groupId;
     String? emp = employeeId;
@@ -259,9 +272,13 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<bool> deleteUser(String userId) async {
-    if (!hasPerm(AppPermission.manageUsers) && (currentUser?.role != UserRole.superAdmin)) return false;
+    if (!hasPerm(AppPermission.manageUsers) &&
+        (currentUser?.role != UserRole.superAdmin)) {
+      return false;
+    }
 
-    final target = _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
+    final target =
+        _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
     if (target == null) return false;
 
     if (target.role == UserRole.superAdmin) return false;
@@ -279,7 +296,8 @@ class AuthService extends ChangeNotifier {
     required UserRole role,
     required Set<AppPermission> permissions,
   }) async {
-    final can = (currentUser?.role == UserRole.superAdmin) || hasPerm(AppPermission.editRolePolicies);
+    final can = (currentUser?.role == UserRole.superAdmin) ||
+        hasPerm(AppPermission.editRolePolicies);
     if (!can) return false;
 
     if (role == UserRole.superAdmin) return false;
@@ -292,7 +310,8 @@ class AuthService extends ChangeNotifier {
 
   // -------- defaults
 
-  Map<UserRole, RolePolicy> _buildPoliciesWithDefaults(List<RolePolicy> loaded) {
+  Map<UserRole, RolePolicy> _buildPoliciesWithDefaults(
+      List<RolePolicy> loaded) {
     final Map<UserRole, RolePolicy> m = {};
 
     final defaults = <UserRole, Set<AppPermission>>{
@@ -327,7 +346,8 @@ class AuthService extends ChangeNotifier {
       m[p.role] = p;
     }
 
-    m[UserRole.superAdmin] = const RolePolicy(role: UserRole.superAdmin, permissions: {});
+    m[UserRole.superAdmin] =
+        const RolePolicy(role: UserRole.superAdmin, permissions: {});
     return m;
   }
 
@@ -338,8 +358,4 @@ class AuthService extends ChangeNotifier {
       _policies.values.where((p) => p.role != UserRole.superAdmin).toList(),
     );
   }
-}
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }

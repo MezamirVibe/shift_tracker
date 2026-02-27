@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/extensions/iterable_x.dart';
 import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
@@ -18,8 +19,10 @@ class EmployeeDetailsPage extends StatefulWidget {
   State<EmployeeDetailsPage> createState() => _EmployeeDetailsPageState();
 }
 
-class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(length: 5, vsync: this);
+class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController =
+      TabController(length: 5, vsync: this);
 
   final _storage = EmployeesStorage();
   final _structureStorage = StructureStorage();
@@ -64,15 +67,12 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
       _position = e.position;
       _salary = e.salary;
       _bonus = e.bonus;
-
       _departmentId = e.departmentId;
       _groupId = e.groupId;
-
       _scheduleType = e.scheduleType;
       _startDate = e.scheduleStartDate;
       _shiftHours = e.shiftHours;
       _breakHours = e.breakHours;
-
       _loading = false;
     });
   }
@@ -94,10 +94,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
       _position = updated.position;
       _salary = updated.salary;
       _bonus = updated.bonus;
-
       _departmentId = updated.departmentId;
       _groupId = updated.groupId;
-
       _scheduleType = updated.scheduleType;
       _startDate = updated.scheduleStartDate;
       _shiftHours = updated.shiftHours;
@@ -119,7 +117,6 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
         confirmText: 'Сохранить',
       ),
     );
-
     if (draft == null) return;
 
     final current = await _getFreshEmployee();
@@ -131,7 +128,6 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
       salary: draft.salary,
       bonus: draft.bonus,
     );
-
     await _saveEmployee(updated);
   }
 
@@ -161,11 +157,11 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
     await _storage.save(updated);
 
     if (!context.mounted) return;
-    context.pop({'deleted': true});
+    context.pop(<String, dynamic>{'deleted': true});
   }
 
   void _popWithUpdated() {
-    context.pop({
+    context.pop(<String, dynamic>{
       'id': widget.id,
       'fullName': _fullName,
       'position': _position,
@@ -246,12 +242,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
             startDate: _startDate,
             shiftHours: _shiftHours,
             breakHours: _breakHours,
-            onChanged: (
-              nextType,
-              nextStart,
-              nextShiftHours,
-              nextBreakHours,
-            ) async {
+            onChanged:
+                (nextType, nextStart, nextShiftHours, nextBreakHours) async {
               final current = await _getFreshEmployee();
               if (current == null) return;
 
@@ -261,11 +253,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
                 shiftHours: nextShiftHours,
                 breakHours: nextBreakHours,
               );
-
               await _saveEmployee(updated);
             },
           ),
-
           _StructureTab(
             departmentId: _departmentId,
             groupId: _groupId,
@@ -280,11 +270,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTi
                 clearDepartment: depId == null,
                 clearGroup: grpId == null,
               );
-
               await _saveEmployee(updated);
             },
           ),
-
           _SalaryTab(salary: _salary, bonus: _bonus),
           const _FinesTab(),
           const _HistoryTab(),
@@ -313,8 +301,9 @@ class _StructureTab extends StatefulWidget {
 
 class _StructureTabState extends State<_StructureTab> {
   bool _loading = true;
-  List<DepartmentModel> _deps = [];
-  List<GroupModel> _groups = [];
+
+  List<dynamic> _deps = <dynamic>[];
+  List<dynamic> _groups = <dynamic>[];
 
   String? _depId;
   String? _groupId;
@@ -329,6 +318,7 @@ class _StructureTabState extends State<_StructureTab> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
+
     final deps = await widget.storage.loadDepartments();
     final groups = await widget.storage.loadGroups();
 
@@ -342,7 +332,8 @@ class _StructureTabState extends State<_StructureTab> {
 
     // если выбранная группа не принадлежит выбранному подразделению — сбросим
     if (_groupId != null && _depId != null) {
-      final g = _groups.where((x) => x.id == _groupId).cast<GroupModel?>().firstOrNull;
+      final g =
+          _groups.where((x) => x.id == _groupId).cast<dynamic?>().firstOrNull;
       if (g != null && g.departmentId != _depId) {
         _groupId = null;
         await widget.onChanged(_depId, _groupId);
@@ -352,9 +343,9 @@ class _StructureTabState extends State<_StructureTab> {
     }
   }
 
-  List<GroupModel> get _groupsForSelectedDep {
+  List<dynamic> get _groupsForSelectedDep {
     final depId = _depId;
-    if (depId == null || depId.isEmpty) return [];
+    if (depId == null || depId.isEmpty) return <dynamic>[];
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
@@ -373,19 +364,29 @@ class _StructureTabState extends State<_StructureTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Подразделение', style: Theme.of(context).textTheme.titleMedium),
+                Text('Подразделение',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String?>(
                   initialValue: _depId,
-                  decoration: const InputDecoration(border: OutlineInputBorder()),
+                  decoration:
+                      const InputDecoration(border: OutlineInputBorder()),
                   items: [
-                    const DropdownMenuItem<String?>(value: null, child: Text('— не выбрано —')),
-                    ..._deps.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('— не выбрано —'),
+                    ),
+                    ..._deps.map(
+                      (d) => DropdownMenuItem<String?>(
+                        value: d.id as String?,
+                        child: Text(d.name as String),
+                      ),
+                    ),
                   ],
                   onChanged: (v) async {
                     setState(() {
                       _depId = v;
-                      _groupId = null; // при смене подразделения сбрасываем группу
+                      _groupId = null;
                     });
                     await widget.onChanged(_depId, _groupId);
                   },
@@ -405,10 +406,19 @@ class _StructureTabState extends State<_StructureTab> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String?>(
                   initialValue: _groupId,
-                  decoration: const InputDecoration(border: OutlineInputBorder()),
+                  decoration:
+                      const InputDecoration(border: OutlineInputBorder()),
                   items: [
-                    const DropdownMenuItem<String?>(value: null, child: Text('— не выбрано —')),
-                    ...groups.map((g) => DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('— не выбрано —'),
+                    ),
+                    ...groups.map(
+                      (g) => DropdownMenuItem<String?>(
+                        value: g.id as String?,
+                        child: Text(g.name as String),
+                      ),
+                    ),
                   ],
                   onChanged: (_depId == null)
                       ? null
@@ -419,7 +429,8 @@ class _StructureTabState extends State<_StructureTab> {
                 ),
                 const SizedBox(height: 8),
                 if (_depId == null)
-                  const Text('Сначала выбери подразделение, чтобы выбрать группу.'),
+                  const Text(
+                      'Сначала выбери подразделение, чтобы выбрать группу.'),
               ],
             ),
           ),
@@ -467,13 +478,20 @@ class _ScheduleTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Тип графика', style: Theme.of(context).textTheme.titleMedium),
+                Text('Тип графика',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<ScheduleType>(
                   initialValue: scheduleType,
                   items: const [
-                    DropdownMenuItem(value: ScheduleType.twoTwo, child: Text('2/2')),
-                    DropdownMenuItem(value: ScheduleType.fiveTwo, child: Text('5/2')),
+                    DropdownMenuItem(
+                      value: ScheduleType.twoTwo,
+                      child: Text('2/2'),
+                    ),
+                    DropdownMenuItem(
+                      value: ScheduleType.fiveTwo,
+                      child: Text('5/2'),
+                    ),
                   ],
                   onChanged: (v) async {
                     if (v == null) return;
@@ -491,7 +509,8 @@ class _ScheduleTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Дата старта графика', style: Theme.of(context).textTheme.titleMedium),
+                Text('Дата старта графика',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -511,14 +530,16 @@ class _ScheduleTab extends StatelessWidget {
                           initialDate: startDate,
                         );
                         if (picked == null) return;
-                        await onChanged(scheduleType, picked, shiftHours, breakHours);
+                        await onChanged(
+                            scheduleType, picked, shiftHours, breakHours);
                       },
                       child: const Text('Выбрать'),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                Text('Длительность смены', style: Theme.of(context).textTheme.titleMedium),
+                Text('Длительность смены',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<int>(
                   initialValue: shiftHours,
@@ -546,12 +567,19 @@ class _ScheduleTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Пример: ближайшие 14 дней', style: Theme.of(context).textTheme.titleMedium),
+                Text('Пример: ближайшие 14 дней',
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 ...List.generate(14, (i) {
                   final d = DateTime.now().add(Duration(days: i));
-                  final isWork = isWorkDay(day: d, type: scheduleType, startDate: startDate);
-                  final label = '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}';
+                  final isWork = isWorkDay(
+                    day: d,
+                    type: scheduleType,
+                    startDate: startDate,
+                  );
+                  final label =
+                      '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}';
+
                   return ListTile(
                     dense: true,
                     title: Text(label),
@@ -602,16 +630,16 @@ class _SalaryTab extends StatelessWidget {
 
 class _FinesTab extends StatelessWidget {
   const _FinesTab();
+
   @override
-  Widget build(BuildContext context) => const Center(child: Text('Штрафы: позже'));
+  Widget build(BuildContext context) =>
+      const Center(child: Text('Штрафы: позже'));
 }
 
 class _HistoryTab extends StatelessWidget {
   const _HistoryTab();
-  @override
-  Widget build(BuildContext context) => const Center(child: Text('История: позже'));
-}
 
-extension<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
+  @override
+  Widget build(BuildContext context) =>
+      const Center(child: Text('История: позже'));
 }

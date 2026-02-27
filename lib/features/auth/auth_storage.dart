@@ -13,15 +13,15 @@ class UserAccount {
   final String login;
   final UserRole role;
 
-  /// NEW: привязка к структуре/сотруднику
-  final String? departmentId; // для manager
-  final String? groupId; // для master
-  final String? employeeId; // для worker
-
   // password storage
   final String saltB64;
   final String hashB64;
   final int iterations;
+
+  // scope bindings
+  final String? departmentId;
+  final String? groupId;
+  final String? employeeId;
 
   const UserAccount({
     required this.id,
@@ -30,9 +30,9 @@ class UserAccount {
     required this.saltB64,
     required this.hashB64,
     required this.iterations,
-    this.departmentId,
-    this.groupId,
-    this.employeeId,
+    required this.departmentId,
+    required this.groupId,
+    required this.employeeId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -42,19 +42,12 @@ class UserAccount {
         'saltB64': saltB64,
         'hashB64': hashB64,
         'iterations': iterations,
-
-        // bindings
         'departmentId': departmentId,
         'groupId': groupId,
         'employeeId': employeeId,
       };
 
   static UserAccount fromJson(Map<String, dynamic> json) {
-    String? norm(String? s) {
-      final t = s?.trim();
-      return (t == null || t.isEmpty) ? null : t;
-    }
-
     return UserAccount(
       id: (json['id'] as String?) ?? '',
       login: (json['login'] as String?) ?? '',
@@ -62,9 +55,9 @@ class UserAccount {
       saltB64: (json['saltB64'] as String?) ?? '',
       hashB64: (json['hashB64'] as String?) ?? '',
       iterations: (json['iterations'] as int?) ?? 150000,
-      departmentId: norm(json['departmentId'] as String?),
-      groupId: norm(json['groupId'] as String?),
-      employeeId: norm(json['employeeId'] as String?),
+      departmentId: json['departmentId'] as String?,
+      groupId: json['groupId'] as String?,
+      employeeId: json['employeeId'] as String?,
     );
   }
 
@@ -88,7 +81,8 @@ class UserAccount {
       saltB64: saltB64 ?? this.saltB64,
       hashB64: hashB64 ?? this.hashB64,
       iterations: iterations ?? this.iterations,
-      departmentId: clearDepartment ? null : (departmentId ?? this.departmentId),
+      departmentId:
+          clearDepartment ? null : (departmentId ?? this.departmentId),
       groupId: clearGroup ? null : (groupId ?? this.groupId),
       employeeId: clearEmployee ? null : (employeeId ?? this.employeeId),
     );
@@ -115,6 +109,7 @@ class AuthStorage {
       if (raw.trim().isEmpty) return [];
       final decoded = jsonDecode(raw);
       if (decoded is! List) return [];
+
       return decoded
           .whereType<Map>()
           .map((m) => UserAccount.fromJson(Map<String, dynamic>.from(m)))
@@ -139,8 +134,8 @@ class AuthStorage {
       final raw = await f.readAsString();
       if (raw.trim().isEmpty) return null;
       final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        return decoded['userId'] as String?;
+      if (decoded is Map) {
+        return (decoded['userId'] as String?);
       }
       return null;
     } catch (_) {
@@ -167,6 +162,7 @@ class AuthStorage {
       if (raw.trim().isEmpty) return [];
       final decoded = jsonDecode(raw);
       if (decoded is! List) return [];
+
       return decoded
           .whereType<Map>()
           .map((m) => RolePolicy.fromJson(Map<String, dynamic>.from(m)))
@@ -186,7 +182,11 @@ class AuthStorage {
 
   Uint8List _randomBytes(int n) {
     final r = Random.secure();
-    return Uint8List.fromList(List<int>.generate(n, (_) => r.nextInt(256)));
+    return Uint8List.fromList(List.generate(n, (_) => r.nextInt(256)));
+  }
+
+  List<int> _hmacSha256(List<int> key, List<int> msg) {
+    return Hmac(sha256, key).convert(msg).bytes;
   }
 
   Uint8List _pbkdf2Sha256({
@@ -196,21 +196,21 @@ class AuthStorage {
     required int dkLen,
   }) {
     final passBytes = utf8.encode(password);
-    final hmac = (List<int> key, List<int> msg) => Hmac(sha256, key).convert(msg).bytes;
-
-    final hLen = sha256.convert(const <int>[]).bytes.length; // 32
+    final hLen = sha256.convert(const []).bytes.length; // 32
     final l = (dkLen / hLen).ceil();
-    final out = BytesBuilder();
 
+    final out = BytesBuilder();
     for (int i = 1; i <= l; i++) {
       final blockIndex = ByteData(4)..setUint32(0, i, Endian.big);
-      final saltPlus = Uint8List.fromList([...salt, ...blockIndex.buffer.asUint8List()]);
+      final saltPlus = Uint8List.fromList(
+        [...salt, ...blockIndex.buffer.asUint8List()],
+      );
 
-      var u = hmac(passBytes, saltPlus);
-      var t = Uint8List.fromList(u);
+      var u = _hmacSha256(passBytes, saltPlus);
+      final t = Uint8List.fromList(u);
 
       for (int j = 2; j <= iterations; j++) {
-        u = hmac(passBytes, u);
+        u = _hmacSha256(passBytes, u);
         for (int k = 0; k < t.length; k++) {
           t[k] = t[k] ^ u[k];
         }
@@ -223,15 +223,18 @@ class AuthStorage {
     return dk.sublist(0, dkLen);
   }
 
-  ({String saltB64, String hashB64, int iterations}) createPasswordHash(String password) {
+  ({String saltB64, String hashB64, int iterations}) createPasswordHash(
+      String password) {
     final salt = _randomBytes(16);
     const iterations = 150000;
+
     final dk = _pbkdf2Sha256(
       password: password,
       salt: salt,
       iterations: iterations,
       dkLen: 32,
     );
+
     return (
       saltB64: base64Encode(salt),
       hashB64: base64Encode(dk),
@@ -248,12 +251,14 @@ class AuthStorage {
     try {
       final salt = base64Decode(saltB64);
       final expected = base64Decode(hashB64);
+
       final dk = _pbkdf2Sha256(
         password: password,
         salt: salt,
         iterations: iterations,
         dkLen: expected.length,
       );
+
       if (dk.length != expected.length) return false;
 
       int diff = 0;

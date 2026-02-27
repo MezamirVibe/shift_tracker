@@ -67,7 +67,8 @@ class _MonthReportPageState extends State<MonthReportPage> {
 
   @override
   Widget build(BuildContext context) {
-    final title = 'Табель: ${widget.month.toString().padLeft(2, '0')}.${widget.year}';
+    final title =
+        'Табель: ${widget.month.toString().padLeft(2, '0')}.${widget.year}';
 
     return AdaptiveScaffold(
       title: title,
@@ -143,7 +144,8 @@ class _MonthReportPageState extends State<MonthReportPage> {
                         switch (rec.fact) {
                           case FactStatus.worked:
                             worked++;
-                            minutes += rec.workedMinutes ?? (e.paidShiftHours * 60);
+                            minutes +=
+                                rec.workedMinutes ?? (e.paidShiftHours * 60);
                             break;
                           case FactStatus.absent:
                             absent++;
