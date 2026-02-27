@@ -43,7 +43,7 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
                 Text('Выбери роль', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<UserRole>(
-                  value: _selected,
+                  initialValue: _selected,
                   decoration: const InputDecoration(
                     labelText: 'Роль',
                     border: OutlineInputBorder(),

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../employees/employees_storage.dart';
 import 'auth_models.dart';
 import 'auth_storage.dart';
 
@@ -28,13 +29,11 @@ class AuthService extends ChangeNotifier {
   Future<void> init() async {
     _users = await _storage.loadUsers();
 
-    // policies
     final loadedPolicies = await _storage.loadRolePolicies();
     _policies
       ..clear()
       ..addAll(_buildPoliciesWithDefaults(loadedPolicies));
 
-    // session
     final sessionId = await _storage.loadSessionUserId();
     if (sessionId != null) {
       _currentUser = _users.where((u) => u.id == sessionId).cast<UserAccount?>().firstOrNull;
@@ -49,11 +48,59 @@ class AuthService extends ChangeNotifier {
   bool hasPerm(AppPermission p) {
     final u = _currentUser;
     if (u == null) return false;
-    if (u.role == UserRole.superAdmin) return true; // суперадмин всегда всё
+    if (u.role == UserRole.superAdmin) return true;
 
     final policy = _policies[u.role];
     if (policy == null) return false;
     return policy.permissions.contains(p);
+  }
+
+  // -------- scope/visibility
+
+  /// Возвращает список сотрудников, которых текущий пользователь имеет право ВИДЕТЬ по привязке роли.
+  /// superAdmin -> все
+  /// manager -> departmentId
+  /// master -> groupId
+  /// worker -> employeeId
+  List<EmployeeModel> filterEmployeesByScope(List<EmployeeModel> employees) {
+    final u = _currentUser;
+    if (u == null) return const [];
+
+    if (u.role == UserRole.superAdmin) return employees;
+
+    switch (u.role) {
+      case UserRole.manager:
+        final depId = u.departmentId;
+        if (depId == null) return const [];
+        return employees.where((e) => e.departmentId == depId).toList();
+
+      case UserRole.master:
+        final groupId = u.groupId;
+        if (groupId == null) return const [];
+        return employees.where((e) => e.groupId == groupId).toList();
+
+      case UserRole.worker:
+        final employeeId = u.employeeId;
+        if (employeeId == null) return const [];
+        return employees.where((e) => e.id == employeeId).toList();
+
+      case UserRole.superAdmin:
+        return employees;
+    }
+  }
+
+  /// Подсказка для UI: какая привязка нужна роли
+  String requiredBindingHint(UserRole role) {
+    switch (role) {
+      case UserRole.worker:
+        return 'Для роли "Рабочий" нужна привязка к сотруднику.';
+      case UserRole.master:
+        return 'Для роли "Мастер" нужна привязка к группе.';
+      case UserRole.manager:
+        return 'Для роли "Руководитель" нужна привязка к подразделению.';
+      case UserRole.superAdmin:
+        return 'Суперадмин видит всё, привязка не требуется.';
+    }
   }
 
   // -------- auth
@@ -102,7 +149,6 @@ class AuthService extends ChangeNotifier {
     _users = [user];
     await _storage.saveUsers(_users);
 
-    // гарантируем дефолтные политики на диске (чтобы manager мог редактировать)
     await _savePoliciesToDiskIfNeeded();
 
     _currentUser = user;
@@ -118,6 +164,9 @@ class AuthService extends ChangeNotifier {
     required String login,
     required String password,
     required UserRole role,
+    String? departmentId,
+    String? groupId,
+    String? employeeId,
   }) async {
     if (!hasPerm(AppPermission.manageUsers) && (currentUser?.role != UserRole.superAdmin)) return false;
 
@@ -126,6 +175,7 @@ class AuthService extends ChangeNotifier {
     if (_users.any((u) => u.login == normalized)) return false;
 
     final p = _storage.createPasswordHash(password);
+
     final user = UserAccount(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       login: normalized,
@@ -133,6 +183,9 @@ class AuthService extends ChangeNotifier {
       saltB64: p.saltB64,
       hashB64: p.hashB64,
       iterations: p.iterations,
+      departmentId: departmentId,
+      groupId: groupId,
+      employeeId: employeeId,
     );
 
     _users = [..._users, user];
@@ -141,13 +194,15 @@ class AuthService extends ChangeNotifier {
     return true;
   }
 
-  Future<bool> setUserRole({
+  Future<bool> updateUserAccess({
     required String userId,
     required UserRole role,
+    String? departmentId,
+    String? groupId,
+    String? employeeId,
   }) async {
     if (!hasPerm(AppPermission.manageUsers) && (currentUser?.role != UserRole.superAdmin)) return false;
 
-    // нельзя менять роль суперадмина, если ты не суперадмин
     final target = _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
     if (target == null) return false;
 
@@ -155,10 +210,46 @@ class AuthService extends ChangeNotifier {
       return false;
     }
 
-    _users = _users.map((u) => u.id == userId ? u.copyWith(role: role) : u).toList();
+    // при смене роли сбрасываем "не свои" привязки
+    String? dep = departmentId;
+    String? grp = groupId;
+    String? emp = employeeId;
+
+    switch (role) {
+      case UserRole.manager:
+        grp = null;
+        emp = null;
+        break;
+      case UserRole.master:
+        dep = null;
+        emp = null;
+        break;
+      case UserRole.worker:
+        dep = null;
+        grp = null;
+        break;
+      case UserRole.superAdmin:
+        dep = null;
+        grp = null;
+        emp = null;
+        break;
+    }
+
+    _users = _users.map((u) {
+      if (u.id != userId) return u;
+      return u.copyWith(
+        role: role,
+        departmentId: dep,
+        groupId: grp,
+        employeeId: emp,
+        clearDepartment: dep == null,
+        clearGroup: grp == null,
+        clearEmployee: emp == null,
+      );
+    }).toList();
+
     await _storage.saveUsers(_users);
 
-    // если поменяли роль текущему — обновим
     if (_currentUser?.id == userId) {
       _currentUser = _users.where((u) => u.id == userId).firstOrNull;
     }
@@ -173,8 +264,8 @@ class AuthService extends ChangeNotifier {
     final target = _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
     if (target == null) return false;
 
-    if (target.role == UserRole.superAdmin) return false; // суперадмина не удаляем
-    if (_currentUser?.id == userId) return false; // сам себя не удаляем
+    if (target.role == UserRole.superAdmin) return false;
+    if (_currentUser?.id == userId) return false;
 
     _users = _users.where((u) => u.id != userId).toList();
     await _storage.saveUsers(_users);
@@ -188,11 +279,9 @@ class AuthService extends ChangeNotifier {
     required UserRole role,
     required Set<AppPermission> permissions,
   }) async {
-    // суперадмин всегда может; руководитель — если разрешено editRolePolicies
     final can = (currentUser?.role == UserRole.superAdmin) || hasPerm(AppPermission.editRolePolicies);
     if (!can) return false;
 
-    // суперадмин политику не редактируем — чтоб не “выломать дверь”
     if (role == UserRole.superAdmin) return false;
 
     _policies[role] = RolePolicy(role: role, permissions: permissions);
@@ -206,7 +295,6 @@ class AuthService extends ChangeNotifier {
   Map<UserRole, RolePolicy> _buildPoliciesWithDefaults(List<RolePolicy> loaded) {
     final Map<UserRole, RolePolicy> m = {};
 
-    // дефолты (можно менять через UI)
     final defaults = <UserRole, Set<AppPermission>>{
       UserRole.manager: {
         AppPermission.viewCalendar,
@@ -230,19 +318,15 @@ class AuthService extends ChangeNotifier {
       },
     };
 
-    // сначала дефолты
     for (final entry in defaults.entries) {
       m[entry.key] = RolePolicy(role: entry.key, permissions: entry.value);
     }
 
-    // поверх — загруженные (кроме superAdmin)
     for (final p in loaded) {
       if (p.role == UserRole.superAdmin) continue;
       m[p.role] = p;
     }
 
-    // superAdmin в словарь можно не добавлять (обрабатываем отдельно),
-    // но оставим для UI/отображения:
     m[UserRole.superAdmin] = const RolePolicy(role: UserRole.superAdmin, permissions: {});
     return m;
   }

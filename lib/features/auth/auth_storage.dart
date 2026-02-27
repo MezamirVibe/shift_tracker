@@ -13,6 +13,11 @@ class UserAccount {
   final String login;
   final UserRole role;
 
+  /// NEW: привязка к структуре/сотруднику
+  final String? departmentId; // для manager
+  final String? groupId; // для master
+  final String? employeeId; // для worker
+
   // password storage
   final String saltB64;
   final String hashB64;
@@ -25,6 +30,9 @@ class UserAccount {
     required this.saltB64,
     required this.hashB64,
     required this.iterations,
+    this.departmentId,
+    this.groupId,
+    this.employeeId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -34,9 +42,19 @@ class UserAccount {
         'saltB64': saltB64,
         'hashB64': hashB64,
         'iterations': iterations,
+
+        // bindings
+        'departmentId': departmentId,
+        'groupId': groupId,
+        'employeeId': employeeId,
       };
 
   static UserAccount fromJson(Map<String, dynamic> json) {
+    String? norm(String? s) {
+      final t = s?.trim();
+      return (t == null || t.isEmpty) ? null : t;
+    }
+
     return UserAccount(
       id: (json['id'] as String?) ?? '',
       login: (json['login'] as String?) ?? '',
@@ -44,6 +62,9 @@ class UserAccount {
       saltB64: (json['saltB64'] as String?) ?? '',
       hashB64: (json['hashB64'] as String?) ?? '',
       iterations: (json['iterations'] as int?) ?? 150000,
+      departmentId: norm(json['departmentId'] as String?),
+      groupId: norm(json['groupId'] as String?),
+      employeeId: norm(json['employeeId'] as String?),
     );
   }
 
@@ -53,6 +74,12 @@ class UserAccount {
     String? saltB64,
     String? hashB64,
     int? iterations,
+    String? departmentId,
+    String? groupId,
+    String? employeeId,
+    bool clearDepartment = false,
+    bool clearGroup = false,
+    bool clearEmployee = false,
   }) {
     return UserAccount(
       id: id,
@@ -61,6 +88,9 @@ class UserAccount {
       saltB64: saltB64 ?? this.saltB64,
       hashB64: hashB64 ?? this.hashB64,
       iterations: iterations ?? this.iterations,
+      departmentId: clearDepartment ? null : (departmentId ?? this.departmentId),
+      groupId: clearGroup ? null : (groupId ?? this.groupId),
+      employeeId: clearEmployee ? null : (employeeId ?? this.employeeId),
     );
   }
 }

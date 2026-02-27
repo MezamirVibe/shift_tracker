@@ -42,9 +42,13 @@ class _DayPageState extends State<DayPage> {
 
   Future<void> _load() async {
     final allEmployees = await _employeesStorage.load();
+
+    // ✅ ограничение видимости по роли/привязке
+    final visibleEmployees = AuthService.instance.filterEmployeesByScope(allEmployees);
+
     final d = dateOnly(_day);
 
-    final planned = allEmployees.where((e) {
+    final planned = visibleEmployees.where((e) {
       return isWorkDay(
         day: d,
         type: e.scheduleType,
@@ -95,12 +99,7 @@ class _DayPageState extends State<DayPage> {
     }
   }
 
-  Future<void> _setFact(
-    EmployeeModel e,
-    FactStatus fact, {
-    String? comment,
-    int? workedMinutes,
-  }) async {
+  Future<void> _setFact(EmployeeModel e, FactStatus fact, {String? comment, int? workedMinutes}) async {
     await _attendanceStorage.setFact(
       dateIso: _dateIso,
       employeeId: e.id,
@@ -108,7 +107,6 @@ class _DayPageState extends State<DayPage> {
       comment: comment,
       workedMinutes: workedMinutes,
     );
-
     if (!mounted) return;
     await _load();
   }
@@ -134,7 +132,7 @@ class _DayPageState extends State<DayPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<FactStatus>(
-                value: fact,
+                initialValue: fact,
                 items: const [
                   DropdownMenuItem(value: FactStatus.none, child: Text('Без факта')),
                   DropdownMenuItem(value: FactStatus.worked, child: Text('Вышел')),
@@ -167,10 +165,7 @@ class _DayPageState extends State<DayPage> {
                 controller: commentController,
                 enabled: canEditNow,
                 maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Комментарий',
-                  hintText: 'Например: причина, примечание…',
-                ),
+                decoration: const InputDecoration(labelText: 'Комментарий'),
               ),
               if (!canEditNow) ...[
                 const SizedBox(height: 12),
@@ -200,10 +195,7 @@ class _DayPageState extends State<DayPage> {
 
     final comment = commentController.text.trim();
     final parsedMinutes = int.tryParse(workedMinutesController.text.trim());
-
-    final minutesToSave = (fact == FactStatus.worked)
-        ? (parsedMinutes ?? (e.paidShiftHours * 60))
-        : 0;
+    final minutesToSave = (fact == FactStatus.worked) ? (parsedMinutes ?? (e.paidShiftHours * 60)) : 0;
 
     await _setFact(
       e,
@@ -272,10 +264,11 @@ class _DayPageState extends State<DayPage> {
     final plannedCount = _planned.length;
     final workedCount = _planned.where((e) => _factOf(e) == FactStatus.worked).length;
     final absentCount = _planned.where((e) => _factOf(e) == FactStatus.absent).length;
-    final sickCount = _planned.where((e) => _factOf(e) == FactStatus.sick).length;
-    final vacationCount = _planned.where((e) => _factOf(e) == FactStatus.vacation).length;
 
     final canEditNow = _canEditAttendance && !_closed;
+
+    final u = AuthService.instance.currentUser;
+    final noBinding = (u != null && u.role != UserRole.superAdmin && plannedCount == 0);
 
     return AdaptiveScaffold(
       title: 'День: $title',
@@ -294,10 +287,7 @@ class _DayPageState extends State<DayPage> {
             label: const Text('Закрыть день'),
           ),
         if (!_loading && _closed) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: Chip(label: Text('День закрыт')),
-          ),
+          const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Chip(label: Text('День закрыт'))),
           OutlinedButton.icon(
             onPressed: _canEditAttendance ? _reopenDay : null,
             icon: const Icon(Icons.lock_open),
@@ -312,34 +302,19 @@ class _DayPageState extends State<DayPage> {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (!_canEditAttendance)
+                  if (noBinding)
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(12),
                         child: Row(
-                          children: [
-                            const Icon(Icons.visibility_outlined),
-                            const SizedBox(width: 12),
+                          children: const [
+                            Icon(Icons.warning_amber),
+                            SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'Режим просмотра: у твоей роли нет права "Редактирование факта".',
-                                style: Theme.of(context).textTheme.bodyMedium,
+                                'У вашей роли не настроена привязка (сотрудник/группа/подразделение). '
+                                'Попросите руководителя настроить доступ в "Админ → Пользователи".',
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (_closed)
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.lock),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text('День закрыт. Изменение факта отключено.'),
                             ),
                           ],
                         ),
@@ -355,8 +330,6 @@ class _DayPageState extends State<DayPage> {
                           Text('По плану: $plannedCount'),
                           Text('Вышли: $workedCount'),
                           Text('Прогул: $absentCount'),
-                          Text('Бол.: $sickCount'),
-                          Text('Отп.: $vacationCount'),
                         ],
                       ),
                     ),
@@ -364,7 +337,7 @@ class _DayPageState extends State<DayPage> {
                   const SizedBox(height: 12),
                   Expanded(
                     child: _planned.isEmpty
-                        ? const Center(child: Text('Никто не запланирован в смену по графику.'))
+                        ? const Center(child: Text('Нет сотрудников по плану (или нет доступа).'))
                         : ListView.separated(
                             itemCount: _planned.length,
                             separatorBuilder: (_, __) => const Divider(height: 1),
@@ -374,58 +347,14 @@ class _DayPageState extends State<DayPage> {
                               final minutes = _minutesFor(e, fact);
                               final hours = (minutes / 60).toStringAsFixed(minutes % 60 == 0 ? 0 : 1);
 
-                              final rec = _recordOf(e);
-                              final comment = rec?.comment?.trim();
-                              final hasComment = comment != null && comment.isNotEmpty;
-
                               return ListTile(
                                 title: Text(e.fullName),
-                                subtitle: Text(
-                                  '${e.position} • ${_factLabel(fact)}${hasComment ? ' • $comment' : ''}',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                                subtitle: Text('${e.position} • ${_factLabel(fact)}'),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text('$hours ч'),
                                     const SizedBox(width: 12),
-                                    SegmentedButton<FactStatus>(
-                                      segments: const [
-                                        ButtonSegment(
-                                          value: FactStatus.worked,
-                                          label: Text('Вышел'),
-                                          icon: Icon(Icons.check),
-                                        ),
-                                        ButtonSegment(
-                                          value: FactStatus.absent,
-                                          label: Text('Прогул'),
-                                          icon: Icon(Icons.close),
-                                        ),
-                                      ],
-                                      selected: <FactStatus>{
-                                        if (fact == FactStatus.worked) FactStatus.worked,
-                                        if (fact == FactStatus.absent) FactStatus.absent,
-                                      },
-                                      emptySelectionAllowed: true,
-                                      onSelectionChanged: canEditNow
-                                          ? (set) async {
-                                              if (set.isEmpty) {
-                                                await _setFact(
-                                                  e,
-                                                  FactStatus.none,
-                                                  workedMinutes: e.paidShiftHours * 60,
-                                                );
-                                                return;
-                                              }
-                                              final v = set.first;
-                                              final minutesToSave =
-                                                  v == FactStatus.worked ? (e.paidShiftHours * 60) : 0;
-                                              await _setFact(e, v, workedMinutes: minutesToSave);
-                                            }
-                                          : null,
-                                    ),
-                                    const SizedBox(width: 8),
                                     IconButton(
                                       tooltip: 'Подробно',
                                       icon: const Icon(Icons.tune),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
 import 'schedule_utils.dart';
@@ -17,11 +18,11 @@ class EmployeeDetailsPage extends StatefulWidget {
   State<EmployeeDetailsPage> createState() => _EmployeeDetailsPageState();
 }
 
-class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(length: 4, vsync: this);
+class _EmployeeDetailsPageState extends State<EmployeeDetailsPage> with SingleTickerProviderStateMixin {
+  late final TabController _tabController = TabController(length: 5, vsync: this);
 
   final _storage = EmployeesStorage();
+  final _structureStorage = StructureStorage();
 
   bool _loading = true;
 
@@ -30,6 +31,10 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   String _position = '';
   int _salary = 0;
   int _bonus = 0;
+
+  // структура
+  String? _departmentId;
+  String? _groupId;
 
   // график
   ScheduleType _scheduleType = ScheduleType.twoTwo;
@@ -60,6 +65,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       _salary = e.salary;
       _bonus = e.bonus;
 
+      _departmentId = e.departmentId;
+      _groupId = e.groupId;
+
       _scheduleType = e.scheduleType;
       _startDate = e.scheduleStartDate;
       _shiftHours = e.shiftHours;
@@ -80,11 +88,15 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     await _storage.save(updatedAll);
 
     if (!mounted) return;
+
     setState(() {
       _fullName = updated.fullName;
       _position = updated.position;
       _salary = updated.salary;
       _bonus = updated.bonus;
+
+      _departmentId = updated.departmentId;
+      _groupId = updated.groupId;
 
       _scheduleType = updated.scheduleType;
       _startDate = updated.scheduleStartDate;
@@ -163,6 +175,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       'scheduleStartDate': _startDate.toIso8601String(),
       'shiftHours': _shiftHours,
       'breakHours': _breakHours,
+      'departmentId': _departmentId,
+      'groupId': _groupId,
     });
   }
 
@@ -217,6 +231,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
           controller: _tabController,
           tabs: const [
             Tab(text: 'График'),
+            Tab(text: 'Структура'),
             Tab(text: 'Зарплата'),
             Tab(text: 'Штрафы'),
             Tab(text: 'История'),
@@ -231,7 +246,12 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             startDate: _startDate,
             shiftHours: _shiftHours,
             breakHours: _breakHours,
-            onChanged: (nextType, nextStart, nextShiftHours, nextBreakHours) async {
+            onChanged: (
+              nextType,
+              nextStart,
+              nextShiftHours,
+              nextBreakHours,
+            ) async {
               final current = await _getFreshEmployee();
               if (current == null) return;
 
@@ -245,11 +265,172 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
               await _saveEmployee(updated);
             },
           ),
+
+          _StructureTab(
+            departmentId: _departmentId,
+            groupId: _groupId,
+            storage: _structureStorage,
+            onChanged: (depId, grpId) async {
+              final current = await _getFreshEmployee();
+              if (current == null) return;
+
+              final updated = current.copyWith(
+                departmentId: depId,
+                groupId: grpId,
+                clearDepartment: depId == null,
+                clearGroup: grpId == null,
+              );
+
+              await _saveEmployee(updated);
+            },
+          ),
+
           _SalaryTab(salary: _salary, bonus: _bonus),
           const _FinesTab(),
           const _HistoryTab(),
         ],
       ),
+    );
+  }
+}
+
+class _StructureTab extends StatefulWidget {
+  final String? departmentId;
+  final String? groupId;
+  final StructureStorage storage;
+  final Future<void> Function(String? departmentId, String? groupId) onChanged;
+
+  const _StructureTab({
+    required this.departmentId,
+    required this.groupId,
+    required this.storage,
+    required this.onChanged,
+  });
+
+  @override
+  State<_StructureTab> createState() => _StructureTabState();
+}
+
+class _StructureTabState extends State<_StructureTab> {
+  bool _loading = true;
+  List<DepartmentModel> _deps = [];
+  List<GroupModel> _groups = [];
+
+  String? _depId;
+  String? _groupId;
+
+  @override
+  void initState() {
+    super.initState();
+    _depId = widget.departmentId;
+    _groupId = widget.groupId;
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final deps = await widget.storage.loadDepartments();
+    final groups = await widget.storage.loadGroups();
+
+    if (!mounted) return;
+
+    setState(() {
+      _deps = deps..sort((a, b) => a.name.compareTo(b.name));
+      _groups = groups..sort((a, b) => a.name.compareTo(b.name));
+      _loading = false;
+    });
+
+    // если выбранная группа не принадлежит выбранному подразделению — сбросим
+    if (_groupId != null && _depId != null) {
+      final g = _groups.where((x) => x.id == _groupId).cast<GroupModel?>().firstOrNull;
+      if (g != null && g.departmentId != _depId) {
+        _groupId = null;
+        await widget.onChanged(_depId, _groupId);
+        if (!mounted) return;
+        setState(() {});
+      }
+    }
+  }
+
+  List<GroupModel> get _groupsForSelectedDep {
+    final depId = _depId;
+    if (depId == null || depId.isEmpty) return [];
+    return _groups.where((g) => g.departmentId == depId).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+
+    final groups = _groupsForSelectedDep;
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Подразделение', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String?>(
+                  initialValue: _depId,
+                  decoration: const InputDecoration(border: OutlineInputBorder()),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('— не выбрано —')),
+                    ..._deps.map((d) => DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+                  ],
+                  onChanged: (v) async {
+                    setState(() {
+                      _depId = v;
+                      _groupId = null; // при смене подразделения сбрасываем группу
+                    });
+                    await widget.onChanged(_depId, _groupId);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Группа', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String?>(
+                  initialValue: _groupId,
+                  decoration: const InputDecoration(border: OutlineInputBorder()),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('— не выбрано —')),
+                    ...groups.map((g) => DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
+                  ],
+                  onChanged: (_depId == null)
+                      ? null
+                      : (v) async {
+                          setState(() => _groupId = v);
+                          await widget.onChanged(_depId, _groupId);
+                        },
+                ),
+                const SizedBox(height: 8),
+                if (_depId == null)
+                  const Text('Сначала выбери подразделение, чтобы выбрать группу.'),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        FilledButton.tonalIcon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Обновить списки'),
+        ),
+      ],
     );
   }
 }
@@ -289,7 +470,7 @@ class _ScheduleTab extends StatelessWidget {
                 Text('Тип графика', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<ScheduleType>(
-                  value: scheduleType,
+                  initialValue: scheduleType,
                   items: const [
                     DropdownMenuItem(value: ScheduleType.twoTwo, child: Text('2/2')),
                     DropdownMenuItem(value: ScheduleType.fiveTwo, child: Text('5/2')),
@@ -340,7 +521,7 @@ class _ScheduleTab extends StatelessWidget {
                 Text('Длительность смены', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<int>(
-                  value: shiftHours,
+                  initialValue: shiftHours,
                   items: const [
                     DropdownMenuItem(value: 9, child: Text('9 часов')),
                     DropdownMenuItem(value: 12, child: Text('12 часов')),
@@ -370,8 +551,7 @@ class _ScheduleTab extends StatelessWidget {
                 ...List.generate(14, (i) {
                   final d = DateTime.now().add(Duration(days: i));
                   final isWork = isWorkDay(day: d, type: scheduleType, startDate: startDate);
-                  final label =
-                      '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}';
+                  final label = '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}';
                   return ListTile(
                     dense: true,
                     title: Text(label),
@@ -422,14 +602,12 @@ class _SalaryTab extends StatelessWidget {
 
 class _FinesTab extends StatelessWidget {
   const _FinesTab();
-
   @override
   Widget build(BuildContext context) => const Center(child: Text('Штрафы: позже'));
 }
 
 class _HistoryTab extends StatelessWidget {
   const _HistoryTab();
-
   @override
   Widget build(BuildContext context) => const Center(child: Text('История: позже'));
 }
