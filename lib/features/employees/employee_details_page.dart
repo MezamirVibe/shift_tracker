@@ -117,9 +117,17 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
         confirmText: 'Сохранить',
       ),
     );
+
+    // ✅ FIX: use_build_context_synchronously (после await обязательно проверяем)
+    if (!mounted) return;
+
     if (draft == null) return;
 
     final current = await _getFreshEmployee();
+
+    // ✅ ещё одна защита после await
+    if (!mounted) return;
+
     if (current == null) return;
 
     final updated = current.copyWith(
@@ -245,6 +253,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             onChanged:
                 (nextType, nextStart, nextShiftHours, nextBreakHours) async {
               final current = await _getFreshEmployee();
+              if (!mounted) return;
               if (current == null) return;
 
               final updated = current.copyWith(
@@ -262,6 +271,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             storage: _structureStorage,
             onChanged: (depId, grpId) async {
               final current = await _getFreshEmployee();
+              if (!mounted) return;
               if (current == null) return;
 
               final updated = current.copyWith(
@@ -330,13 +340,12 @@ class _StructureTabState extends State<_StructureTab> {
       _loading = false;
     });
 
-    // если выбранная группа не принадлежит выбранному подразделению — сбросим
     if (_groupId != null && _depId != null) {
-      final g =
-          _groups.where((x) => x.id == _groupId).cast<dynamic?>().firstOrNull;
+      final g = _groups.where((x) => x.id == _groupId).firstOrNull;
       if (g != null && g.departmentId != _depId) {
         _groupId = null;
         await widget.onChanged(_depId, _groupId);
+
         if (!mounted) return;
         setState(() {});
       }
@@ -364,8 +373,10 @@ class _StructureTabState extends State<_StructureTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Подразделение',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Подразделение',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String?>(
                   initialValue: _depId,
@@ -378,7 +389,7 @@ class _StructureTabState extends State<_StructureTab> {
                     ),
                     ..._deps.map(
                       (d) => DropdownMenuItem<String?>(
-                        value: d.id as String?,
+                        value: d.id as String,
                         child: Text(d.name as String),
                       ),
                     ),
@@ -415,7 +426,7 @@ class _StructureTabState extends State<_StructureTab> {
                     ),
                     ...groups.map(
                       (g) => DropdownMenuItem<String?>(
-                        value: g.id as String?,
+                        value: g.id as String,
                         child: Text(g.name as String),
                       ),
                     ),
@@ -430,7 +441,8 @@ class _StructureTabState extends State<_StructureTab> {
                 const SizedBox(height: 8),
                 if (_depId == null)
                   const Text(
-                      'Сначала выбери подразделение, чтобы выбрать группу.'),
+                    'Сначала выбери подразделение, чтобы выбрать группу.',
+                  ),
               ],
             ),
           ),
