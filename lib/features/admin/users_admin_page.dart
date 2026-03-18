@@ -16,6 +16,10 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   final _login = TextEditingController();
   final _pass = TextEditingController();
 
+  final _lastName = TextEditingController();
+  final _firstName = TextEditingController();
+  final _middleName = TextEditingController();
+
   final _employeesStorage = EmployeesStorage();
   final _structureStorage = StructureStorage();
 
@@ -31,6 +35,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   String? _groupId;
   String? _employeeId;
 
+  bool _createEmployeeForWorker = true;
+
   @override
   void initState() {
     super.initState();
@@ -41,7 +47,16 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   void dispose() {
     _login.dispose();
     _pass.dispose();
+    _lastName.dispose();
+    _firstName.dispose();
+    _middleName.dispose();
     super.dispose();
+  }
+
+  void _snack(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text)),
+    );
   }
 
   Future<void> _loadLists() async {
@@ -56,6 +71,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     groups.sort((a, b) => a.name.compareTo(b.name));
 
     if (!mounted) return;
+
     setState(() {
       _employees = employees;
       _departments = deps;
@@ -64,76 +80,156 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     });
   }
 
-  void _snack(String text) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-
-  void _resetBindingsForRole(UserRole r) {
-    // обнуляем "не свои" поля
+  void _resetBindingsForRole(UserRole role) {
     setState(() {
-      switch (r) {
+      switch (role) {
         case UserRole.manager:
+          _departmentId = null;
           _groupId = null;
           _employeeId = null;
+          _createEmployeeForWorker = false;
           break;
         case UserRole.master:
           _departmentId = null;
+          _groupId = null;
           _employeeId = null;
+          _createEmployeeForWorker = false;
           break;
         case UserRole.worker:
           _departmentId = null;
           _groupId = null;
+          _employeeId = null;
+          _createEmployeeForWorker = true;
           break;
         case UserRole.superAdmin:
           _departmentId = null;
           _groupId = null;
           _employeeId = null;
+          _createEmployeeForWorker = false;
           break;
       }
     });
   }
 
-  List<GroupModel> _groupsForDep(String? depId) {
+  List<GroupModel> _groupsForDepartment(String? depId) {
     if (depId == null) return const [];
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
-  String _bindingSummaryForUser(AuthService auth, String? depId,
-      String? groupId, String? empId, UserRole role) {
-    if (role == UserRole.superAdmin) return 'Привязка не требуется';
+  DepartmentModel? _findDepartment(String? depId) {
+    if (depId == null) return null;
+    for (final d in _departments) {
+      if (d.id == depId) return d;
+    }
+    return null;
+  }
 
+  GroupModel? _findGroup(String? groupId) {
+    if (groupId == null) return null;
+    for (final g in _groups) {
+      if (g.id == groupId) return g;
+    }
+    return null;
+  }
+
+  EmployeeModel? _findEmployee(String? employeeId) {
+    if (employeeId == null) return null;
+    for (final e in _employees) {
+      if (e.id == employeeId) return e;
+    }
+    return null;
+  }
+
+  String _bindingSummaryForUser(
+    String? depId,
+    String? groupId,
+    String? empId,
+    UserRole role,
+  ) {
     switch (role) {
-      case UserRole.manager:
-        final d = _departments
-            .where((x) => x.id == depId)
-            .cast<DepartmentModel?>()
-            .firstOrNull;
-        return 'Подразделение: ${d?.name ?? '—'}';
-      case UserRole.master:
-        final g = _groups
-            .where((x) => x.id == groupId)
-            .cast<GroupModel?>()
-            .firstOrNull;
-        return 'Группа: ${g?.name ?? '—'}';
-      case UserRole.worker:
-        final e = _employees
-            .where((x) => x.id == empId)
-            .cast<EmployeeModel?>()
-            .firstOrNull;
-        return 'Сотрудник: ${e?.fullName ?? '—'}';
       case UserRole.superAdmin:
         return 'Привязка не требуется';
+      case UserRole.manager:
+        final dep = _findDepartment(depId);
+        return 'Подразделение: ${dep?.name ?? '—'}';
+      case UserRole.master:
+        final group = _findGroup(groupId);
+        final dep = _findDepartment(group?.departmentId);
+        if (group == null) return 'Группа: —';
+        return dep == null
+            ? 'Группа: ${group.name}'
+            : 'Группа: ${group.name} • ${dep.name}';
+      case UserRole.worker:
+        final employee = _findEmployee(empId);
+        return 'Сотрудник: ${employee?.fullName ?? '—'}';
     }
   }
 
-  bool _isBindingValidForRole(UserRole r,
-      {String? depId, String? groupId, String? empId}) {
-    switch (r) {
+  String _normalizeFullName(
+    String lastName,
+    String firstName,
+    String middleName,
+  ) {
+    return [lastName.trim(), firstName.trim(), middleName.trim()]
+        .where((x) => x.isNotEmpty)
+        .join(' ');
+  }
+
+  bool _validateCreate(AuthService auth) {
+    final login = _login.text.trim();
+    final pass = _pass.text;
+    final lastName = _lastName.text.trim();
+    final firstName = _firstName.text.trim();
+
+    if (login.isEmpty) {
+      _snack('Логин пустой');
+      return false;
+    }
+
+    if (pass.length < 4) {
+      _snack('Пароль минимум 4 символа');
+      return false;
+    }
+
+    if (lastName.isEmpty || firstName.isEmpty) {
+      _snack('Заполни минимум фамилию и имя');
+      return false;
+    }
+
+    switch (_role) {
       case UserRole.manager:
-        return depId != null;
+        if (_departmentId == null || _departmentId!.isEmpty) {
+          _snack(auth.requiredBindingHint(_role));
+          return false;
+        }
+        return true;
+
       case UserRole.master:
-        return groupId != null;
+        if (_groupId == null || _groupId!.isEmpty) {
+          _snack(auth.requiredBindingHint(_role));
+          return false;
+        }
+        return true;
+
       case UserRole.worker:
-        return empId != null;
+        if (_createEmployeeForWorker) {
+          if (_departmentId == null ||
+              _departmentId!.isEmpty ||
+              _groupId == null ||
+              _groupId!.isEmpty) {
+            _snack(
+              'Для нового рабочего укажи подразделение и группу. Тогда сотрудник сразу появится в списке.',
+            );
+            return false;
+          }
+        } else {
+          if (_employeeId == null || _employeeId!.isEmpty) {
+            _snack(auth.requiredBindingHint(_role));
+            return false;
+          }
+        }
+        return true;
+
       case UserRole.superAdmin:
         return true;
     }
@@ -141,42 +237,63 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
   Future<void> _create() async {
     final auth = AuthService.instance;
-    final login = _login.text.trim();
-    final pass = _pass.text;
 
-    if (login.isEmpty) {
-      _snack('Логин пустой');
-      return;
-    }
-    if (pass.length < 4) {
-      _snack('Пароль минимум 4 символа');
-      return;
-    }
-
-    if (!_isBindingValidForRole(_role,
-        depId: _departmentId, groupId: _groupId, empId: _employeeId)) {
-      _snack(AuthService.instance.requiredBindingHint(_role));
-      return;
-    }
+    if (!_validateCreate(auth)) return;
 
     final ok = await auth.createUser(
-      login: login,
-      password: pass,
+      login: _login.text.trim(),
+      password: _pass.text,
       role: _role,
-      departmentId: _role == UserRole.manager ? _departmentId : null,
-      groupId: _role == UserRole.master ? _groupId : null,
-      employeeId: _role == UserRole.worker ? _employeeId : null,
+      lastName: _lastName.text.trim(),
+      firstName: _firstName.text.trim(),
+      middleName: _middleName.text.trim(),
+      departmentId: (_role == UserRole.manager ||
+              (_role == UserRole.worker && _createEmployeeForWorker))
+          ? _departmentId
+          : null,
+      groupId: (_role == UserRole.master ||
+              (_role == UserRole.worker && _createEmployeeForWorker))
+          ? _groupId
+          : null,
+      employeeId:
+          (_role == UserRole.worker && !_createEmployeeForWorker)
+              ? _employeeId
+              : null,
+      createEmployeeForWorker:
+          _role == UserRole.worker && _createEmployeeForWorker,
+      employeePosition: 'Рабочий',
+      employeeSalary: 0,
+      employeeBonus: 0,
+      employeeScheduleType: ScheduleType.twoTwo,
+      employeeScheduleStartDate: DateTime.now(),
+      employeeShiftHours: 12,
+      employeeBreakHours: 1,
     );
 
     if (!mounted) return;
 
     if (!ok) {
-      _snack('Не удалось создать (возможно логин уже есть или нет прав)');
+      _snack('Не удалось создать пользователя');
       return;
     }
 
     _login.clear();
     _pass.clear();
+    _lastName.clear();
+    _firstName.clear();
+    _middleName.clear();
+
+    setState(() {
+      _role = UserRole.worker;
+      _departmentId = null;
+      _groupId = null;
+      _employeeId = null;
+      _createEmployeeForWorker = true;
+    });
+
+    await _loadLists();
+
+    if (!mounted) return;
     _snack('Пользователь создан');
     setState(() {});
   }
@@ -189,11 +306,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
         content: Text('Удалить "$login"?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Удалить')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить'),
+          ),
         ],
       ),
     );
@@ -202,28 +321,32 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
     final auth = AuthService.instance;
     final deleted = await auth.deleteUser(userId);
+
     if (!mounted) return;
+
     if (!deleted) {
       _snack('Нельзя удалить этого пользователя');
       return;
     }
+
     _snack('Удалено');
     setState(() {});
   }
 
   Future<void> _editUserDialog(String userId) async {
     final auth = AuthService.instance;
-    final u =
-        auth.users.where((x) => x.id == userId).cast<dynamic>().firstOrNull;
-    if (u == null) return;
+    final user = auth.users.where((x) => x.id == userId).firstOrNull;
+    if (user == null) return;
 
-    UserRole role = (u.role as UserRole);
+    UserRole role = user.role;
+    String? depId = user.departmentId;
+    String? groupId = user.groupId;
+    String? empId = user.employeeId;
 
-    String? depId = u.departmentId as String?;
-    String? groupId = u.groupId as String?;
-    String? empId = u.employeeId as String?;
+    String lastName = user.lastName;
+    String firstName = user.firstName;
+    String middleName = user.middleName;
 
-    // нормализация
     if (role == UserRole.manager) {
       groupId = null;
       empId = null;
@@ -239,163 +362,287 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       empId = null;
     }
 
+    final lastNameCtrl = TextEditingController(text: lastName);
+    final firstNameCtrl = TextEditingController(text: firstName);
+    final middleNameCtrl = TextEditingController(text: middleName);
+
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) {
-        List<GroupModel> groupsForDep = _groupsForDep(depId);
+        return StatefulBuilder(
+          builder: (context, setLocal) {
+            final groupsForDep = _groupsForDepartment(depId);
 
-        Widget bindingWidget() {
-          if (role == UserRole.manager) {
-            return DropdownButtonFormField<String?>(
-              initialValue: depId,
-              decoration: const InputDecoration(
-                  labelText: 'Подразделение', border: OutlineInputBorder()),
-              items: [
-                const DropdownMenuItem<String?>(
-                    value: null, child: Text('— выбери подразделение —')),
-                ..._departments.map((d) => DropdownMenuItem<String?>(
-                    value: d.id, child: Text(d.name))),
-              ],
-              onChanged: (v) => depId = v,
-            );
-          }
-
-          if (role == UserRole.master) {
-            return Column(
-              children: [
-                DropdownButtonFormField<String?>(
+            Widget bindingEditor() {
+              if (role == UserRole.manager) {
+                return DropdownButtonFormField<String?>(
                   initialValue: depId,
                   decoration: const InputDecoration(
-                    labelText: 'Подразделение (для выбора групп)',
+                    labelText: 'Подразделение',
                     border: OutlineInputBorder(),
                   ),
                   items: [
                     const DropdownMenuItem<String?>(
-                        value: null, child: Text('— выбери подразделение —')),
-                    ..._departments.map((d) => DropdownMenuItem<String?>(
-                        value: d.id, child: Text(d.name))),
+                      value: null,
+                      child: Text('— выбери подразделение —'),
+                    ),
+                    ..._departments.map(
+                      (d) => DropdownMenuItem<String?>(
+                        value: d.id,
+                        child: Text(d.name),
+                      ),
+                    ),
                   ],
-                  onChanged: (v) {
-                    depId = v;
-                    groupId = null;
-                    groupsForDep = _groupsForDep(depId);
+                  onChanged: (value) {
+                    setLocal(() {
+                      depId = value;
+                    });
                   },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String?>(
-                  initialValue: groupId,
+                );
+              }
+
+              if (role == UserRole.master) {
+                return Column(
+                  children: [
+                    DropdownButtonFormField<String?>(
+                      initialValue: depId,
+                      decoration: const InputDecoration(
+                        labelText: 'Подразделение',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('— выбери подразделение —'),
+                        ),
+                        ..._departments.map(
+                          (d) => DropdownMenuItem<String?>(
+                            value: d.id,
+                            child: Text(d.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setLocal(() {
+                          depId = value;
+                          groupId = null;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String?>(
+                      initialValue: groupId,
+                      decoration: const InputDecoration(
+                        labelText: 'Группа',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('— выбери группу —'),
+                        ),
+                        ...groupsForDep.map(
+                          (g) => DropdownMenuItem<String?>(
+                            value: g.id,
+                            child: Text(g.name),
+                          ),
+                        ),
+                      ],
+                      onChanged: depId == null
+                          ? null
+                          : (value) {
+                              setLocal(() {
+                                groupId = value;
+                              });
+                            },
+                    ),
+                  ],
+                );
+              }
+
+              if (role == UserRole.worker) {
+                return DropdownButtonFormField<String?>(
+                  initialValue: empId,
                   decoration: const InputDecoration(
-                      labelText: 'Группа', border: OutlineInputBorder()),
+                    labelText: 'Сотрудник',
+                    border: OutlineInputBorder(),
+                  ),
                   items: [
                     const DropdownMenuItem<String?>(
-                        value: null, child: Text('— выбери группу —')),
-                    ...groupsForDep.map((g) => DropdownMenuItem<String?>(
-                        value: g.id, child: Text(g.name))),
+                      value: null,
+                      child: Text('— выбери сотрудника —'),
+                    ),
+                    ..._employees.map(
+                      (e) => DropdownMenuItem<String?>(
+                        value: e.id,
+                        child: Text('${e.fullName} • ${e.position}'),
+                      ),
+                    ),
                   ],
-                  onChanged: (v) => groupId = v,
+                  onChanged: (value) {
+                    setLocal(() {
+                      empId = value;
+                    });
+                  },
+                );
+              }
+
+              return const Text('Суперадмин: привязка не требуется');
+            }
+
+            return AlertDialog(
+              title: Text('Пользователь: ${user.login}'),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: lastNameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Фамилия',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: firstNameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Имя',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: middleNameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Отчество',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<UserRole>(
+                        initialValue: role,
+                        decoration: const InputDecoration(
+                          labelText: 'Роль',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: UserRole.values
+                            .map(
+                              (r) => DropdownMenuItem<UserRole>(
+                                value: r,
+                                child: Text(roleLabel(r)),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+
+                          setLocal(() {
+                            role = value;
+
+                            switch (role) {
+                              case UserRole.manager:
+                                depId = null;
+                                groupId = null;
+                                empId = null;
+                                break;
+                              case UserRole.master:
+                                depId = null;
+                                groupId = null;
+                                empId = null;
+                                break;
+                              case UserRole.worker:
+                                depId = null;
+                                groupId = null;
+                                empId = null;
+                                break;
+                              case UserRole.superAdmin:
+                                depId = null;
+                                groupId = null;
+                                empId = null;
+                                break;
+                            }
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      bindingEditor(),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          auth.requiredBindingHint(role),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Отмена'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    lastName = lastNameCtrl.text.trim();
+                    firstName = firstNameCtrl.text.trim();
+                    middleName = middleNameCtrl.text.trim();
+
+                    if (lastName.isEmpty || firstName.isEmpty) {
+                      _snack('Заполни минимум фамилию и имя');
+                      return;
+                    }
+
+                    switch (role) {
+                      case UserRole.manager:
+                        if (depId == null || depId!.isEmpty) {
+                          _snack(auth.requiredBindingHint(role));
+                          return;
+                        }
+                        break;
+                      case UserRole.master:
+                        if (groupId == null || groupId!.isEmpty) {
+                          _snack(auth.requiredBindingHint(role));
+                          return;
+                        }
+                        break;
+                      case UserRole.worker:
+                        if (empId == null || empId!.isEmpty) {
+                          _snack(auth.requiredBindingHint(role));
+                          return;
+                        }
+                        break;
+                      case UserRole.superAdmin:
+                        break;
+                    }
+
+                    Navigator.pop(context, true);
+                  },
+                  child: const Text('Сохранить'),
                 ),
               ],
             );
-          }
-
-          if (role == UserRole.worker) {
-            return DropdownButtonFormField<String?>(
-              initialValue: empId,
-              decoration: const InputDecoration(
-                  labelText: 'Сотрудник', border: OutlineInputBorder()),
-              items: [
-                const DropdownMenuItem<String?>(
-                    value: null, child: Text('— выбери сотрудника —')),
-                ..._employees.map((e) => DropdownMenuItem<String?>(
-                    value: e.id, child: Text(e.fullName))),
-              ],
-              onChanged: (v) => empId = v,
-            );
-          }
-
-          return const Text('Суперадмин: привязка не требуется');
-        }
-
-        return StatefulBuilder(
-          builder: (context, setLocal) => AlertDialog(
-            title: const Text('Доступ пользователя'),
-            content: SizedBox(
-              width: 520,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<UserRole>(
-                    initialValue: role,
-                    decoration: const InputDecoration(
-                        labelText: 'Роль', border: OutlineInputBorder()),
-                    items: UserRole.values
-                        .map((r) => DropdownMenuItem<UserRole>(
-                            value: r, child: Text(roleLabel(r))))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      role = v;
-
-                      // сброс привязок при смене роли
-                      if (role == UserRole.manager) {
-                        groupId = null;
-                        empId = null;
-                      } else if (role == UserRole.master) {
-                        empId = null;
-                        // depId оставим как выбор-основание, groupId сбросим
-                        groupId = null;
-                      } else if (role == UserRole.worker) {
-                        depId = null;
-                        groupId = null;
-                      } else {
-                        depId = null;
-                        groupId = null;
-                        empId = null;
-                      }
-
-                      groupsForDep = _groupsForDep(depId);
-                      setLocal(() {});
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  bindingWidget(),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      AuthService.instance.requiredBindingHint(role),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Отмена')),
-              FilledButton(
-                onPressed: () {
-                  if (!_isBindingValidForRole(role,
-                      depId: depId, groupId: groupId, empId: empId)) {
-                    _snack(AuthService.instance.requiredBindingHint(role));
-                    return;
-                  }
-                  Navigator.pop(context, true);
-                },
-                child: const Text('Сохранить'),
-              ),
-            ],
-          ),
+          },
         );
       },
     );
+
+    lastNameCtrl.dispose();
+    firstNameCtrl.dispose();
+    middleNameCtrl.dispose();
 
     if (ok != true) return;
 
     final saved = await auth.updateUserAccess(
       userId: userId,
       role: role,
+      lastName: lastName,
+      firstName: firstName,
+      middleName: middleName,
       departmentId: role == UserRole.manager ? depId : null,
       groupId: role == UserRole.master ? groupId : null,
       employeeId: role == UserRole.worker ? empId : null,
@@ -407,8 +654,110 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       _snack('Не удалось сохранить');
       return;
     }
+
     _snack('Сохранено');
     setState(() {});
+  }
+
+  Widget _workerCreateMode() {
+    if (_role != UserRole.worker) return const SizedBox.shrink();
+
+    return Card(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Сразу создать сотрудника для рабочего'),
+              subtitle: const Text(
+                'Рекомендуется: пользователь появится и в системе доступа, и в списке сотрудников.',
+              ),
+              value: _createEmployeeForWorker,
+              onChanged: (value) {
+                setState(() {
+                  _createEmployeeForWorker = value;
+                  _departmentId = null;
+                  _groupId = null;
+                  _employeeId = null;
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+            if (_createEmployeeForWorker) ...[
+              DropdownButtonFormField<String?>(
+                initialValue: _departmentId,
+                decoration: const InputDecoration(
+                  labelText: 'Подразделение нового сотрудника',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('— выбери подразделение —'),
+                  ),
+                  ..._departments.map(
+                    (d) => DropdownMenuItem<String?>(
+                      value: d.id,
+                      child: Text(d.name),
+                    ),
+                  ),
+                ],
+                onChanged: (value) => setState(() {
+                  _departmentId = value;
+                  _groupId = null;
+                }),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String?>(
+                initialValue: _groupId,
+                decoration: const InputDecoration(
+                  labelText: 'Группа нового сотрудника',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('— выбери группу —'),
+                  ),
+                  ..._groupsForDepartment(_departmentId).map(
+                    (g) => DropdownMenuItem<String?>(
+                      value: g.id,
+                      child: Text(g.name),
+                    ),
+                  ),
+                ],
+                onChanged: _departmentId == null
+                    ? null
+                    : (value) => setState(() => _groupId = value),
+              ),
+            ] else ...[
+              DropdownButtonFormField<String?>(
+                initialValue: _employeeId,
+                decoration: const InputDecoration(
+                  labelText: 'Привязать к существующему сотруднику',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('— выбери сотрудника —'),
+                  ),
+                  ..._employees.map(
+                    (e) => DropdownMenuItem<String?>(
+                      value: e.id,
+                      child: Text('${e.fullName} • ${e.position}'),
+                    ),
+                  ),
+                ],
+                onChanged: (value) => setState(() => _employeeId = value),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _bindingEditorForCreate() {
@@ -423,35 +772,50 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       return DropdownButtonFormField<String?>(
         initialValue: _departmentId,
         decoration: const InputDecoration(
-            labelText: 'Подразделение', border: OutlineInputBorder()),
+          labelText: 'Подразделение',
+          border: OutlineInputBorder(),
+        ),
         items: [
           const DropdownMenuItem<String?>(
-              value: null, child: Text('— выбери подразделение —')),
-          ..._departments.map((d) =>
-              DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+            value: null,
+            child: Text('— выбери подразделение —'),
+          ),
+          ..._departments.map(
+            (d) => DropdownMenuItem<String?>(
+              value: d.id,
+              child: Text(d.name),
+            ),
+          ),
         ],
-        onChanged: (v) => setState(() => _departmentId = v),
+        onChanged: (value) => setState(() => _departmentId = value),
       );
     }
 
     if (_role == UserRole.master) {
-      final groups = _groupsForDep(_departmentId);
+      final groups = _groupsForDepartment(_departmentId);
+
       return Column(
         children: [
           DropdownButtonFormField<String?>(
             initialValue: _departmentId,
             decoration: const InputDecoration(
-              labelText: 'Подразделение (для выбора групп)',
+              labelText: 'Подразделение',
               border: OutlineInputBorder(),
             ),
             items: [
               const DropdownMenuItem<String?>(
-                  value: null, child: Text('— выбери подразделение —')),
-              ..._departments.map((d) =>
-                  DropdownMenuItem<String?>(value: d.id, child: Text(d.name))),
+                value: null,
+                child: Text('— выбери подразделение —'),
+              ),
+              ..._departments.map(
+                (d) => DropdownMenuItem<String?>(
+                  value: d.id,
+                  child: Text(d.name),
+                ),
+              ),
             ],
-            onChanged: (v) => setState(() {
-              _departmentId = v;
+            onChanged: (value) => setState(() {
+              _departmentId = value;
               _groupId = null;
             }),
           ),
@@ -459,34 +823,31 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           DropdownButtonFormField<String?>(
             initialValue: _groupId,
             decoration: const InputDecoration(
-                labelText: 'Группа', border: OutlineInputBorder()),
+              labelText: 'Группа',
+              border: OutlineInputBorder(),
+            ),
             items: [
               const DropdownMenuItem<String?>(
-                  value: null, child: Text('— выбери группу —')),
-              ...groups.map((g) =>
-                  DropdownMenuItem<String?>(value: g.id, child: Text(g.name))),
+                value: null,
+                child: Text('— выбери группу —'),
+              ),
+              ...groups.map(
+                (g) => DropdownMenuItem<String?>(
+                  value: g.id,
+                  child: Text(g.name),
+                ),
+              ),
             ],
-            onChanged: (_departmentId == null)
+            onChanged: _departmentId == null
                 ? null
-                : (v) => setState(() => _groupId = v),
+                : (value) => setState(() => _groupId = value),
           ),
         ],
       );
     }
 
     if (_role == UserRole.worker) {
-      return DropdownButtonFormField<String?>(
-        initialValue: _employeeId,
-        decoration: const InputDecoration(
-            labelText: 'Сотрудник', border: OutlineInputBorder()),
-        items: [
-          const DropdownMenuItem<String?>(
-              value: null, child: Text('— выбери сотрудника —')),
-          ..._employees.map((e) =>
-              DropdownMenuItem<String?>(value: e.id, child: Text(e.fullName))),
-        ],
-        onChanged: (v) => setState(() => _employeeId = v),
-      );
+      return _workerCreateMode();
     }
 
     return const Text('Суперадмин: привязка не требуется');
@@ -495,7 +856,12 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   @override
   Widget build(BuildContext context) {
     final auth = AuthService.instance;
-    final users = auth.users;
+    final users = auth.users.toList()
+      ..sort((a, b) {
+        final byName = a.fullName.compareTo(b.fullName);
+        if (byName != 0) return byName;
+        return a.login.compareTo(b.login);
+      });
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -506,43 +872,91 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Создать пользователя',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Создать пользователя',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _lastName,
+                  decoration: const InputDecoration(
+                    labelText: 'Фамилия',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _firstName,
+                  decoration: const InputDecoration(
+                    labelText: 'Имя',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _middleName,
+                  decoration: const InputDecoration(
+                    labelText: 'Отчество',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _login,
                   decoration: const InputDecoration(
-                      labelText: 'Логин', border: OutlineInputBorder()),
+                    labelText: 'Логин',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _pass,
                   obscureText: true,
                   decoration: const InputDecoration(
-                      labelText: 'Пароль', border: OutlineInputBorder()),
+                    labelText: 'Пароль',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<UserRole>(
                   initialValue: _role,
                   decoration: const InputDecoration(
-                      labelText: 'Роль', border: OutlineInputBorder()),
+                    labelText: 'Роль',
+                    border: OutlineInputBorder(),
+                  ),
                   items: UserRole.values
-                      .map((r) =>
-                          DropdownMenuItem(value: r, child: Text(roleLabel(r))))
+                      .map(
+                        (r) => DropdownMenuItem<UserRole>(
+                          value: r,
+                          child: Text(roleLabel(r)),
+                        ),
+                      )
                       .toList(),
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _role = v);
-                    _resetBindingsForRole(v);
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => _role = value);
+                    _resetBindingsForRole(value);
                   },
                 ),
                 const SizedBox(height: 12),
                 _bindingEditorForCreate(),
                 const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _role == UserRole.worker && _createEmployeeForWorker
+                        ? 'Для рабочего будет автоматически создан сотрудник: "${_normalizeFullName(_lastName.text, _firstName.text, _middleName.text)}".'
+                        : auth.requiredBindingHint(_role),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     FilledButton(
-                        onPressed: _create, child: const Text('Создать')),
+                      onPressed: _create,
+                      child: const Text('Создать'),
+                    ),
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: _loadLists,
@@ -556,38 +970,55 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           ),
         ),
         const SizedBox(height: 12),
-        Text('Пользователи', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          'Пользователи',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 8),
-        ...users.map((u) {
-          final isMe = auth.currentUser?.id == u.id;
-
-          final binding = _bindingSummaryForUser(
-              auth, u.departmentId, u.groupId, u.employeeId, u.role);
-
-          return Card(
-            child: ListTile(
-              title: Text(u.login),
-              subtitle: Text('${roleLabel(u.role)} • $binding'),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: 'Роль/привязка',
-                    icon: const Icon(Icons.manage_accounts_outlined),
-                    onPressed: () => _editUserDialog(u.id),
-                  ),
-                  IconButton(
-                    tooltip: 'Удалить',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: (u.role == UserRole.superAdmin || isMe)
-                        ? null
-                        : () => _deleteUser(u.id, u.login),
-                  ),
-                ],
-              ),
+        if (users.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Пользователей пока нет'),
             ),
-          );
-        }),
+          )
+        else
+          ...users.map((u) {
+            final isMe = auth.currentUser?.id == u.id;
+            final binding = _bindingSummaryForUser(
+              u.departmentId,
+              u.groupId,
+              u.employeeId,
+              u.role,
+            );
+
+            return Card(
+              child: ListTile(
+                title: Text(u.fullName),
+                subtitle: Text(
+                  '${u.login} • ${roleLabel(u.role)}\n$binding',
+                ),
+                isThreeLine: true,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'Роль и привязка',
+                      icon: const Icon(Icons.manage_accounts_outlined),
+                      onPressed: () => _editUserDialog(u.id),
+                    ),
+                    IconButton(
+                      tooltip: 'Удалить',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: (u.role == UserRole.superAdmin || isMe)
+                          ? null
+                          : () => _deleteUser(u.id, u.login),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
       ],
     );
   }

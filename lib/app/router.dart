@@ -1,17 +1,16 @@
 import 'package:go_router/go_router.dart';
 
-import '../features/admin/admin_page.dart';
 import '../features/auth/auth_models.dart';
 import '../features/auth/auth_service.dart';
 import '../features/auth/bootstrap_admin_page.dart';
 import '../features/auth/login_page.dart';
 import '../features/auth/splash_page.dart';
 
-// ✅ Алиасы — чтобы никогда не ловить конфликт имён
+import '../features/admin/admin_page.dart' as adm;
 import '../features/calendar/calendar_page.dart' as cal;
 import '../features/day/day_page.dart' as day;
-import '../features/employees/employees_page.dart' as emp;
 import '../features/employees/employee_details_page.dart' as emp_details;
+import '../features/employees/employees_page.dart' as emp;
 
 class AppRouter {
   static const String splash = '/splash';
@@ -52,7 +51,6 @@ class AppRouter {
           return calendar;
         }
 
-        // guard admin
         if (loc.startsWith(admin)) {
           final can = auth.currentUser?.role == UserRole.superAdmin ||
               auth.hasPerm(AppPermission.manageUsers) ||
@@ -64,11 +62,22 @@ class AppRouter {
         return null;
       },
       routes: [
-        GoRoute(path: splash, builder: (_, __) => const SplashPage()),
-        GoRoute(path: login, builder: (_, __) => const LoginPage()),
         GoRoute(
-            path: bootstrap, builder: (_, __) => const BootstrapAdminPage()),
-        GoRoute(path: admin, builder: (_, __) => const AdminPage()),
+          path: splash,
+          builder: (_, __) => const SplashPage(),
+        ),
+        GoRoute(
+          path: login,
+          builder: (_, __) => const LoginPage(),
+        ),
+        GoRoute(
+          path: bootstrap,
+          builder: (_, __) => const BootstrapAdminPage(),
+        ),
+        GoRoute(
+          path: admin,
+          builder: (_, __) => const adm.AdminPage(),
+        ),
         GoRoute(
           path: calendar,
           builder: (_, __) => const cal.CalendarPage(),

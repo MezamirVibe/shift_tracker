@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../structure/structure_page.dart';
@@ -15,59 +17,137 @@ class AdminPage extends StatefulWidget {
 
 class _AdminPageState extends State<AdminPage>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 3, vsync: this);
+  late final TabController _tabController;
+
+  bool get _canManageUsers =>
+      AuthService.instance.currentUser?.role == UserRole.superAdmin ||
+      AuthService.instance.hasPerm(AppPermission.manageUsers);
+
+  bool get _canEditRolePolicies =>
+      AuthService.instance.currentUser?.role == UserRole.superAdmin ||
+      AuthService.instance.hasPerm(AppPermission.editRolePolicies);
+
+  bool get _canManageStructure =>
+      AuthService.instance.currentUser?.role == UserRole.superAdmin ||
+      AuthService.instance.hasPerm(AppPermission.editEmployees) ||
+      AuthService.instance.hasPerm(AppPermission.manageUsers);
+
+  @override
+  void initState() {
+    super.initState();
+
+    final tabCount = (_canManageUsers ? 1 : 0) +
+        (_canEditRolePolicies ? 1 : 0) +
+        (_canManageStructure ? 1 : 0);
+
+    _tabController = TabController(
+      length: tabCount == 0 ? 1 : tabCount,
+      vsync: this,
+    );
+  }
 
   @override
   void dispose() {
-    _tabs.dispose();
+    _tabController.dispose();
     super.dispose();
+  }
+
+  List<Tab> _buildTabs() {
+    final tabs = <Tab>[];
+
+    if (_canManageUsers) {
+      tabs.add(const Tab(text: 'Пользователи'));
+    }
+
+    if (_canManageStructure) {
+      tabs.add(const Tab(text: 'Структура'));
+    }
+
+    if (_canEditRolePolicies) {
+      tabs.add(const Tab(text: 'Роли и права'));
+    }
+
+    if (tabs.isEmpty) {
+      tabs.add(const Tab(text: 'Нет доступа'));
+    }
+
+    return tabs;
+  }
+
+  List<Widget> _buildViews() {
+    final views = <Widget>[];
+
+    if (_canManageUsers) {
+      views.add(const UsersAdminPage());
+    }
+
+    if (_canManageStructure) {
+      views.add(const StructurePage());
+    }
+
+    if (_canEditRolePolicies) {
+      views.add(const RolesEditorPage());
+    }
+
+    if (views.isEmpty) {
+      views.add(
+        const Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'У вас нет доступа к разделу администрирования.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return views;
   }
 
   @override
   Widget build(BuildContext context) {
-    final auth = AuthService.instance;
+    final tabs = _buildTabs();
+    final views = _buildViews();
 
-    final canUsers = auth.currentUser?.role == UserRole.superAdmin ||
-        auth.hasPerm(AppPermission.manageUsers);
-    final canRoles = auth.currentUser?.role == UserRole.superAdmin ||
-        auth.hasPerm(AppPermission.editRolePolicies);
-    final canStructure = auth.currentUser?.role == UserRole.superAdmin ||
-        auth.hasPerm(AppPermission.editEmployees);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Администрирование'),
-        bottom: TabBar(
-          controller: _tabs,
-          tabs: const [
-            Tab(text: 'Пользователи'),
-            Tab(text: 'Роли и права'),
-            Tab(text: 'Структура'),
-          ],
+    return AdaptiveScaffold(
+      title: 'Администрирование',
+      selectedIndex: 2,
+      items: [
+        NavItem(
+          label: 'Календарь',
+          icon: Icons.calendar_month,
+          onTap: () => context.go('/'),
         ),
-      ),
-      body: TabBarView(
-        controller: _tabs,
+        NavItem(
+          label: 'Сотрудники',
+          icon: Icons.people,
+          onTap: () => context.go('/employees'),
+        ),
+        NavItem(
+          label: 'Админ',
+          icon: Icons.admin_panel_settings,
+          onTap: () => context.go('/admin'),
+        ),
+      ],
+      child: Column(
         children: [
-          canUsers
-              ? const UsersAdminPage()
-              : const _NoAccess(text: 'Нет прав на управление пользователями'),
-          canRoles
-              ? const RolesEditorPage()
-              : const _NoAccess(text: 'Нет прав на настройку ролей'),
-          canStructure
-              ? const StructurePage()
-              : const _NoAccess(text: 'Нет прав на изменение структуры'),
+          Material(
+            color: Theme.of(context).colorScheme.surface,
+            child: TabBar(
+              controller: _tabController,
+              tabs: tabs,
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: views,
+            ),
+          ),
         ],
       ),
     );
   }
-}
-
-class _NoAccess extends StatelessWidget {
-  final String text;
-  const _NoAccess({required this.text});
-
-  @override
-  Widget build(BuildContext context) => Center(child: Text(text));
 }

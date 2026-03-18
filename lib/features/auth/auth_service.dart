@@ -10,6 +10,7 @@ class AuthService extends ChangeNotifier {
   static final AuthService instance = AuthService._();
 
   final AuthStorage _storage = AuthStorage();
+  final EmployeesStorage _employeesStorage = EmployeesStorage();
 
   bool _initialized = false;
   bool get initialized => _initialized;
@@ -46,8 +47,6 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // -------- permissions
-
   bool hasPerm(AppPermission p) {
     final u = _currentUser;
     if (u == null) return false;
@@ -57,8 +56,6 @@ class AuthService extends ChangeNotifier {
     if (policy == null) return false;
     return policy.permissions.contains(p);
   }
-
-  // -------- scope/visibility
 
   List<EmployeeModel> filterEmployeesByScope(List<EmployeeModel> employees) {
     final u = _currentUser;
@@ -90,7 +87,7 @@ class AuthService extends ChangeNotifier {
   String requiredBindingHint(UserRole role) {
     switch (role) {
       case UserRole.worker:
-        return 'Для роли "Рабочий" нужна привязка к сотруднику.';
+        return 'Для роли "Рабочий" нужен сотрудник. Можно привязать существующего или создать нового.';
       case UserRole.master:
         return 'Для роли "Мастер" нужна привязка к группе.';
       case UserRole.manager:
@@ -99,8 +96,6 @@ class AuthService extends ChangeNotifier {
         return 'Суперадмин видит всё, привязка не требуется.';
     }
   }
-
-  // -------- auth
 
   Future<bool> login(String login, String password) async {
     final user = _users
@@ -140,6 +135,9 @@ class AuthService extends ChangeNotifier {
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       login: login.trim(),
       role: UserRole.superAdmin,
+      lastName: '',
+      firstName: login.trim(),
+      middleName: '',
       saltB64: p.saltB64,
       hashB64: p.hashB64,
       iterations: p.iterations,
@@ -160,41 +158,129 @@ class AuthService extends ChangeNotifier {
     return user.id;
   }
 
-  // -------- users management
-
   Future<bool> createUser({
     required String login,
     required String password,
     required UserRole role,
+    required String lastName,
+    required String firstName,
+    required String middleName,
     String? departmentId,
     String? groupId,
     String? employeeId,
+
+    // для автосоздания сотрудника у рабочего
+    bool createEmployeeForWorker = false,
+    String? employeePosition,
+    int employeeSalary = 0,
+    int employeeBonus = 0,
+    ScheduleType employeeScheduleType = ScheduleType.twoTwo,
+    DateTime? employeeScheduleStartDate,
+    int employeeShiftHours = 12,
+    int employeeBreakHours = 1,
   }) async {
     if (!hasPerm(AppPermission.manageUsers) &&
         (currentUser?.role != UserRole.superAdmin)) {
       return false;
     }
 
-    final normalized = login.trim();
-    if (normalized.isEmpty) {
+    final normalizedLogin = login.trim();
+    final normalizedLastName = lastName.trim();
+    final normalizedFirstName = firstName.trim();
+    final normalizedMiddleName = middleName.trim();
+
+    if (normalizedLogin.isEmpty ||
+        normalizedLastName.isEmpty ||
+        normalizedFirstName.isEmpty) {
       return false;
     }
-    if (_users.any((u) => u.login == normalized)) {
+
+    if (_users.any((u) => u.login == normalizedLogin)) {
       return false;
+    }
+
+    String? dep = departmentId?.trim();
+    String? grp = groupId?.trim();
+    String? emp = employeeId?.trim();
+
+    switch (role) {
+      case UserRole.manager:
+        grp = null;
+        emp = null;
+        if (dep == null || dep.isEmpty) return false;
+        break;
+
+      case UserRole.master:
+        emp = null;
+        if (grp == null || grp.isEmpty) return false;
+        break;
+
+      case UserRole.worker:
+        dep = null;
+        grp = null;
+
+        if (createEmployeeForWorker) {
+          final workerDepId = departmentId?.trim();
+          final workerGroupId = groupId?.trim();
+
+          if (workerDepId == null ||
+              workerDepId.isEmpty ||
+              workerGroupId == null ||
+              workerGroupId.isEmpty) {
+            return false;
+          }
+
+          final employees = await _employeesStorage.load();
+
+          final newEmployee = EmployeeModel(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            fullName: [
+              normalizedLastName,
+              normalizedFirstName,
+              normalizedMiddleName,
+            ].where((x) => x.isNotEmpty).join(' '),
+            position: (employeePosition?.trim().isNotEmpty ?? false)
+                ? employeePosition!.trim()
+                : 'Рабочий',
+            salary: employeeSalary,
+            bonus: employeeBonus,
+            departmentId: workerDepId,
+            groupId: workerGroupId,
+            scheduleType: employeeScheduleType,
+            scheduleStartDate: employeeScheduleStartDate ?? DateTime.now(),
+            shiftHours: employeeShiftHours,
+            breakHours: employeeBreakHours,
+          );
+
+          await _employeesStorage.save([...employees, newEmployee]);
+          emp = newEmployee.id;
+        } else {
+          if (emp == null || emp.isEmpty) return false;
+        }
+        break;
+
+      case UserRole.superAdmin:
+        dep = null;
+        grp = null;
+        emp = null;
+        break;
     }
 
     final p = _storage.createPasswordHash(password);
 
     final user = UserAccount(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
-      login: normalized,
+      login: normalizedLogin,
       role: role,
+      lastName: normalizedLastName,
+      firstName: normalizedFirstName,
+      middleName: normalizedMiddleName,
       saltB64: p.saltB64,
       hashB64: p.hashB64,
       iterations: p.iterations,
-      departmentId: departmentId,
-      groupId: groupId,
-      employeeId: employeeId,
+      departmentId: dep,
+      groupId: grp,
+      employeeId: emp,
     );
 
     _users = [..._users, user];
@@ -206,6 +292,9 @@ class AuthService extends ChangeNotifier {
   Future<bool> updateUserAccess({
     required String userId,
     required UserRole role,
+    required String lastName,
+    required String firstName,
+    required String middleName,
     String? departmentId,
     String? groupId,
     String? employeeId,
@@ -224,6 +313,14 @@ class AuthService extends ChangeNotifier {
       return false;
     }
 
+    final normalizedLastName = lastName.trim();
+    final normalizedFirstName = firstName.trim();
+    final normalizedMiddleName = middleName.trim();
+
+    if (normalizedLastName.isEmpty || normalizedFirstName.isEmpty) {
+      return false;
+    }
+
     String? dep = departmentId;
     String? grp = groupId;
     String? emp = employeeId;
@@ -232,15 +329,21 @@ class AuthService extends ChangeNotifier {
       case UserRole.manager:
         grp = null;
         emp = null;
+        if (dep == null || dep.trim().isEmpty) return false;
         break;
+
       case UserRole.master:
         dep = null;
         emp = null;
+        if (grp == null || grp.trim().isEmpty) return false;
         break;
+
       case UserRole.worker:
         dep = null;
         grp = null;
+        if (emp == null || emp.trim().isEmpty) return false;
         break;
+
       case UserRole.superAdmin:
         dep = null;
         grp = null;
@@ -252,6 +355,9 @@ class AuthService extends ChangeNotifier {
       if (u.id != userId) return u;
       return u.copyWith(
         role: role,
+        lastName: normalizedLastName,
+        firstName: normalizedFirstName,
+        middleName: normalizedMiddleName,
         departmentId: dep,
         groupId: grp,
         employeeId: emp,
@@ -290,8 +396,6 @@ class AuthService extends ChangeNotifier {
     return true;
   }
 
-  // -------- role policies management
-
   Future<bool> setRolePolicy({
     required UserRole role,
     required Set<AppPermission> permissions,
@@ -307,8 +411,6 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
     return true;
   }
-
-  // -------- defaults
 
   Map<UserRole, RolePolicy> _buildPoliciesWithDefaults(
       List<RolePolicy> loaded) {

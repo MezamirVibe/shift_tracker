@@ -35,16 +35,15 @@ String roleLabel(UserRole r) {
   }
 }
 
-/// Права (permissions). Легко расширять.
 enum AppPermission {
   viewCalendar,
   viewEmployees,
   viewAttendance,
-  editAttendance, // отмечать факт, закрывать/переоткрывать день
-  editEmployees, // редактировать сотрудников/графики
-  manageUsers, // создавать пользователей, назначать роли
-  editRolePolicies, // менять права ролей
-  viewMoney, // финансы (на будущее)
+  editAttendance,
+  editEmployees,
+  manageUsers,
+  editRolePolicies,
+  viewMoney,
 }
 
 AppPermission permFromString(String? s) {

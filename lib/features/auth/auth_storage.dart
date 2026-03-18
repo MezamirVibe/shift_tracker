@@ -13,6 +13,10 @@ class UserAccount {
   final String login;
   final UserRole role;
 
+  final String lastName;
+  final String firstName;
+  final String middleName;
+
   // password storage
   final String saltB64;
   final String hashB64;
@@ -27,6 +31,9 @@ class UserAccount {
     required this.id,
     required this.login,
     required this.role,
+    required this.lastName,
+    required this.firstName,
+    required this.middleName,
     required this.saltB64,
     required this.hashB64,
     required this.iterations,
@@ -35,10 +42,24 @@ class UserAccount {
     required this.employeeId,
   });
 
+  String get fullName {
+    final parts = <String>[
+      lastName.trim(),
+      firstName.trim(),
+      middleName.trim(),
+    ].where((x) => x.isNotEmpty).toList();
+
+    if (parts.isEmpty) return login;
+    return parts.join(' ');
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'login': login,
         'role': userRoleToString(role),
+        'lastName': lastName,
+        'firstName': firstName,
+        'middleName': middleName,
         'saltB64': saltB64,
         'hashB64': hashB64,
         'iterations': iterations,
@@ -48,22 +69,47 @@ class UserAccount {
       };
 
   static UserAccount fromJson(Map<String, dynamic> json) {
+    final legacyFullName = (json['fullName'] as String?)?.trim() ?? '';
+    final parts = legacyFullName
+        .split(RegExp(r'\s+'))
+        .where((x) => x.trim().isNotEmpty)
+        .toList();
+
+    final lastName = (json['lastName'] as String?)?.trim() ??
+        (parts.isNotEmpty ? parts[0] : '');
+    final firstName = (json['firstName'] as String?)?.trim() ??
+        (parts.length > 1 ? parts[1] : '');
+    final middleName = (json['middleName'] as String?)?.trim() ??
+        (parts.length > 2 ? parts.sublist(2).join(' ') : '');
+
     return UserAccount(
       id: (json['id'] as String?) ?? '',
       login: (json['login'] as String?) ?? '',
       role: userRoleFromString(json['role'] as String?),
+      lastName: lastName,
+      firstName: firstName,
+      middleName: middleName,
       saltB64: (json['saltB64'] as String?) ?? '',
       hashB64: (json['hashB64'] as String?) ?? '',
       iterations: (json['iterations'] as int?) ?? 150000,
-      departmentId: json['departmentId'] as String?,
-      groupId: json['groupId'] as String?,
-      employeeId: json['employeeId'] as String?,
+      departmentId: (json['departmentId'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : (json['departmentId'] as String?)?.trim(),
+      groupId: (json['groupId'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : (json['groupId'] as String?)?.trim(),
+      employeeId: (json['employeeId'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : (json['employeeId'] as String?)?.trim(),
     );
   }
 
   UserAccount copyWith({
     String? login,
     UserRole? role,
+    String? lastName,
+    String? firstName,
+    String? middleName,
     String? saltB64,
     String? hashB64,
     int? iterations,
@@ -78,6 +124,9 @@ class UserAccount {
       id: id,
       login: login ?? this.login,
       role: role ?? this.role,
+      lastName: lastName ?? this.lastName,
+      firstName: firstName ?? this.firstName,
+      middleName: middleName ?? this.middleName,
       saltB64: saltB64 ?? this.saltB64,
       hashB64: hashB64 ?? this.hashB64,
       iterations: iterations ?? this.iterations,
@@ -98,8 +147,6 @@ class AuthStorage {
     final dir = await getApplicationDocumentsDirectory();
     return File('${dir.path}${Platform.pathSeparator}$name');
   }
-
-  // ---------------- Users ----------------
 
   Future<List<UserAccount>> loadUsers() async {
     try {
@@ -124,8 +171,6 @@ class AuthStorage {
     final list = users.map((u) => u.toJson()).toList();
     await f.writeAsString(jsonEncode(list));
   }
-
-  // ---------------- Session ----------------
 
   Future<String?> loadSessionUserId() async {
     try {
@@ -152,8 +197,6 @@ class AuthStorage {
     await f.writeAsString(jsonEncode({'userId': userId}));
   }
 
-  // ---------------- Role policies ----------------
-
   Future<List<RolePolicy>> loadRolePolicies() async {
     try {
       final f = await _file(_rolePoliciesFile);
@@ -178,8 +221,6 @@ class AuthStorage {
     await f.writeAsString(jsonEncode(list));
   }
 
-  // ---------------- Password hashing (PBKDF2-HMAC-SHA256) ----------------
-
   Uint8List _randomBytes(int n) {
     final r = Random.secure();
     return Uint8List.fromList(List.generate(n, (_) => r.nextInt(256)));
@@ -196,7 +237,7 @@ class AuthStorage {
     required int dkLen,
   }) {
     final passBytes = utf8.encode(password);
-    final hLen = sha256.convert(const []).bytes.length; // 32
+    final hLen = sha256.convert(const []).bytes.length;
     final l = (dkLen / hLen).ceil();
 
     final out = BytesBuilder();
