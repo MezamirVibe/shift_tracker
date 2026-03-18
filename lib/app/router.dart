@@ -1,6 +1,5 @@
 import 'package:go_router/go_router.dart';
 
-import '../features/auth/auth_models.dart';
 import '../features/auth/auth_service.dart';
 import '../features/auth/bootstrap_admin_page.dart';
 import '../features/auth/login_page.dart';
@@ -51,14 +50,9 @@ class AppRouter {
           return calendar;
         }
 
-        if (loc.startsWith(admin)) {
-          final can = auth.currentUser?.role == UserRole.superAdmin ||
-              auth.hasPerm(AppPermission.manageUsers) ||
-              auth.hasPerm(AppPermission.editRolePolicies);
-
-          if (!can) return calendar;
-        }
-
+        // ВАЖНО:
+        // Не выбрасываем пользователя с /admin во время notifyListeners().
+        // Доступ внутри админки обрабатывает сам AdminPage.
         return null;
       },
       routes: [

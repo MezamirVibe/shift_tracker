@@ -11,7 +11,7 @@ import 'auth_models.dart';
 class UserAccount {
   final String id;
   final String login;
-  final UserRole role;
+  final String roleId;
 
   final String lastName;
   final String firstName;
@@ -30,7 +30,7 @@ class UserAccount {
   const UserAccount({
     required this.id,
     required this.login,
-    required this.role,
+    required this.roleId,
     required this.lastName,
     required this.firstName,
     required this.middleName,
@@ -41,6 +41,9 @@ class UserAccount {
     required this.groupId,
     required this.employeeId,
   });
+
+  /// Legacy-совместимость для старого кода.
+  UserRole get role => userRoleFromString(roleId);
 
   String get fullName {
     final parts = <String>[
@@ -56,7 +59,7 @@ class UserAccount {
   Map<String, dynamic> toJson() => {
         'id': id,
         'login': login,
-        'role': userRoleToString(role),
+        'roleId': roleId,
         'lastName': lastName,
         'firstName': firstName,
         'middleName': middleName,
@@ -82,10 +85,14 @@ class UserAccount {
     final middleName = (json['middleName'] as String?)?.trim() ??
         (parts.length > 2 ? parts.sublist(2).join(' ') : '');
 
+    final roleId = ((json['roleId'] as String?)?.trim().isNotEmpty ?? false)
+        ? (json['roleId'] as String).trim()
+        : userRoleToString(userRoleFromString(json['role'] as String?));
+
     return UserAccount(
       id: (json['id'] as String?) ?? '',
       login: (json['login'] as String?) ?? '',
-      role: userRoleFromString(json['role'] as String?),
+      roleId: roleId,
       lastName: lastName,
       firstName: firstName,
       middleName: middleName,
@@ -106,6 +113,7 @@ class UserAccount {
 
   UserAccount copyWith({
     String? login,
+    String? roleId,
     UserRole? role,
     String? lastName,
     String? firstName,
@@ -123,7 +131,7 @@ class UserAccount {
     return UserAccount(
       id: id,
       login: login ?? this.login,
-      role: role ?? this.role,
+      roleId: roleId ?? (role != null ? userRoleToString(role) : this.roleId),
       lastName: lastName ?? this.lastName,
       firstName: firstName ?? this.firstName,
       middleName: middleName ?? this.middleName,
@@ -141,7 +149,8 @@ class UserAccount {
 class AuthStorage {
   static const _usersFile = 'users.json';
   static const _sessionFile = 'session.json';
-  static const _rolePoliciesFile = 'role_policies.json';
+  static const _rolePoliciesFile = 'role_policies.json'; // legacy
+  static const _rolesFile = 'roles.json';
 
   Future<File> _file(String name) async {
     final dir = await getApplicationDocumentsDirectory();
@@ -180,7 +189,7 @@ class AuthStorage {
       if (raw.trim().isEmpty) return null;
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        return (decoded['userId'] as String?);
+        return decoded['userId'] as String?;
       }
       return null;
     } catch (_) {
@@ -218,6 +227,31 @@ class AuthStorage {
   Future<void> saveRolePolicies(List<RolePolicy> policies) async {
     final f = await _file(_rolePoliciesFile);
     final list = policies.map((p) => p.toJson()).toList();
+    await f.writeAsString(jsonEncode(list));
+  }
+
+  Future<List<AppRole>> loadRoles() async {
+    try {
+      final f = await _file(_rolesFile);
+      if (!await f.exists()) return [];
+      final raw = await f.readAsString();
+      if (raw.trim().isEmpty) return [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+
+      return decoded
+          .whereType<Map>()
+          .map((m) => AppRole.fromJson(Map<String, dynamic>.from(m)))
+          .where((r) => r.id.trim().isNotEmpty)
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveRoles(List<AppRole> roles) async {
+    final f = await _file(_rolesFile);
+    final list = roles.map((r) => r.toJson()).toList();
     await f.writeAsString(jsonEncode(list));
   }
 
@@ -265,7 +299,8 @@ class AuthStorage {
   }
 
   ({String saltB64, String hashB64, int iterations}) createPasswordHash(
-      String password) {
+    String password,
+  ) {
     final salt = _randomBytes(16);
     const iterations = 150000;
 

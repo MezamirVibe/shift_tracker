@@ -22,6 +22,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
   final _employeesStorage = EmployeesStorage();
   final _structureStorage = StructureStorage();
+  final AuthService _auth = AuthService.instance;
 
   bool _loadingLists = true;
 
@@ -29,22 +30,24 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   List<DepartmentModel> _departments = [];
   List<GroupModel> _groups = [];
 
-  UserRole _role = UserRole.worker;
+  String? _roleId = BuiltInRoleIds.worker;
 
   String? _departmentId;
   String? _groupId;
   String? _employeeId;
 
-  bool _createEmployeeForWorker = true;
+  bool _createEmployeeForSelfScope = true;
 
   @override
   void initState() {
     super.initState();
+    _auth.addListener(_onAuthChanged);
     _loadLists();
   }
 
   @override
   void dispose() {
+    _auth.removeListener(_onAuthChanged);
     _login.dispose();
     _pass.dispose();
     _lastName.dispose();
@@ -53,14 +56,40 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     super.dispose();
   }
 
+  void _onAuthChanged() {
+    if (!mounted) return;
+
+    final roles = _auth.roles;
+    final hasCurrentRole =
+        _roleId != null && roles.any((r) => r.id == _roleId);
+
+    if (!hasCurrentRole) {
+      final fallbackRoleId = roles.isNotEmpty ? roles.first.id : null;
+      setState(() {
+        _roleId = fallbackRoleId;
+        _departmentId = null;
+        _groupId = null;
+        _employeeId = null;
+        _createEmployeeForSelfScope =
+            _auth.roleById(_roleId)?.scopeKind == ScopeKind.self;
+      });
+      return;
+    }
+
+    setState(() {});
+  }
+
   void _snack(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
       SnackBar(content: Text(text)),
     );
   }
 
   Future<void> _loadLists() async {
-    setState(() => _loadingLists = true);
+    if (mounted) {
+      setState(() => _loadingLists = true);
+    }
 
     final employees = await _employeesStorage.load();
     final deps = await _structureStorage.loadDepartments();
@@ -80,35 +109,16 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     });
   }
 
-  void _resetBindingsForRole(UserRole role) {
-    setState(() {
-      switch (role) {
-        case UserRole.manager:
-          _departmentId = null;
-          _groupId = null;
-          _employeeId = null;
-          _createEmployeeForWorker = false;
-          break;
-        case UserRole.master:
-          _departmentId = null;
-          _groupId = null;
-          _employeeId = null;
-          _createEmployeeForWorker = false;
-          break;
-        case UserRole.worker:
-          _departmentId = null;
-          _groupId = null;
-          _employeeId = null;
-          _createEmployeeForWorker = true;
-          break;
-        case UserRole.superAdmin:
-          _departmentId = null;
-          _groupId = null;
-          _employeeId = null;
-          _createEmployeeForWorker = false;
-          break;
-      }
-    });
+  AppRole? _selectedRole(AuthService auth) {
+    if (_roleId == null) return null;
+    return auth.roleById(_roleId);
+  }
+
+  void _resetBindingsForRole(AppRole? role) {
+    _departmentId = null;
+    _groupId = null;
+    _employeeId = null;
+    _createEmployeeForSelfScope = role?.scopeKind == ScopeKind.self;
   }
 
   List<GroupModel> _groupsForDepartment(String? depId) {
@@ -144,22 +154,27 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     String? depId,
     String? groupId,
     String? empId,
-    UserRole role,
+    AppRole? role,
   ) {
-    switch (role) {
-      case UserRole.superAdmin:
+    if (role == null) return 'Роль не найдена';
+
+    switch (role.scopeKind) {
+      case ScopeKind.all:
         return 'Привязка не требуется';
-      case UserRole.manager:
+
+      case ScopeKind.department:
         final dep = _findDepartment(depId);
         return 'Подразделение: ${dep?.name ?? '—'}';
-      case UserRole.master:
+
+      case ScopeKind.group:
         final group = _findGroup(groupId);
         final dep = _findDepartment(group?.departmentId);
         if (group == null) return 'Группа: —';
         return dep == null
             ? 'Группа: ${group.name}'
             : 'Группа: ${group.name} • ${dep.name}';
-      case UserRole.worker:
+
+      case ScopeKind.self:
         final employee = _findEmployee(empId);
         return 'Сотрудник: ${employee?.fullName ?? '—'}';
     }
@@ -180,6 +195,12 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     final pass = _pass.text;
     final lastName = _lastName.text.trim();
     final firstName = _firstName.text.trim();
+    final role = _selectedRole(auth);
+
+    if (role == null) {
+      _snack('Выбери роль');
+      return false;
+    }
 
     if (login.isEmpty) {
       _snack('Логин пустой');
@@ -196,72 +217,77 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       return false;
     }
 
-    switch (_role) {
-      case UserRole.manager:
+    switch (role.scopeKind) {
+      case ScopeKind.all:
+        return true;
+
+      case ScopeKind.department:
         if (_departmentId == null || _departmentId!.isEmpty) {
-          _snack(auth.requiredBindingHint(_role));
+          _snack(auth.requiredBindingHintByRoleId(role.id));
           return false;
         }
         return true;
 
-      case UserRole.master:
+      case ScopeKind.group:
         if (_groupId == null || _groupId!.isEmpty) {
-          _snack(auth.requiredBindingHint(_role));
+          _snack(auth.requiredBindingHintByRoleId(role.id));
           return false;
         }
         return true;
 
-      case UserRole.worker:
-        if (_createEmployeeForWorker) {
+      case ScopeKind.self:
+        if (_createEmployeeForSelfScope) {
           if (_departmentId == null ||
               _departmentId!.isEmpty ||
               _groupId == null ||
               _groupId!.isEmpty) {
             _snack(
-              'Для нового рабочего укажи подразделение и группу. Тогда сотрудник сразу появится в списке.',
+              'Для нового сотрудника укажи подразделение и группу. Тогда он сразу появится в списке сотрудников.',
             );
             return false;
           }
         } else {
           if (_employeeId == null || _employeeId!.isEmpty) {
-            _snack(auth.requiredBindingHint(_role));
+            _snack(auth.requiredBindingHintByRoleId(role.id));
             return false;
           }
         }
-        return true;
-
-      case UserRole.superAdmin:
         return true;
     }
   }
 
   Future<void> _create() async {
-    final auth = AuthService.instance;
+    final auth = _auth;
+    final role = _selectedRole(auth);
+    if (role == null) {
+      _snack('Роль не выбрана');
+      return;
+    }
 
     if (!_validateCreate(auth)) return;
 
     final ok = await auth.createUser(
       login: _login.text.trim(),
       password: _pass.text,
-      role: _role,
+      roleId: role.id,
       lastName: _lastName.text.trim(),
       firstName: _firstName.text.trim(),
       middleName: _middleName.text.trim(),
-      departmentId: (_role == UserRole.manager ||
-              (_role == UserRole.worker && _createEmployeeForWorker))
+      departmentId: (role.scopeKind == ScopeKind.department ||
+              (role.scopeKind == ScopeKind.self && _createEmployeeForSelfScope))
           ? _departmentId
           : null,
-      groupId: (_role == UserRole.master ||
-              (_role == UserRole.worker && _createEmployeeForWorker))
+      groupId: (role.scopeKind == ScopeKind.group ||
+              (role.scopeKind == ScopeKind.self && _createEmployeeForSelfScope))
           ? _groupId
           : null,
       employeeId:
-          (_role == UserRole.worker && !_createEmployeeForWorker)
+          (role.scopeKind == ScopeKind.self && !_createEmployeeForSelfScope)
               ? _employeeId
               : null,
       createEmployeeForWorker:
-          _role == UserRole.worker && _createEmployeeForWorker,
-      employeePosition: 'Рабочий',
+          role.scopeKind == ScopeKind.self && _createEmployeeForSelfScope,
+      employeePosition: role.name,
       employeeSalary: 0,
       employeeBonus: 0,
       employeeScheduleType: ScheduleType.twoTwo,
@@ -283,19 +309,21 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     _firstName.clear();
     _middleName.clear();
 
+    final fallbackWorkerRole = auth.roleById(BuiltInRoleIds.worker);
+    final firstRoleId = auth.roles.isNotEmpty ? auth.roles.first.id : null;
+
     setState(() {
-      _role = UserRole.worker;
+      _roleId = fallbackWorkerRole?.id ?? firstRoleId;
       _departmentId = null;
       _groupId = null;
       _employeeId = null;
-      _createEmployeeForWorker = true;
+      _createEmployeeForSelfScope = true;
     });
 
     await _loadLists();
 
     if (!mounted) return;
     _snack('Пользователь создан');
-    setState(() {});
   }
 
   Future<void> _deleteUser(String userId, String login) async {
@@ -319,8 +347,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
     if (ok != true) return;
 
-    final auth = AuthService.instance;
-    final deleted = await auth.deleteUser(userId);
+    final deleted = await _auth.deleteUser(userId);
 
     if (!mounted) return;
 
@@ -330,15 +357,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     }
 
     _snack('Удалено');
-    setState(() {});
   }
 
   Future<void> _editUserDialog(String userId) async {
-    final auth = AuthService.instance;
+    final auth = _auth;
     final user = auth.users.where((x) => x.id == userId).firstOrNull;
     if (user == null) return;
 
-    UserRole role = user.role;
+    String roleId = user.roleId;
     String? depId = user.departmentId;
     String? groupId = user.groupId;
     String? empId = user.employeeId;
@@ -346,21 +372,6 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     String lastName = user.lastName;
     String firstName = user.firstName;
     String middleName = user.middleName;
-
-    if (role == UserRole.manager) {
-      groupId = null;
-      empId = null;
-    } else if (role == UserRole.master) {
-      depId = null;
-      empId = null;
-    } else if (role == UserRole.worker) {
-      depId = null;
-      groupId = null;
-    } else {
-      depId = null;
-      groupId = null;
-      empId = null;
-    }
 
     final lastNameCtrl = TextEditingController(text: lastName);
     final firstNameCtrl = TextEditingController(text: firstName);
@@ -371,123 +382,128 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocal) {
+            final currentRole = auth.roleById(roleId);
             final groupsForDep = _groupsForDepartment(depId);
 
             Widget bindingEditor() {
-              if (role == UserRole.manager) {
-                return DropdownButtonFormField<String?>(
-                  initialValue: depId,
-                  decoration: const InputDecoration(
-                    labelText: 'Подразделение',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('— выбери подразделение —'),
-                    ),
-                    ..._departments.map(
-                      (d) => DropdownMenuItem<String?>(
-                        value: d.id,
-                        child: Text(d.name),
-                      ),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setLocal(() {
-                      depId = value;
-                    });
-                  },
-                );
+              if (currentRole == null) {
+                return const Text('Роль не найдена');
               }
 
-              if (role == UserRole.master) {
-                return Column(
-                  children: [
-                    DropdownButtonFormField<String?>(
-                      initialValue: depId,
-                      decoration: const InputDecoration(
-                        labelText: 'Подразделение',
-                        border: OutlineInputBorder(),
+              switch (currentRole.scopeKind) {
+                case ScopeKind.all:
+                  return const Text('Для этой роли привязка не требуется');
+
+                case ScopeKind.department:
+                  return DropdownButtonFormField<String?>(
+                    initialValue: depId,
+                    decoration: const InputDecoration(
+                      labelText: 'Подразделение',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('— выбери подразделение —'),
                       ),
-                      items: [
-                        const DropdownMenuItem<String?>(
-                          value: null,
-                          child: Text('— выбери подразделение —'),
+                      ..._departments.map(
+                        (d) => DropdownMenuItem<String?>(
+                          value: d.id,
+                          child: Text(d.name),
                         ),
-                        ..._departments.map(
-                          (d) => DropdownMenuItem<String?>(
-                            value: d.id,
-                            child: Text(d.name),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      setLocal(() {
+                        depId = value;
+                      });
+                    },
+                  );
+
+                case ScopeKind.group:
+                  return Column(
+                    children: [
+                      DropdownButtonFormField<String?>(
+                        initialValue: depId,
+                        decoration: const InputDecoration(
+                          labelText: 'Подразделение',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('— выбери подразделение —'),
                           ),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setLocal(() {
-                          depId = value;
-                          groupId = null;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String?>(
-                      initialValue: groupId,
-                      decoration: const InputDecoration(
-                        labelText: 'Группа',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: [
-                        const DropdownMenuItem<String?>(
-                          value: null,
-                          child: Text('— выбери группу —'),
-                        ),
-                        ...groupsForDep.map(
-                          (g) => DropdownMenuItem<String?>(
-                            value: g.id,
-                            child: Text(g.name),
+                          ..._departments.map(
+                            (d) => DropdownMenuItem<String?>(
+                              value: d.id,
+                              child: Text(d.name),
+                            ),
                           ),
-                        ),
-                      ],
-                      onChanged: depId == null
-                          ? null
-                          : (value) {
-                              setLocal(() {
-                                groupId = value;
-                              });
-                            },
-                    ),
-                  ],
-                );
-              }
-
-              if (role == UserRole.worker) {
-                return DropdownButtonFormField<String?>(
-                  initialValue: empId,
-                  decoration: const InputDecoration(
-                    labelText: 'Сотрудник',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('— выбери сотрудника —'),
-                    ),
-                    ..._employees.map(
-                      (e) => DropdownMenuItem<String?>(
-                        value: e.id,
-                        child: Text('${e.fullName} • ${e.position}'),
+                        ],
+                        onChanged: (value) {
+                          setLocal(() {
+                            depId = value;
+                            groupId = null;
+                          });
+                        },
                       ),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setLocal(() {
-                      empId = value;
-                    });
-                  },
-                );
-              }
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String?>(
+                        initialValue: groupId,
+                        decoration: const InputDecoration(
+                          labelText: 'Группа',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('— выбери группу —'),
+                          ),
+                          ...groupsForDep.map(
+                            (g) => DropdownMenuItem<String?>(
+                              value: g.id,
+                              child: Text(g.name),
+                            ),
+                          ),
+                        ],
+                        onChanged: depId == null
+                            ? null
+                            : (value) {
+                                setLocal(() {
+                                  groupId = value;
+                                });
+                              },
+                      ),
+                    ],
+                  );
 
-              return const Text('Суперадмин: привязка не требуется');
+                case ScopeKind.self:
+                  return DropdownButtonFormField<String?>(
+                    initialValue: empId,
+                    decoration: const InputDecoration(
+                      labelText: 'Сотрудник',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('— выбери сотрудника —'),
+                      ),
+                      ..._employees.map(
+                        (e) => DropdownMenuItem<String?>(
+                          value: e.id,
+                          child: Text('${e.fullName} • ${e.position}'),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      setLocal(() {
+                        empId = value;
+                      });
+                    },
+                  );
+              }
             }
 
             return AlertDialog(
@@ -522,17 +538,17 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      DropdownButtonFormField<UserRole>(
-                        initialValue: role,
+                      DropdownButtonFormField<String>(
+                        initialValue: roleId,
                         decoration: const InputDecoration(
                           labelText: 'Роль',
                           border: OutlineInputBorder(),
                         ),
-                        items: UserRole.values
+                        items: auth.roles
                             .map(
-                              (r) => DropdownMenuItem<UserRole>(
-                                value: r,
-                                child: Text(roleLabel(r)),
+                              (r) => DropdownMenuItem<String>(
+                                value: r.id,
+                                child: Text(r.name),
                               ),
                             )
                             .toList(),
@@ -540,30 +556,10 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                           if (value == null) return;
 
                           setLocal(() {
-                            role = value;
-
-                            switch (role) {
-                              case UserRole.manager:
-                                depId = null;
-                                groupId = null;
-                                empId = null;
-                                break;
-                              case UserRole.master:
-                                depId = null;
-                                groupId = null;
-                                empId = null;
-                                break;
-                              case UserRole.worker:
-                                depId = null;
-                                groupId = null;
-                                empId = null;
-                                break;
-                              case UserRole.superAdmin:
-                                depId = null;
-                                groupId = null;
-                                empId = null;
-                                break;
-                            }
+                            roleId = value;
+                            depId = null;
+                            groupId = null;
+                            empId = null;
                           });
                         },
                       ),
@@ -573,7 +569,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          auth.requiredBindingHint(role),
+                          auth.requiredBindingHintByRoleId(roleId),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
@@ -592,31 +588,37 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                     firstName = firstNameCtrl.text.trim();
                     middleName = middleNameCtrl.text.trim();
 
+                    final selectedRole = auth.roleById(roleId);
+                    if (selectedRole == null) {
+                      _snack('Роль не найдена');
+                      return;
+                    }
+
                     if (lastName.isEmpty || firstName.isEmpty) {
                       _snack('Заполни минимум фамилию и имя');
                       return;
                     }
 
-                    switch (role) {
-                      case UserRole.manager:
+                    switch (selectedRole.scopeKind) {
+                      case ScopeKind.all:
+                        break;
+                      case ScopeKind.department:
                         if (depId == null || depId!.isEmpty) {
-                          _snack(auth.requiredBindingHint(role));
+                          _snack(auth.requiredBindingHintByRoleId(roleId));
                           return;
                         }
                         break;
-                      case UserRole.master:
+                      case ScopeKind.group:
                         if (groupId == null || groupId!.isEmpty) {
-                          _snack(auth.requiredBindingHint(role));
+                          _snack(auth.requiredBindingHintByRoleId(roleId));
                           return;
                         }
                         break;
-                      case UserRole.worker:
+                      case ScopeKind.self:
                         if (empId == null || empId!.isEmpty) {
-                          _snack(auth.requiredBindingHint(role));
+                          _snack(auth.requiredBindingHintByRoleId(roleId));
                           return;
                         }
-                        break;
-                      case UserRole.superAdmin:
                         break;
                     }
 
@@ -637,15 +639,22 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
     if (ok != true) return;
 
+    final selectedRole = auth.roleById(roleId);
+    if (selectedRole == null) {
+      _snack('Роль не найдена');
+      return;
+    }
+
     final saved = await auth.updateUserAccess(
       userId: userId,
-      role: role,
+      roleId: roleId,
       lastName: lastName,
       firstName: firstName,
       middleName: middleName,
-      departmentId: role == UserRole.manager ? depId : null,
-      groupId: role == UserRole.master ? groupId : null,
-      employeeId: role == UserRole.worker ? empId : null,
+      departmentId:
+          selectedRole.scopeKind == ScopeKind.department ? depId : null,
+      groupId: selectedRole.scopeKind == ScopeKind.group ? groupId : null,
+      employeeId: selectedRole.scopeKind == ScopeKind.self ? empId : null,
     );
 
     if (!mounted) return;
@@ -656,12 +665,9 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     }
 
     _snack('Сохранено');
-    setState(() {});
   }
 
-  Widget _workerCreateMode() {
-    if (_role != UserRole.worker) return const SizedBox.shrink();
-
+  Widget _selfScopeCreateMode(AppRole role) {
     return Card(
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Padding(
@@ -670,14 +676,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           children: [
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Сразу создать сотрудника для рабочего'),
+              title: const Text('Сразу создать сотрудника'),
               subtitle: const Text(
                 'Рекомендуется: пользователь появится и в системе доступа, и в списке сотрудников.',
               ),
-              value: _createEmployeeForWorker,
+              value: _createEmployeeForSelfScope,
               onChanged: (value) {
                 setState(() {
-                  _createEmployeeForWorker = value;
+                  _createEmployeeForSelfScope = value;
                   _departmentId = null;
                   _groupId = null;
                   _employeeId = null;
@@ -685,7 +691,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               },
             ),
             const SizedBox(height: 8),
-            if (_createEmployeeForWorker) ...[
+            if (_createEmployeeForSelfScope) ...[
               DropdownButtonFormField<String?>(
                 initialValue: _departmentId,
                 decoration: const InputDecoration(
@@ -761,6 +767,9 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   }
 
   Widget _bindingEditorForCreate() {
+    final auth = _auth;
+    final role = _selectedRole(auth);
+
     if (_loadingLists) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
@@ -768,100 +777,113 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       );
     }
 
-    if (_role == UserRole.manager) {
-      return DropdownButtonFormField<String?>(
-        initialValue: _departmentId,
-        decoration: const InputDecoration(
-          labelText: 'Подразделение',
-          border: OutlineInputBorder(),
-        ),
-        items: [
-          const DropdownMenuItem<String?>(
-            value: null,
-            child: Text('— выбери подразделение —'),
-          ),
-          ..._departments.map(
-            (d) => DropdownMenuItem<String?>(
-              value: d.id,
-              child: Text(d.name),
-            ),
-          ),
-        ],
-        onChanged: (value) => setState(() => _departmentId = value),
-      );
+    if (role == null) {
+      return const Text('Выбери роль');
     }
 
-    if (_role == UserRole.master) {
-      final groups = _groupsForDepartment(_departmentId);
+    switch (role.scopeKind) {
+      case ScopeKind.all:
+        return const Text('Для этой роли привязка не требуется');
 
-      return Column(
-        children: [
-          DropdownButtonFormField<String?>(
-            initialValue: _departmentId,
-            decoration: const InputDecoration(
-              labelText: 'Подразделение',
-              border: OutlineInputBorder(),
+      case ScopeKind.department:
+        return DropdownButtonFormField<String?>(
+          initialValue: _departmentId,
+          decoration: const InputDecoration(
+            labelText: 'Подразделение',
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('— выбери подразделение —'),
             ),
-            items: [
-              const DropdownMenuItem<String?>(
-                value: null,
-                child: Text('— выбери подразделение —'),
+            ..._departments.map(
+              (d) => DropdownMenuItem<String?>(
+                value: d.id,
+                child: Text(d.name),
               ),
-              ..._departments.map(
-                (d) => DropdownMenuItem<String?>(
-                  value: d.id,
-                  child: Text(d.name),
+            ),
+          ],
+          onChanged: (value) => setState(() => _departmentId = value),
+        );
+
+      case ScopeKind.group:
+        final groups = _groupsForDepartment(_departmentId);
+
+        return Column(
+          children: [
+            DropdownButtonFormField<String?>(
+              initialValue: _departmentId,
+              decoration: const InputDecoration(
+                labelText: 'Подразделение',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('— выбери подразделение —'),
                 ),
-              ),
-            ],
-            onChanged: (value) => setState(() {
-              _departmentId = value;
-              _groupId = null;
-            }),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String?>(
-            initialValue: _groupId,
-            decoration: const InputDecoration(
-              labelText: 'Группа',
-              border: OutlineInputBorder(),
-            ),
-            items: [
-              const DropdownMenuItem<String?>(
-                value: null,
-                child: Text('— выбери группу —'),
-              ),
-              ...groups.map(
-                (g) => DropdownMenuItem<String?>(
-                  value: g.id,
-                  child: Text(g.name),
+                ..._departments.map(
+                  (d) => DropdownMenuItem<String?>(
+                    value: d.id,
+                    child: Text(d.name),
+                  ),
                 ),
+              ],
+              onChanged: (value) => setState(() {
+                _departmentId = value;
+                _groupId = null;
+              }),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String?>(
+              initialValue: _groupId,
+              decoration: const InputDecoration(
+                labelText: 'Группа',
+                border: OutlineInputBorder(),
               ),
-            ],
-            onChanged: _departmentId == null
-                ? null
-                : (value) => setState(() => _groupId = value),
-          ),
-        ],
-      );
-    }
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('— выбери группу —'),
+                ),
+                ...groups.map(
+                  (g) => DropdownMenuItem<String?>(
+                    value: g.id,
+                    child: Text(g.name),
+                  ),
+                ),
+              ],
+              onChanged: _departmentId == null
+                  ? null
+                  : (value) => setState(() => _groupId = value),
+            ),
+          ],
+        );
 
-    if (_role == UserRole.worker) {
-      return _workerCreateMode();
+      case ScopeKind.self:
+        return _selfScopeCreateMode(role);
     }
-
-    return const Text('Суперадмин: привязка не требуется');
   }
 
   @override
   Widget build(BuildContext context) {
-    final auth = AuthService.instance;
+    final auth = _auth;
+    final roles = auth.roles.toList()..sort((a, b) => a.name.compareTo(b.name));
+
+    if (_roleId != null && roles.every((r) => r.id != _roleId)) {
+      _roleId = roles.isNotEmpty ? roles.first.id : null;
+      _resetBindingsForRole(auth.roleById(_roleId));
+    }
+
     final users = auth.users.toList()
       ..sort((a, b) {
         final byName = a.fullName.compareTo(b.fullName);
         if (byName != 0) return byName;
         return a.login.compareTo(b.login);
       });
+
+    final selectedRole = _selectedRole(auth);
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -918,24 +940,26 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<UserRole>(
-                  initialValue: _role,
+                DropdownButtonFormField<String>(
+                  initialValue: _roleId,
                   decoration: const InputDecoration(
                     labelText: 'Роль',
                     border: OutlineInputBorder(),
                   ),
-                  items: UserRole.values
+                  items: roles
                       .map(
-                        (r) => DropdownMenuItem<UserRole>(
-                          value: r,
-                          child: Text(roleLabel(r)),
+                        (r) => DropdownMenuItem<String>(
+                          value: r.id,
+                          child: Text(r.name),
                         ),
                       )
                       .toList(),
                   onChanged: (value) {
                     if (value == null) return;
-                    setState(() => _role = value);
-                    _resetBindingsForRole(value);
+                    setState(() {
+                      _roleId = value;
+                      _resetBindingsForRole(auth.roleById(value));
+                    });
                   },
                 ),
                 const SizedBox(height: 12),
@@ -944,9 +968,10 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    _role == UserRole.worker && _createEmployeeForWorker
-                        ? 'Для рабочего будет автоматически создан сотрудник: "${_normalizeFullName(_lastName.text, _firstName.text, _middleName.text)}".'
-                        : auth.requiredBindingHint(_role),
+                    selectedRole?.scopeKind == ScopeKind.self &&
+                            _createEmployeeForSelfScope
+                        ? 'Для роли "${selectedRole?.name ?? ''}" будет автоматически создан сотрудник: "${_normalizeFullName(_lastName.text, _firstName.text, _middleName.text)}".'
+                        : auth.requiredBindingHintByRoleId(_roleId),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -985,18 +1010,19 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
         else
           ...users.map((u) {
             final isMe = auth.currentUser?.id == u.id;
+            final role = auth.roleById(u.roleId);
             final binding = _bindingSummaryForUser(
               u.departmentId,
               u.groupId,
               u.employeeId,
-              u.role,
+              role,
             );
 
             return Card(
               child: ListTile(
                 title: Text(u.fullName),
                 subtitle: Text(
-                  '${u.login} • ${roleLabel(u.role)}\n$binding',
+                  '${u.login} • ${role?.name ?? u.roleId}\n$binding',
                 ),
                 isThreeLine: true,
                 trailing: Row(
@@ -1010,7 +1036,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                     IconButton(
                       tooltip: 'Удалить',
                       icon: const Icon(Icons.delete_outline),
-                      onPressed: (u.role == UserRole.superAdmin || isMe)
+                      onPressed: (u.roleId == BuiltInRoleIds.superAdmin || isMe)
                           ? null
                           : () => _deleteUser(u.id, u.login),
                     ),
