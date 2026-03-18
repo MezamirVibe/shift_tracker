@@ -449,21 +449,25 @@ class AuthService extends ChangeNotifier {
     return true;
   }
 
-  Future<bool> createRole({
-    required String id,
+  Future<String?> createRole({
+    String? id,
     required String name,
     required ScopeKind scopeKind,
     Set<AppPermission> permissions = const {},
   }) async {
     final can =
         isCurrentUserSuperAdmin || hasPerm(AppPermission.editRolePolicies);
-    if (!can) return false;
+    if (!can) return null;
 
     final normalizedName = name.trim();
-    if (normalizedName.isEmpty) return false;
+    if (normalizedName.isEmpty) return null;
 
-    final generatedId = _generateUniqueRoleId(normalizedName);
-    if (generatedId.isEmpty) return false;
+    final requestedId = id?.trim();
+    final generatedId = (requestedId != null && requestedId.isNotEmpty)
+        ? _generateUniqueRoleId(requestedId)
+        : _generateUniqueRoleId(normalizedName);
+
+    if (generatedId.isEmpty) return null;
 
     final role = AppRole(
       id: generatedId,
@@ -476,7 +480,7 @@ class AuthService extends ChangeNotifier {
     _roles = [..._roles, role];
     await _storage.saveRoles(_roles);
 
-    return true;
+    return role.id;
   }
 
   Future<bool> updateRole({
@@ -596,8 +600,8 @@ class AuthService extends ChangeNotifier {
     return byId.values.toList();
   }
 
-  String _generateUniqueRoleId(String roleName) {
-    final base = _slugifyRoleName(roleName);
+  String _generateUniqueRoleId(String rawValue) {
+    final base = _slugifyRoleName(rawValue);
     if (base.isEmpty) {
       return 'role_${DateTime.now().millisecondsSinceEpoch}';
     }

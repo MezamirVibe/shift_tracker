@@ -226,25 +226,20 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
     final roleName = nameCtrl.text.trim();
     nameCtrl.dispose();
 
-    final created = await auth.createRole(
-      id: '',
+    final createdRoleId = await auth.createRole(
       name: roleName,
       scopeKind: scope,
     );
 
     if (!mounted) return;
 
-    if (!created) {
+    if (createdRoleId == null) {
       _snack('Не удалось создать роль');
       return;
     }
 
-    final createdRole = auth.roles
-        .where((r) => r.name == roleName)
-        .fold<AppRole?>(null, (_, r) => r);
-
     setState(() {
-      _selectedRoleId = createdRole?.id ?? _selectedRoleId;
+      _selectedRoleId = createdRoleId;
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -416,8 +411,9 @@ class _RoleDetailsState extends State<_RoleDetails> {
                     ),
                     const SizedBox(width: 12),
                     OutlinedButton.icon(
-                      onPressed:
-                          (_saving || isCurrentUsersRole) ? null : widget.onDelete,
+                      onPressed: (_saving || isCurrentUsersRole)
+                          ? null
+                          : widget.onDelete,
                       icon: const Icon(Icons.delete_outline),
                       label: const Text('Удалить роль'),
                     ),
