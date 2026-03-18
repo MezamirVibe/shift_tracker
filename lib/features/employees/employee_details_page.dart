@@ -29,17 +29,14 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
 
   bool _loading = true;
 
-  // данные сотрудника
   String _fullName = '';
   String _position = '';
   int _salary = 0;
   int _bonus = 0;
 
-  // структура
   String? _departmentId;
   String? _groupId;
 
-  // график
   ScheduleType _scheduleType = ScheduleType.twoTwo;
   DateTime _startDate = DateTime.now();
   int _shiftHours = 12;
@@ -112,22 +109,24 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
           position: _position,
           salary: _salary,
           bonus: _bonus,
+          departmentId: _departmentId,
+          groupId: _groupId,
+          scheduleType: _scheduleType,
+          scheduleStartDate: _startDate,
+          shiftHours: _shiftHours,
+          breakHours: _breakHours,
         ),
         title: 'Редактировать сотрудника',
         confirmText: 'Сохранить',
       ),
     );
 
-    // ✅ FIX: use_build_context_synchronously (после await обязательно проверяем)
     if (!mounted) return;
-
     if (draft == null) return;
 
     final current = await _getFreshEmployee();
 
-    // ✅ ещё одна защита после await
     if (!mounted) return;
-
     if (current == null) return;
 
     final updated = current.copyWith(
@@ -135,7 +134,16 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       position: draft.position,
       salary: draft.salary,
       bonus: draft.bonus,
+      departmentId: draft.departmentId,
+      groupId: draft.groupId,
+      scheduleType: draft.scheduleType,
+      scheduleStartDate: draft.scheduleStartDate,
+      shiftHours: draft.shiftHours,
+      breakHours: draft.breakHours,
+      clearDepartment: draft.departmentId == null,
+      clearGroup: draft.groupId == null,
     );
+
     await _saveEmployee(updated);
   }
 
@@ -380,8 +388,9 @@ class _StructureTabState extends State<_StructureTab> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String?>(
                   initialValue: _depId,
-                  decoration:
-                      const InputDecoration(border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
                   items: [
                     const DropdownMenuItem(
                       value: null,
@@ -417,8 +426,9 @@ class _StructureTabState extends State<_StructureTab> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String?>(
                   initialValue: _groupId,
-                  decoration:
-                      const InputDecoration(border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
                   items: [
                     const DropdownMenuItem(
                       value: null,
@@ -490,8 +500,10 @@ class _ScheduleTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Тип графика',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Тип графика',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<ScheduleType>(
                   initialValue: scheduleType,
@@ -521,8 +533,10 @@ class _ScheduleTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Дата старта графика',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Дата старта графика',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -543,15 +557,21 @@ class _ScheduleTab extends StatelessWidget {
                         );
                         if (picked == null) return;
                         await onChanged(
-                            scheduleType, picked, shiftHours, breakHours);
+                          scheduleType,
+                          picked,
+                          shiftHours,
+                          breakHours,
+                        );
                       },
                       child: const Text('Выбрать'),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                Text('Длительность смены',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Длительность смены',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<int>(
                   initialValue: shiftHours,
@@ -561,13 +581,30 @@ class _ScheduleTab extends StatelessWidget {
                   ],
                   onChanged: (v) async {
                     if (v == null) return;
-                    await onChanged(scheduleType, startDate, v, breakHours);
+                    final nextBreak = breakHours >= v ? v - 1 : breakHours;
+                    await onChanged(scheduleType, startDate, v, nextBreak);
                   },
                 ),
                 const SizedBox(height: 12),
-                Text('Перерыв', style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Перерыв',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
-                Text('Вычитаем $breakHours час(а) из смены'),
+                DropdownButtonFormField<int>(
+                  initialValue: breakHours,
+                  items: List.generate(
+                    shiftHours,
+                    (i) => DropdownMenuItem<int>(
+                      value: i,
+                      child: Text('$i час(а)'),
+                    ),
+                  ),
+                  onChanged: (v) async {
+                    if (v == null) return;
+                    await onChanged(scheduleType, startDate, shiftHours, v);
+                  },
+                ),
               ],
             ),
           ),
@@ -579,8 +616,10 @@ class _ScheduleTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Пример: ближайшие 14 дней',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Пример: ближайшие 14 дней',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
                 ...List.generate(14, (i) {
                   final d = DateTime.now().add(Duration(days: i));

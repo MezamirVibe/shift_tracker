@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../shared/extensions/iterable_x.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
+import 'employee_editor_dialog.dart';
 import '../structure/structure_storage.dart';
 import 'employees_storage.dart';
 
@@ -70,6 +70,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final visible = AuthService.instance.filterEmployeesByScope(employees);
 
     if (!mounted) return;
+
     setState(() {
       _employeesAll = employees;
       _employeesVisible = visible;
@@ -115,6 +116,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
       }
       return;
     }
+
     if (_selectedGroupId == null) return;
 
     final g = _findGroup(_selectedGroupId);
@@ -143,13 +145,62 @@ class _EmployeesPageState extends State<EmployeesPage> {
     Iterable<EmployeeModel> out = _employeesVisible;
 
     final depId = _selectedDepartmentId;
-    if (depId != null) out = out.where((e) => e.departmentId == depId);
+    if (depId != null) {
+      out = out.where((e) => e.departmentId == depId);
+    }
 
     final groupId = _selectedGroupId;
-    if (groupId != null) out = out.where((e) => e.groupId == groupId);
+    if (groupId != null) {
+      out = out.where((e) => e.groupId == groupId);
+    }
 
-    final list = out.toList()..sort((a, b) => a.fullName.compareTo(b.fullName));
-    return list;
+    return out.toList()..sort((a, b) => a.fullName.compareTo(b.fullName));
+  }
+
+  Future<void> _addEmployee() async {
+    final draft = await showDialog<EmployeeDraft>(
+      context: context,
+      builder: (context) => const EmployeeEditorDialog(),
+    );
+
+    if (!mounted || draft == null) return;
+
+    final all = await _storage.load();
+
+    final newEmployee = EmployeeModel(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      fullName: draft.fullName,
+      position: draft.position,
+      salary: draft.salary,
+      bonus: draft.bonus,
+      departmentId: draft.departmentId,
+      groupId: draft.groupId,
+      scheduleType: draft.scheduleType,
+      scheduleStartDate: draft.scheduleStartDate,
+      shiftHours: draft.shiftHours,
+      breakHours: draft.breakHours,
+    );
+
+    final updated = [...all, newEmployee];
+    await _storage.save(updated);
+
+    final visibleAfterSave = AuthService.instance.filterEmployeesByScope(updated);
+    final isVisibleForCurrentUser =
+        visibleAfterSave.any((e) => e.id == newEmployee.id);
+
+    await _loadAll();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isVisibleForCurrentUser
+              ? 'Сотрудник добавлен'
+              : 'Сотрудник добавлен, но не попадает в ваш текущий доступ',
+        ),
+      ),
+    );
   }
 
   Widget _filtersCard() {
@@ -172,8 +223,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   border: OutlineInputBorder(),
                 ),
                 items: [
-                  const DropdownMenuItem(
-                      value: null, child: Text('Все подразделения')),
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('Все подразделения'),
+                  ),
                   ..._departments.map(
                     (d) => DropdownMenuItem<String?>(
                       value: d.id as String?,
@@ -198,8 +251,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   border: OutlineInputBorder(),
                 ),
                 items: [
-                  const DropdownMenuItem(
-                      value: null, child: Text('Все группы')),
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('Все группы'),
+                  ),
                   ...groups.map(
                     (g) => DropdownMenuItem<String?>(
                       value: g.id as String?,
@@ -221,11 +276,30 @@ class _EmployeesPageState extends State<EmployeesPage> {
             ),
             Padding(
               padding: const EdgeInsets.only(left: 8),
-              child: Text('Видно сотрудников: ${_employeesVisible.length}'),
+              child: Text('Видно сотрудников: ${_filteredEmployees.length}'),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildToolbar(bool canEdit) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Всего сотрудников в базе: ${_employeesAll.length}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        if (canEdit)
+          FilledButton.icon(
+            onPressed: _addEmployee,
+            icon: const Icon(Icons.person_add_alt_1),
+            label: const Text('Добавить сотрудника'),
+          ),
+      ],
     );
   }
 
@@ -236,23 +310,28 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final list = _filteredEmployees;
 
     final u = AuthService.instance.currentUser;
-    final noBinding = (u != null &&
-        u.role != UserRole.superAdmin &&
-        _employeesVisible.isEmpty);
+    final noBinding =
+        u != null && u.role != UserRole.superAdmin && _employeesVisible.isEmpty;
 
     return AdaptiveScaffold(
       title: 'Сотрудники',
       selectedIndex: 1,
       items: [
         NavItem(
-            label: 'Календарь',
-            icon: Icons.calendar_month,
-            onTap: () => context.go('/')),
+          label: 'Календарь',
+          icon: Icons.calendar_month,
+          onTap: () => context.go('/'),
+        ),
         NavItem(
-            label: 'Сотрудники',
-            icon: Icons.people,
-            onTap: () => context.go('/employees')),
-        NavItem(label: 'Ещё', icon: Icons.more_horiz, onTap: () {}),
+          label: 'Сотрудники',
+          icon: Icons.people,
+          onTap: () => context.go('/employees'),
+        ),
+        NavItem(
+          label: 'Ещё',
+          icon: Icons.more_horiz,
+          onTap: () {},
+        ),
       ],
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -266,7 +345,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                            'Нет доступа: у твоей роли нет права "Просмотр сотрудников".'),
+                          'Нет доступа: у твоей роли нет права "Просмотр сотрудников".',
+                        ),
                       ),
                     ],
                   ),
@@ -294,6 +374,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
                             ),
                           ),
                         ),
+                      _buildToolbar(canEdit),
+                      const SizedBox(height: 12),
                       _filtersCard(),
                       const SizedBox(height: 12),
                       Expanded(
@@ -304,7 +386,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                       ? 'Нет данных из-за отсутствия привязки.'
                                       : (_employeesAll.isEmpty
                                           ? (canEdit
-                                              ? 'Пока нет сотрудников.\nДобавь через админку/форму.'
+                                              ? 'Пока нет сотрудников.\nДобавь через кнопку выше.'
                                               : 'Список сотрудников пуст.')
                                           : 'По выбранным фильтрам сотрудников нет.'),
                                   textAlign: TextAlign.center,
@@ -335,20 +417,21 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(
                                           const SnackBar(
-                                              content: Text(
-                                                  'Нет прав на редактирование сотрудников')),
+                                            content: Text(
+                                              'Нет прав на редактирование сотрудников',
+                                            ),
+                                          ),
                                         );
                                         return;
                                       }
 
-                                      final res = await context
-                                          .push<Map>('/employee/${e.id}');
-                                      if (res == null) return;
+                                      final res =
+                                          await context.push<Map>('/employee/${e.id}');
+                                      if (!mounted) return;
 
-                                      // Просто отдадим результат наверх (как у тебя было)
-                                      // чтобы дальше обработать (удаление/изменение).
-                                      // Если у тебя логика обработки в этом файле — добавим позже.
-                                      // Сейчас для lint=0 это не нужно.
+                                      if (res != null) {
+                                        await _loadAll();
+                                      }
                                     },
                                   );
                                 },
