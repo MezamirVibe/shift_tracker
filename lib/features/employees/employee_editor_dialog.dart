@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../auth/auth_models.dart';
+import '../auth/auth_service.dart';
+import '../positions/positions_storage.dart';
 import '../structure/structure_storage.dart';
 import 'employees_storage.dart';
 
@@ -17,6 +20,9 @@ class EmployeeDraft {
   final int shiftHours;
   final int breakHours;
 
+  final String? login;
+  final String? roleId;
+
   const EmployeeDraft({
     required this.fullName,
     required this.position,
@@ -28,6 +34,8 @@ class EmployeeDraft {
     required this.scheduleStartDate,
     required this.shiftHours,
     required this.breakHours,
+    this.login,
+    this.roleId,
   });
 }
 
@@ -35,12 +43,14 @@ class EmployeeEditorDialog extends StatefulWidget {
   final EmployeeDraft? initial;
   final String title;
   final String confirmText;
+  final bool showAccessFields;
 
   const EmployeeEditorDialog({
     super.key,
     this.initial,
     this.title = 'Добавить сотрудника',
     this.confirmText = 'Добавить',
+    this.showAccessFields = false,
   });
 
   @override
@@ -49,19 +59,24 @@ class EmployeeEditorDialog extends StatefulWidget {
 
 class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
   final _structureStorage = StructureStorage();
+  final _positionsStorage = PositionsStorage();
 
   late final TextEditingController _nameController;
-  late final TextEditingController _positionController;
   late final TextEditingController _salaryController;
   late final TextEditingController _bonusController;
+  late final TextEditingController _loginController;
 
   bool _loadingStructure = true;
+  bool _loadingPositions = true;
 
   List<dynamic> _departments = <dynamic>[];
   List<dynamic> _groups = <dynamic>[];
+  List<PositionModel> _positions = <PositionModel>[];
 
   String? _departmentId;
   String? _groupId;
+  String? _roleId;
+  String? _positionName;
 
   late ScheduleType _scheduleType;
   late DateTime _scheduleStartDate;
@@ -74,49 +89,67 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     final init = widget.initial;
 
     _nameController = TextEditingController(text: init?.fullName ?? '');
-    _positionController = TextEditingController(text: init?.position ?? '');
     _salaryController =
         TextEditingController(text: (init?.salary ?? 70000).toString());
     _bonusController =
         TextEditingController(text: (init?.bonus ?? 10000).toString());
+    _loginController = TextEditingController(text: init?.login ?? '');
 
     _departmentId = init?.departmentId;
     _groupId = init?.groupId;
+    _roleId = init?.roleId ?? BuiltInRoleIds.worker;
+    _positionName = init?.position;
+
     _scheduleType = init?.scheduleType ?? ScheduleType.twoTwo;
     _scheduleStartDate = init?.scheduleStartDate ?? DateTime.now();
     _shiftHours = init?.shiftHours ?? 12;
     _breakHours = init?.breakHours ?? 1;
 
-    _loadStructure();
+    _loadData();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _positionController.dispose();
     _salaryController.dispose();
     _bonusController.dispose();
+    _loginController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadStructure() async {
-    setState(() => _loadingStructure = true);
+  Future<void> _loadData() async {
+    setState(() {
+      _loadingStructure = true;
+      _loadingPositions = true;
+    });
 
     final deps = await _structureStorage.loadDepartments();
     final groups = await _structureStorage.loadGroups();
+    final positions = await _positionsStorage.loadPositions();
 
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
+    positions.sort((a, b) => a.name.compareTo(b.name));
 
     if (!mounted) return;
 
     setState(() {
       _departments = deps;
       _groups = groups;
+      _positions = positions;
       _loadingStructure = false;
+      _loadingPositions = false;
     });
 
     _normalizeSelectedGroup();
+
+    if (_positionName != null &&
+        _positionName!.trim().isNotEmpty &&
+        !_positions.any((p) => p.name == _positionName)) {
+      setState(() {
+        _positionName = null;
+      });
+    }
   }
 
   int _parseInt(String s, {required int fallback}) {
@@ -160,15 +193,110 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     });
   }
 
-  void _submit() {
-    final name = _nameController.text.trim();
-    final position = _positionController.text.trim();
+  Future<void> _showAddPositionDialog() async {
+    final ctrl = TextEditingController();
 
-    if (name.isEmpty || position.isEmpty) {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Новая должность'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Название должности',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Добавить'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) {
+      ctrl.dispose();
+      return;
+    }
+
+    final name = ctrl.text.trim();
+    ctrl.dispose();
+
+    if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Заполни ФИО и должность')),
+        const SnackBar(content: Text('Название должности пустое')),
       );
       return;
+    }
+
+    final exists = _positions.any(
+      (p) => p.name.trim().toLowerCase() == name.toLowerCase(),
+    );
+    if (exists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Такая должность уже есть')),
+      );
+      return;
+    }
+
+    final item = PositionModel(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name,
+    );
+
+    final updated = [..._positions, item]..sort((a, b) => a.name.compareTo(b.name));
+    await _positionsStorage.savePositions(updated);
+
+    if (!mounted) return;
+
+    setState(() {
+      _positions = updated;
+      _positionName = name;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Должность добавлена')),
+    );
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    final login = _loginController.text.trim();
+
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Заполни ФИО')),
+      );
+      return;
+    }
+
+    if (_positionName == null || _positionName!.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Выбери должность')),
+      );
+      return;
+    }
+
+    if (widget.showAccessFields) {
+      if (login.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Заполни логин для входа')),
+        );
+        return;
+      }
+      if (_roleId == null || _roleId!.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Выбери роль')),
+        );
+        return;
+      }
     }
 
     final salary = _parseInt(_salaryController.text, fallback: 0);
@@ -200,7 +328,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     Navigator.of(context).pop(
       EmployeeDraft(
         fullName: name,
-        position: position,
+        position: _positionName!,
         salary: salary,
         bonus: bonus,
         departmentId: _departmentId,
@@ -209,6 +337,8 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
         scheduleStartDate: _scheduleStartDate,
         shiftHours: _shiftHours,
         breakHours: _breakHours,
+        login: widget.showAccessFields ? login : null,
+        roleId: widget.showAccessFields ? _roleId : null,
       ),
     );
   }
@@ -216,11 +346,13 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
   @override
   Widget build(BuildContext context) {
     final groups = _groupsForSelectedDepartment;
+    final roles = AuthService.instance.roles.toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
 
     return AlertDialog(
       title: Text(widget.title),
       content: SizedBox(
-        width: 520,
+        width: 560,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -230,11 +362,53 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                 decoration: const InputDecoration(labelText: 'ФИО'),
                 textInputAction: TextInputAction.next,
               ),
-              TextField(
-                controller: _positionController,
-                decoration: const InputDecoration(labelText: 'Должность'),
-                textInputAction: TextInputAction.next,
-              ),
+              const SizedBox(height: 12),
+              if (_loadingPositions)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: LinearProgressIndicator(),
+                )
+              else ...[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _positionName,
+                        decoration: const InputDecoration(
+                          labelText: 'Должность',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _positions
+                            .map(
+                              (p) => DropdownMenuItem<String>(
+                                value: p.name,
+                                child: Text(p.name),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          setState(() => _positionName = value);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: _showAddPositionDialog,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Добавить'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Должность выбирается из справочника.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               TextField(
                 controller: _salaryController,
@@ -242,6 +416,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                 keyboardType: TextInputType.number,
                 textInputAction: TextInputAction.next,
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _bonusController,
                 decoration: const InputDecoration(labelText: 'Премия (₽)'),
@@ -389,6 +564,60 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                   setState(() => _breakHours = v);
                 },
               ),
+              if (widget.showAccessFields) ...[
+                const SizedBox(height: 16),
+                Card(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Учётная запись создастся автоматически вместе с сотрудником.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _loginController,
+                          decoration: const InputDecoration(
+                            labelText: 'Логин для входа',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: _roleId,
+                          decoration: const InputDecoration(
+                            labelText: 'Роль',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: roles
+                              .map(
+                                (r) => DropdownMenuItem<String>(
+                                  value: r.id,
+                                  child: Text(r.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            setState(() => _roleId = value);
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Пароль будет сгенерирован автоматически в формате 6 букв + 4 цифры.',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

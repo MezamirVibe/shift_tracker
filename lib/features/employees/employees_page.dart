@@ -1,11 +1,12 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
-import 'employee_editor_dialog.dart';
 import '../structure/structure_storage.dart';
+import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
 
 class EmployeesPage extends StatefulWidget {
@@ -18,6 +19,7 @@ class EmployeesPage extends StatefulWidget {
 class _EmployeesPageState extends State<EmployeesPage> {
   final _storage = EmployeesStorage();
   final _structureStorage = StructureStorage();
+  final _searchCtrl = TextEditingController();
 
   bool _loading = true;
 
@@ -29,16 +31,30 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   String? _selectedDepartmentId;
   String? _selectedGroupId;
+  String _search = '';
 
   bool get _canViewEmployees =>
       AuthService.instance.hasPerm(AppPermission.viewEmployees);
   bool get _canEditEmployees =>
       AuthService.instance.hasPerm(AppPermission.editEmployees);
+  bool get _isSuperAdmin => AuthService.instance.isCurrentUserSuperAdmin;
 
   @override
   void initState() {
     super.initState();
+    _searchCtrl.addListener(() {
+      if (!mounted) return;
+      setState(() {
+        _search = _searchCtrl.text.trim().toLowerCase();
+      });
+    });
     _loadAll();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   dynamic _findDepartment(String? depId) {
@@ -58,7 +74,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
   }
 
   Future<void> _loadAll() async {
-    setState(() => _loading = true);
+    if (mounted) {
+      setState(() => _loading = true);
+    }
 
     final employees = await _storage.load();
     final deps = await _structureStorage.loadDepartments();
@@ -86,19 +104,28 @@ class _EmployeesPageState extends State<EmployeesPage> {
   void _applyRoleLockToFilters() {
     final u = AuthService.instance.currentUser;
     if (u == null) return;
-    if (u.role == UserRole.superAdmin) return;
+    if (_isSuperAdmin) return;
+
+    final role = AuthService.instance.roleById(u.roleId);
+    if (role == null) return;
 
     setState(() {
-      if (u.role == UserRole.manager) {
-        _selectedDepartmentId = u.departmentId;
-        _selectedGroupId = null;
-      } else if (u.role == UserRole.master) {
-        _selectedGroupId = u.groupId;
-        final g = _findGroup(_selectedGroupId);
-        _selectedDepartmentId = g?.departmentId;
-      } else if (u.role == UserRole.worker) {
-        _selectedDepartmentId = null;
-        _selectedGroupId = null;
+      switch (role.scopeKind) {
+        case ScopeKind.all:
+          break;
+        case ScopeKind.department:
+          _selectedDepartmentId = u.departmentId;
+          _selectedGroupId = null;
+          break;
+        case ScopeKind.group:
+          _selectedGroupId = u.groupId;
+          final g = _findGroup(_selectedGroupId);
+          _selectedDepartmentId = g?.departmentId as String?;
+          break;
+        case ScopeKind.self:
+          _selectedDepartmentId = null;
+          _selectedGroupId = null;
+          break;
       }
     });
   }
@@ -106,7 +133,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
   bool get _filtersLockedByRole {
     final u = AuthService.instance.currentUser;
     if (u == null) return true;
-    return u.role != UserRole.superAdmin;
+    if (_isSuperAdmin) return false;
+
+    final role = AuthService.instance.roleById(u.roleId);
+    if (role == null) return true;
+
+    return role.scopeKind != ScopeKind.all;
   }
 
   void _normalizeGroupSelection() {
@@ -154,21 +186,90 @@ class _EmployeesPageState extends State<EmployeesPage> {
       out = out.where((e) => e.groupId == groupId);
     }
 
+    if (_search.isNotEmpty) {
+      out = out.where((e) {
+        final haystack =
+            '${e.fullName} ${e.position} ${_depName(e.departmentId)} ${_groupName(e.groupId)}'
+                .toLowerCase();
+        return haystack.contains(_search);
+      });
+    }
+
     return out.toList()..sort((a, b) => a.fullName.compareTo(b.fullName));
+  }
+
+  Future<void> _showCredentialsDialog({
+    required String login,
+    required String password,
+    required String roleName,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Сотрудник и учётная запись созданы'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _copyTile('Логин', login),
+            const SizedBox(height: 8),
+            _copyTile('Временный пароль', password),
+            const SizedBox(height: 8),
+            _copyTile('Роль', roleName),
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Пароль показывается только сейчас. Позже его можно будет только сбросить.',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              final text = 'Логин: $login\nПароль: $password\nРоль: $roleName';
+              await Clipboard.setData(ClipboardData(text: text));
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Данные для входа скопированы')),
+              );
+            },
+            child: const Text('Скопировать'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _copyTile(String label, String value) {
+    return Row(
+      children: [
+        SizedBox(width: 140, child: Text(label)),
+        Expanded(
+          child: SelectableText(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _addEmployee() async {
     final draft = await showDialog<EmployeeDraft>(
       context: context,
-      builder: (context) => const EmployeeEditorDialog(),
+      builder: (context) => const EmployeeEditorDialog(
+        showAccessFields: true,
+      ),
     );
 
     if (!mounted || draft == null) return;
 
-    final all = await _storage.load();
-
-    final newEmployee = EmployeeModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+    final result = await AuthService.instance.createEmployeeWithAccount(
       fullName: draft.fullName,
       position: draft.position,
       salary: draft.salary,
@@ -179,25 +280,84 @@ class _EmployeesPageState extends State<EmployeesPage> {
       scheduleStartDate: draft.scheduleStartDate,
       shiftHours: draft.shiftHours,
       breakHours: draft.breakHours,
+      login: draft.login ?? '',
+      roleId: draft.roleId ?? BuiltInRoleIds.worker,
     );
 
-    final updated = [...all, newEmployee];
-    await _storage.save(updated);
+    if (!mounted) return;
 
-    final visibleAfterSave = AuthService.instance.filterEmployeesByScope(updated);
-    final isVisibleForCurrentUser =
-        visibleAfterSave.any((e) => e.id == newEmployee.id);
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Не удалось создать сотрудника и учётную запись. Проверь логин, роль и привязку.',
+          ),
+        ),
+      );
+      return;
+    }
 
     await _loadAll();
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          isVisibleForCurrentUser
-              ? 'Сотрудник добавлен'
-              : 'Сотрудник добавлен, но не попадает в ваш текущий доступ',
+    final roleName =
+        AuthService.instance.roleById(result.user.roleId)?.name ?? result.user.roleId;
+
+    await _showCredentialsDialog(
+      login: result.user.login,
+      password: result.password,
+      roleName: roleName,
+    );
+  }
+
+  void _resetFilters() {
+    setState(() {
+      _searchCtrl.clear();
+      _search = '';
+      if (!_filtersLockedByRole) {
+        _selectedDepartmentId = null;
+        _selectedGroupId = null;
+      }
+    });
+
+    if (_filtersLockedByRole) {
+      _applyRoleLockToFilters();
+    }
+  }
+
+  Widget _scopeHint() {
+    final u = AuthService.instance.currentUser;
+    if (u == null) return const SizedBox.shrink();
+    final role = AuthService.instance.roleById(u.roleId);
+    if (role == null) return const SizedBox.shrink();
+
+    String text;
+    switch (role.scopeKind) {
+      case ScopeKind.all:
+        text = 'Вы видите всех сотрудников.';
+        break;
+      case ScopeKind.department:
+        text = 'Вы видите сотрудников только своего подразделения.';
+        break;
+      case ScopeKind.group:
+        text = 'Вы видите сотрудников только своей группы.';
+        break;
+      case ScopeKind.self:
+        text = 'Вы видите только себя.';
+        break;
+    }
+
+    return Card(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const Icon(Icons.visibility_outlined),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text)),
+          ],
         ),
       ),
     );
@@ -206,100 +366,279 @@ class _EmployeesPageState extends State<EmployeesPage> {
   Widget _filtersCard() {
     final groups = _groupsForSelectedDepartment;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Wrap(
-          runSpacing: 12,
-          spacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(
-              width: 320,
-              child: DropdownButtonFormField<String?>(
-                initialValue: _selectedDepartmentId,
-                decoration: const InputDecoration(
-                  labelText: 'Подразделение',
-                  border: OutlineInputBorder(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final isNarrow = width < 760;
+
+        double fieldWidth() {
+          if (isNarrow) return width;
+          final candidate = (width - 12) / 2;
+          if (candidate < 260) return 260;
+          if (candidate > 360) return 360;
+          return candidate;
+        }
+
+        final filterWidth = fieldWidth();
+
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Фильтры и поиск',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('Все подразделения'),
-                  ),
-                  ..._departments.map(
-                    (d) => DropdownMenuItem<String?>(
-                      value: d.id as String?,
-                      child: Text(d.name as String),
-                    ),
-                  ),
-                ],
-                onChanged: _filtersLockedByRole
-                    ? null
-                    : (v) => setState(() {
-                          _selectedDepartmentId = v;
-                          _selectedGroupId = null;
-                        }),
-              ),
-            ),
-            SizedBox(
-              width: 320,
-              child: DropdownButtonFormField<String?>(
-                initialValue: _selectedGroupId,
-                decoration: const InputDecoration(
-                  labelText: 'Группа',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 8),
+                Text(
+                  'Можно быстро найти сотрудника по ФИО, должности, подразделению или группе.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('Все группы'),
-                  ),
-                  ...groups.map(
-                    (g) => DropdownMenuItem<String?>(
-                      value: g.id as String?,
-                      child: Text(g.name as String),
-                    ),
-                  ),
-                ],
-                onChanged: _filtersLockedByRole
-                    ? null
-                    : (_selectedDepartmentId == null)
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Поиск',
+                    hintText: 'Например: Иванов, сварщик, цех 1',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _search.isEmpty
                         ? null
-                        : (v) => setState(() => _selectedGroupId = v),
+                        : IconButton(
+                            tooltip: 'Очистить поиск',
+                            onPressed: () => _searchCtrl.clear(),
+                            icon: const Icon(Icons.clear),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  runSpacing: 12,
+                  spacing: 12,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: filterWidth,
+                      child: DropdownButtonFormField<String?>(
+                        initialValue: _selectedDepartmentId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Подразделение',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text(
+                              'Все подразделения',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          ..._departments.map(
+                            (d) => DropdownMenuItem<String?>(
+                              value: d.id as String?,
+                              child: Text(
+                                d.name as String,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: _filtersLockedByRole
+                            ? null
+                            : (v) => setState(() {
+                                  _selectedDepartmentId = v;
+                                  _selectedGroupId = null;
+                                }),
+                      ),
+                    ),
+                    SizedBox(
+                      width: filterWidth,
+                      child: DropdownButtonFormField<String?>(
+                        initialValue: _selectedGroupId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Группа',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text(
+                              'Все группы',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          ...groups.map(
+                            (g) => DropdownMenuItem<String?>(
+                              value: g.id as String?,
+                              child: Text(
+                                g.name as String,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: _filtersLockedByRole
+                            ? null
+                            : (_selectedDepartmentId == null)
+                                ? null
+                                : (v) => setState(() => _selectedGroupId = v),
+                      ),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _loadAll,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Обновить'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _resetFilters,
+                      icon: const Icon(Icons.filter_alt_off),
+                      label: const Text('Сбросить'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildToolbar(bool canEdit) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 640;
+
+        if (isNarrow) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Сотрудники',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Карточки сотрудников и их доступ в приложение.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              if (canEdit)
+                FilledButton.icon(
+                  onPressed: _addEmployee,
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: const Text('Добавить сотрудника'),
+                ),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Сотрудники',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Карточки сотрудников и их доступ в приложение.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ),
             ),
-            FilledButton.tonalIcon(
-              onPressed: _loadAll,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Обновить'),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: Text('Видно сотрудников: ${_filteredEmployees.length}'),
-            ),
+            if (canEdit)
+              FilledButton.icon(
+                onPressed: _addEmployee,
+                icon: const Icon(Icons.person_add_alt_1),
+                label: const Text('Добавить сотрудника'),
+              ),
           ],
+        );
+      },
+    );
+  }
+
+  Widget _emptyState(bool noBinding, bool canEdit) {
+    final text = noBinding
+        ? 'Нет данных из-за отсутствия привязки.\nПопросите настроить доступ в админке.'
+        : (_employeesAll.isEmpty
+            ? (canEdit
+                ? 'Список пока пуст.\nСоздай первого сотрудника через кнопку выше.'
+                : 'Список сотрудников пока пуст.')
+            : 'По текущим фильтрам и поиску сотрудников не найдено.');
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleMedium,
         ),
       ),
     );
   }
 
-  Widget _buildToolbar(bool canEdit) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            'Всего сотрудников в базе: ${_employeesAll.length}',
-            style: Theme.of(context).textTheme.titleMedium,
+  Widget _employeeTile(EmployeeModel e, bool canEdit) {
+    final dep = _depName(e.departmentId);
+    final grp = _groupName(e.groupId);
+    final linkedUser = AuthService.instance.userByEmployeeId(e.id);
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        title: Text(e.fullName),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(e.position),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(label: Text(dep)),
+                  Chip(label: Text(grp)),
+                  Chip(label: Text('Оклад ${e.salary} ₽')),
+                  Chip(label: Text('Премия ${e.bonus} ₽')),
+                  if (linkedUser != null)
+                    Chip(label: Text('Логин: ${linkedUser.login}')),
+                ],
+              ),
+            ],
           ),
         ),
-        if (canEdit)
-          FilledButton.icon(
-            onPressed: _addEmployee,
-            icon: const Icon(Icons.person_add_alt_1),
-            label: const Text('Добавить сотрудника'),
-          ),
-      ],
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () async {
+          if (!canEdit) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Нет прав на редактирование сотрудников'),
+              ),
+            );
+            return;
+          }
+
+          final res = await context.push<Map>('/employee/${e.id}');
+          if (!mounted) return;
+
+          if (res != null) {
+            await _loadAll();
+          }
+        },
+      ),
     );
   }
 
@@ -310,8 +649,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final list = _filteredEmployees;
 
     final u = AuthService.instance.currentUser;
+    final currentRole = u == null ? null : AuthService.instance.roleById(u.roleId);
     final noBinding =
-        u != null && u.role != UserRole.superAdmin && _employeesVisible.isEmpty;
+        u != null && !_isSuperAdmin && _employeesVisible.isEmpty && currentRole != null;
 
     return AdaptiveScaffold(
       title: 'Сотрудники',
@@ -327,11 +667,6 @@ class _EmployeesPageState extends State<EmployeesPage> {
           icon: Icons.people,
           onTap: () => context.go('/employees'),
         ),
-        NavItem(
-          label: 'Ещё',
-          icon: Icons.more_horiz,
-          onTap: () {},
-        ),
       ],
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -345,7 +680,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'Нет доступа: у твоей роли нет права "Просмотр сотрудников".',
+                          'Нет доступа: у вашей роли нет права "Просмотр сотрудников".',
                         ),
                       ),
                     ],
@@ -356,7 +691,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 ? const Center(child: CircularProgressIndicator())
                 : Column(
                     children: [
-                      if (noBinding)
+                      _buildToolbar(canEdit),
+                      const SizedBox(height: 12),
+                      _scopeHint(),
+                      if (noBinding && currentRole?.scopeKind != ScopeKind.all) ...[
+                        const SizedBox(height: 12),
                         const Card(
                           child: Padding(
                             padding: EdgeInsets.all(12),
@@ -366,74 +705,26 @@ class _EmployeesPageState extends State<EmployeesPage> {
                                 SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
-                                    'Для вашей роли не настроена привязка (сотрудник/группа/подразделение).\n'
-                                    'Попросите руководителя настроить доступ в "Админ → Пользователи".',
+                                    'Для вашей роли не настроена привязка (сотрудник, группа или подразделение). Из-за этого список сейчас пуст.',
                                   ),
                                 ),
                               ],
                             ),
                           ),
                         ),
-                      _buildToolbar(canEdit),
+                      ],
                       const SizedBox(height: 12),
                       _filtersCard(),
                       const SizedBox(height: 12),
                       Expanded(
                         child: list.isEmpty
-                            ? Center(
-                                child: Text(
-                                  noBinding
-                                      ? 'Нет данных из-за отсутствия привязки.'
-                                      : (_employeesAll.isEmpty
-                                          ? (canEdit
-                                              ? 'Пока нет сотрудников.\nДобавь через кнопку выше.'
-                                              : 'Список сотрудников пуст.')
-                                          : 'По выбранным фильтрам сотрудников нет.'),
-                                  textAlign: TextAlign.center,
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium,
-                                ),
-                              )
+                            ? _emptyState(noBinding, canEdit)
                             : ListView.separated(
                                 itemCount: list.length,
                                 separatorBuilder: (_, __) =>
-                                    const Divider(height: 1),
+                                    const SizedBox(height: 8),
                                 itemBuilder: (context, index) {
-                                  final e = list[index];
-                                  final dep = _depName(e.departmentId);
-                                  final grp = _groupName(e.groupId);
-
-                                  return ListTile(
-                                    title: Text(e.fullName),
-                                    subtitle: Text(
-                                      '${e.position} • $dep • $grp\n'
-                                      'оклад ${e.salary} ₽ • премия ${e.bonus} ₽',
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    trailing: const Icon(Icons.chevron_right),
-                                    onTap: () async {
-                                      if (!canEdit) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              'Нет прав на редактирование сотрудников',
-                                            ),
-                                          ),
-                                        );
-                                        return;
-                                      }
-
-                                      final res =
-                                          await context.push<Map>('/employee/${e.id}');
-                                      if (!mounted) return;
-
-                                      if (res != null) {
-                                        await _loadAll();
-                                      }
-                                    },
-                                  );
+                                  return _employeeTile(list[index], canEdit);
                                 },
                               ),
                       ),

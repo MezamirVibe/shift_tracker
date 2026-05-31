@@ -5,6 +5,7 @@ import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../structure/structure_page.dart';
+import 'positions_page.dart';
 import 'roles_editor_page.dart';
 import 'users_admin_page.dart';
 
@@ -18,11 +19,12 @@ class AdminPage extends StatelessWidget {
     final tabs = _buildTabs(auth);
     final views = _buildViews(auth);
 
-    final safeLength = tabs.isEmpty ? 1 : tabs.length;
-    final safeTabs = tabs.isEmpty ? const [Tab(text: 'Нет доступа')] : tabs;
-    final safeViews = views.isEmpty
-        ? const [
-            Center(
+    final int safeLength = tabs.isEmpty ? 1 : tabs.length;
+    final List<Tab> safeTabs =
+        tabs.isEmpty ? <Tab>[const Tab(text: 'Нет доступа')] : tabs;
+    final List<Widget> safeViews = views.isEmpty
+        ? <Widget>[
+            const Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
@@ -58,6 +60,27 @@ class AdminPage extends StatelessWidget {
         ],
         child: Column(
           children: [
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Wrap(
+                    runSpacing: 8,
+                    spacing: 12,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      const Icon(Icons.tune),
+                      Text(
+                        'Здесь настраиваются пользователи, роли, структура и справочник должностей.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
             Material(
               color: Theme.of(context).colorScheme.surface,
               child: TabBar(
@@ -85,6 +108,7 @@ class AdminPage extends StatelessWidget {
 
     if (_canManageStructure(auth)) {
       tabs.add(const Tab(text: 'Структура'));
+      tabs.add(const Tab(text: 'Должности'));
     }
 
     if (_canEditRolePolicies(auth)) {
@@ -103,6 +127,7 @@ class AdminPage extends StatelessWidget {
 
     if (_canManageStructure(auth)) {
       views.add(const StructurePage());
+      views.add(const PositionsPage());
     }
 
     if (_canEditRolePolicies(auth)) {

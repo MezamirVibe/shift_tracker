@@ -22,14 +22,15 @@ class _LoginPageState extends State<LoginPage> {
       _error = null;
     });
 
-    final ok = await AuthService.instance.login(_login.text, _password.text);
+    final result =
+        await AuthService.instance.loginDetailed(_login.text, _password.text);
 
     if (!mounted) return;
 
     setState(() => _busy = false);
 
-    if (!ok) {
-      setState(() => _error = 'Неверный логин или пароль');
+    if (!result.ok) {
+      setState(() => _error = result.error ?? 'Неверный логин или пароль');
       return;
     }
 
@@ -52,50 +53,55 @@ class _LoginPageState extends State<LoginPage> {
           constraints: const BoxConstraints(maxWidth: 420),
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: _login,
-                  decoration: const InputDecoration(
-                    labelText: 'Логин',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Пароль',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (_) => _busy ? null : _doLogin(),
-                ),
-                const SizedBox(height: 12),
-                if (_error != null)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _error!,
-                      style:
-                          TextStyle(color: Theme.of(context).colorScheme.error),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Учёт смен',
+                      style: Theme.of(context).textTheme.headlineSmall,
                     ),
-                  ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: _busy ? null : _doLogin,
-                    child: _busy
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('Войти'),
-                  ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _login,
+                      decoration: const InputDecoration(
+                        labelText: 'Логин',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _password,
+                      obscureText: true,
+                      onSubmitted: (_) => _busy ? null : _doLogin(),
+                      decoration: const InputDecoration(
+                        labelText: 'Пароль',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _busy ? null : _doLogin,
+                        child: Text(_busy ? 'Входим...' : 'Войти'),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

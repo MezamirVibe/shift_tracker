@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
+import '../auth/auth_storage.dart';
 import '../employees/employees_storage.dart';
 import '../structure/structure_storage.dart';
 
@@ -19,6 +20,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   final _lastName = TextEditingController();
   final _firstName = TextEditingController();
   final _middleName = TextEditingController();
+  final _searchCtrl = TextEditingController();
 
   final _employeesStorage = EmployeesStorage();
   final _structureStorage = StructureStorage();
@@ -31,17 +33,23 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   List<GroupModel> _groups = [];
 
   String? _roleId = BuiltInRoleIds.worker;
-
   String? _departmentId;
   String? _groupId;
   String? _employeeId;
 
   bool _createEmployeeForSelfScope = true;
+  String _search = '';
 
   @override
   void initState() {
     super.initState();
     _auth.addListener(_onAuthChanged);
+    _searchCtrl.addListener(() {
+      if (!mounted) return;
+      setState(() {
+        _search = _searchCtrl.text.trim().toLowerCase();
+      });
+    });
     _loadLists();
   }
 
@@ -53,37 +61,18 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     _lastName.dispose();
     _firstName.dispose();
     _middleName.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
   void _onAuthChanged() {
     if (!mounted) return;
-
-    final roles = _auth.roles;
-    final hasCurrentRole =
-        _roleId != null && roles.any((r) => r.id == _roleId);
-
-    if (!hasCurrentRole) {
-      final fallbackRoleId = roles.isNotEmpty ? roles.first.id : null;
-      setState(() {
-        _roleId = fallbackRoleId;
-        _departmentId = null;
-        _groupId = null;
-        _employeeId = null;
-        _createEmployeeForSelfScope =
-            _auth.roleById(_roleId)?.scopeKind == ScopeKind.self;
-      });
-      return;
-    }
-
     setState(() {});
   }
 
   void _snack(String text) {
     final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(
-      SnackBar(content: Text(text)),
-    );
+    messenger?.showSnackBar(SnackBar(content: Text(text)));
   }
 
   Future<void> _loadLists() async {
@@ -109,9 +98,9 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     });
   }
 
-  AppRole? _selectedRole(AuthService auth) {
+  AppRole? _selectedRole() {
     if (_roleId == null) return null;
-    return auth.roleById(_roleId);
+    return _auth.roleById(_roleId);
   }
 
   void _resetBindingsForRole(AppRole? role) {
@@ -190,12 +179,50 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
         .join(' ');
   }
 
-  bool _validateCreate(AuthService auth) {
+  Widget _roleHintCard(AppRole? role) {
+    if (role == null) return const SizedBox.shrink();
+
+    String text;
+    switch (role.scopeKind) {
+      case ScopeKind.all:
+        text = 'Эта роль видит всё. Дополнительная привязка не требуется.';
+        break;
+      case ScopeKind.department:
+        text =
+            'Эта роль видит только одно подразделение. Нужно выбрать подразделение.';
+        break;
+      case ScopeKind.group:
+        text =
+            'Эта роль видит только одну группу. Нужно выбрать подразделение и группу.';
+        break;
+      case ScopeKind.self:
+        text =
+            'Эта роль видит только себя. Нужно выбрать существующего сотрудника или создать нового автоматически.';
+        break;
+    }
+
+    return Card(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.info_outline),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _validateCreate() {
     final login = _login.text.trim();
     final pass = _pass.text;
     final lastName = _lastName.text.trim();
     final firstName = _firstName.text.trim();
-    final role = _selectedRole(auth);
+    final role = _selectedRole();
 
     if (role == null) {
       _snack('Выбери роль');
@@ -223,14 +250,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
       case ScopeKind.department:
         if (_departmentId == null || _departmentId!.isEmpty) {
-          _snack(auth.requiredBindingHintByRoleId(role.id));
+          _snack(_auth.requiredBindingHintByRoleId(role.id));
           return false;
         }
         return true;
 
       case ScopeKind.group:
         if (_groupId == null || _groupId!.isEmpty) {
-          _snack(auth.requiredBindingHintByRoleId(role.id));
+          _snack(_auth.requiredBindingHintByRoleId(role.id));
           return false;
         }
         return true;
@@ -241,14 +268,12 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               _departmentId!.isEmpty ||
               _groupId == null ||
               _groupId!.isEmpty) {
-            _snack(
-              'Для нового сотрудника укажи подразделение и группу. Тогда он сразу появится в списке сотрудников.',
-            );
+            _snack('Для нового сотрудника укажи подразделение и группу.');
             return false;
           }
         } else {
           if (_employeeId == null || _employeeId!.isEmpty) {
-            _snack(auth.requiredBindingHintByRoleId(role.id));
+            _snack(_auth.requiredBindingHintByRoleId(role.id));
             return false;
           }
         }
@@ -257,16 +282,15 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   }
 
   Future<void> _create() async {
-    final auth = _auth;
-    final role = _selectedRole(auth);
+    final role = _selectedRole();
     if (role == null) {
       _snack('Роль не выбрана');
       return;
     }
 
-    if (!_validateCreate(auth)) return;
+    if (!_validateCreate()) return;
 
-    final ok = await auth.createUser(
+    final ok = await _auth.createUser(
       login: _login.text.trim(),
       password: _pass.text,
       roleId: role.id,
@@ -309,11 +333,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     _firstName.clear();
     _middleName.clear();
 
-    final fallbackWorkerRole = auth.roleById(BuiltInRoleIds.worker);
-    final firstRoleId = auth.roles.isNotEmpty ? auth.roles.first.id : null;
-
     setState(() {
-      _roleId = fallbackWorkerRole?.id ?? firstRoleId;
+      _roleId = BuiltInRoleIds.worker;
       _departmentId = null;
       _groupId = null;
       _employeeId = null;
@@ -357,11 +378,11 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     }
 
     _snack('Удалено');
+    setState(() {});
   }
 
   Future<void> _editUserDialog(String userId) async {
-    final auth = _auth;
-    final user = auth.users.where((x) => x.id == userId).firstOrNull;
+    final user = _auth.users.where((x) => x.id == userId).firstOrNull;
     if (user == null) return;
 
     String roleId = user.roleId;
@@ -382,7 +403,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocal) {
-            final currentRole = auth.roleById(roleId);
+            final currentRole = _auth.roleById(roleId);
             final groupsForDep = _groupsForDepartment(depId);
 
             Widget bindingEditor() {
@@ -507,7 +528,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             }
 
             return AlertDialog(
-              title: Text('Пользователь: ${user.login}'),
+              title: Text('Редактирование: ${user.login}'),
               content: SizedBox(
                 width: 560,
                 child: SingleChildScrollView(
@@ -544,7 +565,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                           labelText: 'Роль',
                           border: OutlineInputBorder(),
                         ),
-                        items: auth.roles
+                        items: _auth.roles
                             .map(
                               (r) => DropdownMenuItem<String>(
                                 value: r.id,
@@ -569,7 +590,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          auth.requiredBindingHintByRoleId(roleId),
+                          _auth.requiredBindingHintByRoleId(roleId),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
@@ -588,7 +609,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                     firstName = firstNameCtrl.text.trim();
                     middleName = middleNameCtrl.text.trim();
 
-                    final selectedRole = auth.roleById(roleId);
+                    final selectedRole = _auth.roleById(roleId);
                     if (selectedRole == null) {
                       _snack('Роль не найдена');
                       return;
@@ -604,19 +625,19 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                         break;
                       case ScopeKind.department:
                         if (depId == null || depId!.isEmpty) {
-                          _snack(auth.requiredBindingHintByRoleId(roleId));
+                          _snack(_auth.requiredBindingHintByRoleId(roleId));
                           return;
                         }
                         break;
                       case ScopeKind.group:
                         if (groupId == null || groupId!.isEmpty) {
-                          _snack(auth.requiredBindingHintByRoleId(roleId));
+                          _snack(_auth.requiredBindingHintByRoleId(roleId));
                           return;
                         }
                         break;
                       case ScopeKind.self:
                         if (empId == null || empId!.isEmpty) {
-                          _snack(auth.requiredBindingHintByRoleId(roleId));
+                          _snack(_auth.requiredBindingHintByRoleId(roleId));
                           return;
                         }
                         break;
@@ -639,13 +660,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
     if (ok != true) return;
 
-    final selectedRole = auth.roleById(roleId);
+    final selectedRole = _auth.roleById(roleId);
     if (selectedRole == null) {
       _snack('Роль не найдена');
       return;
     }
 
-    final saved = await auth.updateUserAccess(
+    final saved = await _auth.updateUserAccess(
       userId: userId,
       roleId: roleId,
       lastName: lastName,
@@ -665,6 +686,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     }
 
     _snack('Сохранено');
+    setState(() {});
   }
 
   Widget _selfScopeCreateMode(AppRole role) {
@@ -678,7 +700,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Сразу создать сотрудника'),
               subtitle: const Text(
-                'Рекомендуется: пользователь появится и в системе доступа, и в списке сотрудников.',
+                'Удобный вариант: пользователь появится и в системе доступа, и в списке сотрудников.',
               ),
               value: _createEmployeeForSelfScope,
               onChanged: (value) {
@@ -767,8 +789,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   }
 
   Widget _bindingEditorForCreate() {
-    final auth = _auth;
-    final role = _selectedRole(auth);
+    final role = _selectedRole();
 
     if (_loadingLists) {
       return const Padding(
@@ -866,24 +887,44 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     }
   }
 
+  List<UserAccount> _filteredUsers(List<UserAccount> users) {
+    if (_search.isEmpty) return users;
+
+    return users.where((u) {
+      final role = _auth.roleById(u.roleId);
+      final binding = _bindingSummaryForUser(
+        u.departmentId,
+        u.groupId,
+        u.employeeId,
+        role,
+      );
+
+      final haystack =
+          '${u.fullName} ${u.login} ${role?.name ?? ''} $binding'.toLowerCase();
+
+      return haystack.contains(_search);
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final auth = _auth;
-    final roles = auth.roles.toList()..sort((a, b) => a.name.compareTo(b.name));
+    final roles = _auth.roles.toList()..sort((a, b) => a.name.compareTo(b.name));
 
     if (_roleId != null && roles.every((r) => r.id != _roleId)) {
       _roleId = roles.isNotEmpty ? roles.first.id : null;
-      _resetBindingsForRole(auth.roleById(_roleId));
+      _resetBindingsForRole(_auth.roleById(_roleId));
     }
 
-    final users = auth.users.toList()
-      ..sort((a, b) {
-        final byName = a.fullName.compareTo(b.fullName);
-        if (byName != 0) return byName;
-        return a.login.compareTo(b.login);
-      });
+    final users = _filteredUsers(
+      _auth.users.toList()
+        ..sort((a, b) {
+          final byName = a.fullName.compareTo(b.fullName);
+          if (byName != 0) return byName;
+          return a.login.compareTo(b.login);
+        }),
+    );
 
-    final selectedRole = _selectedRole(auth);
+    final selectedRole = _selectedRole();
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -896,8 +937,15 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               children: [
                 Text(
                   'Создать пользователя',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Пользователь — это учётная запись для входа. Её можно привязать к сотруднику и выдать нужную роль.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                _roleHintCard(selectedRole),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _lastName,
@@ -958,7 +1006,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                     if (value == null) return;
                     setState(() {
                       _roleId = value;
-                      _resetBindingsForRole(auth.roleById(value));
+                      _resetBindingsForRole(_auth.roleById(value));
                     });
                   },
                 ),
@@ -970,19 +1018,20 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                   child: Text(
                     selectedRole?.scopeKind == ScopeKind.self &&
                             _createEmployeeForSelfScope
-                        ? 'Для роли "${selectedRole?.name ?? ''}" будет автоматически создан сотрудник: "${_normalizeFullName(_lastName.text, _firstName.text, _middleName.text)}".'
-                        : auth.requiredBindingHintByRoleId(_roleId),
+                        ? 'Будет автоматически создан сотрудник: "${_normalizeFullName(_lastName.text, _firstName.text, _middleName.text)}".'
+                        : _auth.requiredBindingHintByRoleId(_roleId),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
-                const SizedBox(height: 12),
-                Row(
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
                   children: [
                     FilledButton(
                       onPressed: _create,
-                      child: const Text('Создать'),
+                      child: const Text('Создать пользователя'),
                     ),
-                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: _loadLists,
                       icon: const Icon(Icons.refresh),
@@ -995,22 +1044,56 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           ),
         ),
         const SizedBox(height: 12),
-        Text(
-          'Пользователи',
-          style: Theme.of(context).textTheme.titleMedium,
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Пользователи',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                    Chip(label: Text('Всего: ${users.length}')),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Поиск пользователя',
+                    hintText: 'ФИО, логин, роль, привязка',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _search.isEmpty
+                        ? null
+                        : IconButton(
+                            onPressed: () => _searchCtrl.clear(),
+                            icon: const Icon(Icons.clear),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 8),
         if (users.isEmpty)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(16),
-              child: Text('Пользователей пока нет'),
+              child: Text(
+                'Пользователей пока нет или по текущему поиску ничего не найдено.',
+              ),
             ),
           )
         else
-          ...users.map((u) {
-            final isMe = auth.currentUser?.id == u.id;
-            final role = auth.roleById(u.roleId);
+          ...users.map((UserAccount u) {
+            final isMe = _auth.currentUser?.id == u.id;
+            final role = _auth.roleById(u.roleId);
             final binding = _bindingSummaryForUser(
               u.departmentId,
               u.groupId,
@@ -1020,21 +1103,38 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
             return Card(
               child: ListTile(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 title: Text(u.fullName),
-                subtitle: Text(
-                  '${u.login} • ${role?.name ?? u.roleId}\n$binding',
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Логин: ${u.login}'),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          Chip(label: Text(role?.name ?? u.roleId)),
+                          Chip(label: Text(binding)),
+                          if (isMe) const Chip(label: Text('Это вы')),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                isThreeLine: true,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+                trailing: Wrap(
+                  spacing: 4,
                   children: [
                     IconButton(
-                      tooltip: 'Роль и привязка',
+                      tooltip: 'Редактировать пользователя',
                       icon: const Icon(Icons.manage_accounts_outlined),
                       onPressed: () => _editUserDialog(u.id),
                     ),
                     IconButton(
-                      tooltip: 'Удалить',
+                      tooltip: 'Удалить пользователя',
                       icon: const Icon(Icons.delete_outline),
                       onPressed: (u.roleId == BuiltInRoleIds.superAdmin || isMe)
                           ? null

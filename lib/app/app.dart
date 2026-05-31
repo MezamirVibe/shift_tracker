@@ -28,6 +28,7 @@ class _ShiftTrackerAppState extends State<ShiftTrackerApp> {
   Widget build(BuildContext context) {
     return MaterialApp.router(
       title: 'Учёт смен',
+      debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: _themeMode,

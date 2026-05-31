@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 
 import '../../shared/extensions/iterable_x.dart';
@@ -5,12 +7,24 @@ import '../employees/employees_storage.dart';
 import 'auth_models.dart';
 import 'auth_storage.dart';
 
+class LoginResult {
+  final bool ok;
+  final String? error;
+
+  const LoginResult._(this.ok, this.error);
+
+  const LoginResult.success() : this._(true, null);
+
+  const LoginResult.fail(String message) : this._(false, message);
+}
+
 class AuthService extends ChangeNotifier {
   AuthService._();
   static final AuthService instance = AuthService._();
 
   final AuthStorage _storage = AuthStorage();
   final EmployeesStorage _employeesStorage = EmployeesStorage();
+  final Random _random = Random.secure();
 
   bool _initialized = false;
   bool get initialized => _initialized;
@@ -59,6 +73,14 @@ class AuthService extends ChangeNotifier {
   AppRole? roleById(String? id) {
     if (id == null || id.trim().isEmpty) return null;
     return _roles.where((r) => r.id == id.trim()).cast<AppRole?>().firstOrNull;
+  }
+
+  UserAccount? userByEmployeeId(String? employeeId) {
+    if (employeeId == null || employeeId.trim().isEmpty) return null;
+    return _users
+        .where((u) => u.employeeId == employeeId)
+        .cast<UserAccount?>()
+        .firstOrNull;
   }
 
   bool isSuperAdminRoleId(String? roleId) {
@@ -140,18 +162,31 @@ class AuthService extends ChangeNotifier {
       case ScopeKind.group:
         return 'Для этой роли нужна привязка к группе.';
       case ScopeKind.self:
-        return 'Для этой роли нужен сотрудник. Можно привязать существующего или создать нового.';
+        return 'Для этой роли нужен сотрудник.';
       case ScopeKind.all:
         return 'Эта роль видит всё, привязка не требуется.';
     }
   }
 
-  Future<bool> login(String login, String password) async {
+  Future<LoginResult> loginDetailed(String login, String password) async {
     final user = _users
         .where((u) => u.login == login.trim())
         .cast<UserAccount?>()
         .firstOrNull;
-    if (user == null) return false;
+
+    if (user == null) {
+      return const LoginResult.fail('Неверный логин или пароль');
+    }
+
+    final lockUntil = user.lockUntil;
+    if (lockUntil != null && DateTime.now().isBefore(lockUntil)) {
+      final local = lockUntil.toLocal();
+      final hh = local.hour.toString().padLeft(2, '0');
+      final mm = local.minute.toString().padLeft(2, '0');
+      return LoginResult.fail(
+        'Слишком много неудачных попыток. Повторите после $hh:$mm',
+      );
+    }
 
     final ok = _storage.verifyPassword(
       password: password,
@@ -159,12 +194,47 @@ class AuthService extends ChangeNotifier {
       hashB64: user.hashB64,
       iterations: user.iterations,
     );
-    if (!ok) return false;
 
-    _currentUser = user;
-    await _storage.saveSessionUserId(user.id);
+    if (!ok) {
+      final nextAttempts = user.failedLoginAttempts + 1;
+      final shouldLock = nextAttempts >= 4;
+      final updated = user.copyWith(
+        failedLoginAttempts: nextAttempts,
+        lockUntilIso:
+            shouldLock ? DateTime.now().add(const Duration(minutes: 5)).toIso8601String() : null,
+        clearLockUntil: !shouldLock,
+      );
+
+      _replaceUser(updated);
+      await _storage.saveUsers(_users);
+
+      if (shouldLock) {
+        return const LoginResult.fail(
+          'Слишком много неудачных попыток. Вход заблокирован на 5 минут.',
+        );
+      }
+
+      return LoginResult.fail(
+        'Неверный логин или пароль. Попытка $nextAttempts из 3 без блокировки.',
+      );
+    }
+
+    final cleared = user.copyWith(
+      failedLoginAttempts: 0,
+      clearLockUntil: true,
+    );
+    _replaceUser(cleared);
+    await _storage.saveUsers(_users);
+
+    _currentUser = cleared;
+    await _storage.saveSessionUserId(cleared.id);
     notifyListeners();
-    return true;
+    return const LoginResult.success();
+  }
+
+  Future<bool> login(String login, String password) async {
+    final result = await loginDetailed(login, password);
+    return result.ok;
   }
 
   Future<void> logout() async {
@@ -203,6 +273,8 @@ class AuthService extends ChangeNotifier {
       departmentId: null,
       groupId: null,
       employeeId: null,
+      failedLoginAttempts: 0,
+      lockUntilIso: null,
     );
 
     _users = [user];
@@ -225,6 +297,7 @@ class AuthService extends ChangeNotifier {
     String? departmentId,
     String? groupId,
     String? employeeId,
+    String? linkedEmployeeId,
     bool createEmployeeForWorker = false,
     String? employeePosition,
     int employeeSalary = 0,
@@ -264,17 +337,14 @@ class AuthService extends ChangeNotifier {
       case ScopeKind.all:
         dep = null;
         grp = null;
-        emp = null;
         break;
 
       case ScopeKind.department:
         grp = null;
-        emp = null;
         if (dep == null || dep.isEmpty) return false;
         break;
 
       case ScopeKind.group:
-        emp = null;
         if (grp == null || grp.isEmpty) return false;
         dep = null;
         break;
@@ -338,13 +408,154 @@ class AuthService extends ChangeNotifier {
       iterations: p.iterations,
       departmentId: dep,
       groupId: grp,
-      employeeId: emp,
+      employeeId: linkedEmployeeId ?? emp,
+      failedLoginAttempts: 0,
+      lockUntilIso: null,
     );
 
     _users = [..._users, user];
     await _storage.saveUsers(_users);
     notifyListeners();
     return true;
+  }
+
+  Future<({EmployeeModel employee, UserAccount user, String password})?>
+      createEmployeeWithAccount({
+    required String fullName,
+    required String position,
+    required int salary,
+    required int bonus,
+    required String? departmentId,
+    required String? groupId,
+    required ScheduleType scheduleType,
+    required DateTime scheduleStartDate,
+    required int shiftHours,
+    required int breakHours,
+    required String login,
+    required String roleId,
+  }) async {
+    if (!hasPerm(AppPermission.editEmployees) &&
+        !hasPerm(AppPermission.manageUsers) &&
+        !isCurrentUserSuperAdmin) {
+      return null;
+    }
+
+    final normalizedLogin = login.trim();
+    if (normalizedLogin.isEmpty) return null;
+    if (_users.any((u) => u.login == normalizedLogin)) return null;
+
+    final role = roleById(roleId);
+    if (role == null) return null;
+
+    final nameParts =
+        fullName.trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty).toList();
+    final lastName = nameParts.isNotEmpty ? nameParts.first : '';
+    final firstName = nameParts.length > 1 ? nameParts[1] : fullName.trim();
+    final middleName =
+        nameParts.length > 2 ? nameParts.sublist(2).join(' ') : '';
+
+    final employees = await _employeesStorage.load();
+
+    final employee = EmployeeModel(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      fullName: fullName.trim(),
+      position: position.trim(),
+      salary: salary,
+      bonus: bonus,
+      departmentId: departmentId,
+      groupId: groupId,
+      scheduleType: scheduleType,
+      scheduleStartDate: scheduleStartDate,
+      shiftHours: shiftHours,
+      breakHours: breakHours,
+    );
+
+    await _employeesStorage.save([...employees, employee]);
+
+    String? boundDepartmentId;
+    String? boundGroupId;
+
+    switch (role.scopeKind) {
+      case ScopeKind.all:
+        boundDepartmentId = null;
+        boundGroupId = null;
+        break;
+      case ScopeKind.department:
+        boundDepartmentId = employee.departmentId;
+        boundGroupId = null;
+        if (boundDepartmentId == null || boundDepartmentId.isEmpty) {
+          return null;
+        }
+        break;
+      case ScopeKind.group:
+        boundDepartmentId = null;
+        boundGroupId = employee.groupId;
+        if (boundGroupId == null || boundGroupId.isEmpty) {
+          return null;
+        }
+        break;
+      case ScopeKind.self:
+        boundDepartmentId = null;
+        boundGroupId = null;
+        break;
+    }
+
+    final password = generateReadablePassword();
+    final p = _storage.createPasswordHash(password);
+
+    final user = UserAccount(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      login: normalizedLogin,
+      roleId: role.id,
+      lastName: lastName,
+      firstName: firstName,
+      middleName: middleName,
+      saltB64: p.saltB64,
+      hashB64: p.hashB64,
+      iterations: p.iterations,
+      departmentId: boundDepartmentId,
+      groupId: boundGroupId,
+      employeeId: employee.id,
+      failedLoginAttempts: 0,
+      lockUntilIso: null,
+    );
+
+    _users = [..._users, user];
+    await _storage.saveUsers(_users);
+    notifyListeners();
+
+    return (employee: employee, user: user, password: password);
+  }
+
+  Future<String?> resetPassword(String userId) async {
+    if (!hasPerm(AppPermission.manageUsers) && !isCurrentUserSuperAdmin) {
+      return null;
+    }
+
+    final target =
+        _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
+    if (target == null) return null;
+
+    final newPassword = generateReadablePassword();
+    final p = _storage.createPasswordHash(newPassword);
+
+    final updated = target.copyWith(
+      saltB64: p.saltB64,
+      hashB64: p.hashB64,
+      iterations: p.iterations,
+      failedLoginAttempts: 0,
+      clearLockUntil: true,
+    );
+
+    _replaceUser(updated);
+    await _storage.saveUsers(_users);
+
+    if (_currentUser?.id == updated.id) {
+      _currentUser = updated;
+    }
+
+    notifyListeners();
+    return newPassword;
   }
 
   Future<bool> updateUserAccess({
@@ -378,24 +589,21 @@ class AuthService extends ChangeNotifier {
 
     String? dep = departmentId?.trim();
     String? grp = groupId?.trim();
-    String? emp = employeeId?.trim();
+    String? emp = employeeId?.trim() ?? target.employeeId;
 
     switch (role.scopeKind) {
       case ScopeKind.all:
         dep = null;
         grp = null;
-        emp = null;
         break;
 
       case ScopeKind.department:
         grp = null;
-        emp = null;
         if (dep == null || dep.isEmpty) return false;
         break;
 
       case ScopeKind.group:
         dep = null;
-        emp = null;
         if (grp == null || grp.isEmpty) return false;
         break;
 
@@ -600,8 +808,8 @@ class AuthService extends ChangeNotifier {
     return byId.values.toList();
   }
 
-  String _generateUniqueRoleId(String rawValue) {
-    final base = _slugifyRoleName(rawValue);
+  String _generateUniqueRoleId(String raw) {
+    final base = _slugifyRoleName(raw);
     if (base.isEmpty) {
       return 'role_${DateTime.now().millisecondsSinceEpoch}';
     }
@@ -678,5 +886,26 @@ class AuthService extends ChangeNotifier {
 
     final result = buffer.toString().replaceAll(RegExp('_+'), '_');
     return result.replaceAll(RegExp(r'^_+|_+$'), '');
+  }
+
+  String generateReadablePassword() {
+    const consonants = 'bcdfghjklmnprstvwxz';
+    const vowels = 'aeiouy';
+
+    final b = StringBuffer();
+    for (int i = 0; i < 3; i++) {
+      b.write(consonants[_random.nextInt(consonants.length)]);
+      b.write(vowels[_random.nextInt(vowels.length)]);
+    }
+
+    for (int i = 0; i < 4; i++) {
+      b.write(_random.nextInt(10));
+    }
+
+    return b.toString();
+  }
+
+  void _replaceUser(UserAccount updated) {
+    _users = _users.map((u) => u.id == updated.id ? updated : u).toList();
   }
 }

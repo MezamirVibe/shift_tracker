@@ -329,7 +329,6 @@ class _DayPageState extends State<DayPage> {
           icon: Icons.people,
           onTap: () => context.go('/employees'),
         ),
-        NavItem(label: 'Ещё', icon: Icons.more_horiz, onTap: () {}),
       ],
       actions: [
         IconButton(

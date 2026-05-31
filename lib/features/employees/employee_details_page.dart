@@ -1,7 +1,10 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/extensions/iterable_x.dart';
+import '../auth/auth_service.dart';
+import '../auth/auth_storage.dart';
 import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
@@ -42,6 +45,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   int _shiftHours = 12;
   int _breakHours = 1;
 
+  UserAccount? _linkedUser;
+
   @override
   void initState() {
     super.initState();
@@ -70,6 +75,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       _startDate = e.scheduleStartDate;
       _shiftHours = e.shiftHours;
       _breakHours = e.breakHours;
+      _linkedUser = AuthService.instance.userByEmployeeId(widget.id);
       _loading = false;
     });
   }
@@ -97,6 +103,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       _startDate = updated.scheduleStartDate;
       _shiftHours = updated.shiftHours;
       _breakHours = updated.breakHours;
+      _linkedUser = AuthService.instance.userByEmployeeId(widget.id);
     });
   }
 
@@ -121,13 +128,11 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       ),
     );
 
-    if (!mounted) return;
-    if (draft == null) return;
+    if (!mounted || draft == null) return;
 
     final current = await _getFreshEmployee();
 
-    if (!mounted) return;
-    if (current == null) return;
+    if (!mounted || current == null) return;
 
     final updated = current.copyWith(
       fullName: draft.fullName,
@@ -174,6 +179,81 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
 
     if (!context.mounted) return;
     context.pop(<String, dynamic>{'deleted': true});
+  }
+
+  Future<void> _resetPassword() async {
+    final user = _linkedUser;
+    if (user == null) return;
+
+    final newPassword = await AuthService.instance.resetPassword(user.id);
+    if (!mounted) return;
+
+    if (newPassword == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось сбросить пароль')),
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Пароль сброшен'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _kv('Логин', user.login),
+            const SizedBox(height: 8),
+            _kv('Новый временный пароль', newPassword),
+            const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Пароль показывается только сейчас.',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(
+                ClipboardData(
+                  text: 'Логин: ${user.login}\nНовый пароль: $newPassword',
+                ),
+              );
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Данные скопированы')),
+              );
+            },
+            child: const Text('Скопировать'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+
+    setState(() {
+      _linkedUser = AuthService.instance.userByEmployeeId(widget.id);
+    });
+  }
+
+  Widget _kv(String label, String value) {
+    return Row(
+      children: [
+        SizedBox(width: 150, child: Text(label)),
+        Expanded(
+          child: SelectableText(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
   }
 
   void _popWithUpdated() {
@@ -245,7 +325,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             Tab(text: 'График'),
             Tab(text: 'Структура'),
             Tab(text: 'Зарплата'),
-            Tab(text: 'Штрафы'),
+            Tab(text: 'Доступ'),
             Tab(text: 'История'),
           ],
         ),
@@ -261,8 +341,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             onChanged:
                 (nextType, nextStart, nextShiftHours, nextBreakHours) async {
               final current = await _getFreshEmployee();
-              if (!mounted) return;
-              if (current == null) return;
+              if (!mounted || current == null) return;
 
               final updated = current.copyWith(
                 scheduleType: nextType,
@@ -279,8 +358,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             storage: _structureStorage,
             onChanged: (depId, grpId) async {
               final current = await _getFreshEmployee();
-              if (!mounted) return;
-              if (current == null) return;
+              if (!mounted || current == null) return;
 
               final updated = current.copyWith(
                 departmentId: depId,
@@ -292,10 +370,65 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             },
           ),
           _SalaryTab(salary: _salary, bonus: _bonus),
-          const _FinesTab(),
+          _AccessTab(
+            user: _linkedUser,
+            roleName: _linkedUser == null
+                ? null
+                : AuthService.instance.roleById(_linkedUser!.roleId)?.name,
+            onResetPassword: _resetPassword,
+          ),
           const _HistoryTab(),
         ],
       ),
+    );
+  }
+}
+
+class _AccessTab extends StatelessWidget {
+  final UserAccount? user;
+  final String? roleName;
+  final Future<void> Function() onResetPassword;
+
+  const _AccessTab({
+    required this.user,
+    required this.roleName,
+    required this.onResetPassword,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (user == null) {
+      return const Center(
+        child: Text('Связанная учётная запись не найдена.'),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Доступ в приложение',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                Text('Логин: ${user!.login}'),
+                const SizedBox(height: 8),
+                Text('Роль: ${roleName ?? user!.roleId}'),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: onResetPassword,
+                  icon: const Icon(Icons.lock_reset),
+                  label: const Text('Сбросить пароль'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -448,20 +581,9 @@ class _StructureTabState extends State<_StructureTab> {
                           await widget.onChanged(_depId, _groupId);
                         },
                 ),
-                const SizedBox(height: 8),
-                if (_depId == null)
-                  const Text(
-                    'Сначала выбери подразделение, чтобы выбрать группу.',
-                  ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-        FilledButton.tonalIcon(
-          onPressed: _load,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Обновить списки'),
         ),
       ],
     );
@@ -677,14 +799,6 @@ class _SalaryTab extends StatelessWidget {
       ],
     );
   }
-}
-
-class _FinesTab extends StatelessWidget {
-  const _FinesTab();
-
-  @override
-  Widget build(BuildContext context) =>
-      const Center(child: Text('Штрафы: позже'));
 }
 
 class _HistoryTab extends StatelessWidget {

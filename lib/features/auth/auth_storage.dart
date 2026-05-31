@@ -17,15 +17,16 @@ class UserAccount {
   final String firstName;
   final String middleName;
 
-  // password storage
   final String saltB64;
   final String hashB64;
   final int iterations;
 
-  // scope bindings
   final String? departmentId;
   final String? groupId;
   final String? employeeId;
+
+  final int failedLoginAttempts;
+  final String? lockUntilIso;
 
   const UserAccount({
     required this.id,
@@ -40,9 +41,10 @@ class UserAccount {
     required this.departmentId,
     required this.groupId,
     required this.employeeId,
+    this.failedLoginAttempts = 0,
+    this.lockUntilIso,
   });
 
-  /// Legacy-совместимость для старого кода.
   UserRole get role => userRoleFromString(roleId);
 
   String get fullName {
@@ -54,6 +56,18 @@ class UserAccount {
 
     if (parts.isEmpty) return login;
     return parts.join(' ');
+  }
+
+  DateTime? get lockUntil {
+    final raw = lockUntilIso?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  bool get isLockedNow {
+    final until = lockUntil;
+    if (until == null) return false;
+    return DateTime.now().isBefore(until);
   }
 
   Map<String, dynamic> toJson() => {
@@ -69,6 +83,8 @@ class UserAccount {
         'departmentId': departmentId,
         'groupId': groupId,
         'employeeId': employeeId,
+        'failedLoginAttempts': failedLoginAttempts,
+        'lockUntilIso': lockUntilIso,
       };
 
   static UserAccount fromJson(Map<String, dynamic> json) {
@@ -108,6 +124,10 @@ class UserAccount {
       employeeId: (json['employeeId'] as String?)?.trim().isEmpty ?? true
           ? null
           : (json['employeeId'] as String?)?.trim(),
+      failedLoginAttempts: (json['failedLoginAttempts'] as int?) ?? 0,
+      lockUntilIso: (json['lockUntilIso'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : (json['lockUntilIso'] as String?)?.trim(),
     );
   }
 
@@ -124,9 +144,12 @@ class UserAccount {
     String? departmentId,
     String? groupId,
     String? employeeId,
+    int? failedLoginAttempts,
+    String? lockUntilIso,
     bool clearDepartment = false,
     bool clearGroup = false,
     bool clearEmployee = false,
+    bool clearLockUntil = false,
   }) {
     return UserAccount(
       id: id,
@@ -142,6 +165,8 @@ class UserAccount {
           clearDepartment ? null : (departmentId ?? this.departmentId),
       groupId: clearGroup ? null : (groupId ?? this.groupId),
       employeeId: clearEmployee ? null : (employeeId ?? this.employeeId),
+      failedLoginAttempts: failedLoginAttempts ?? this.failedLoginAttempts,
+      lockUntilIso: clearLockUntil ? null : (lockUntilIso ?? this.lockUntilIso),
     );
   }
 }
@@ -149,7 +174,7 @@ class UserAccount {
 class AuthStorage {
   static const _usersFile = 'users.json';
   static const _sessionFile = 'session.json';
-  static const _rolePoliciesFile = 'role_policies.json'; // legacy
+  static const _rolePoliciesFile = 'role_policies.json';
   static const _rolesFile = 'roles.json';
 
   Future<File> _file(String name) async {

@@ -467,7 +467,6 @@ class _CalendarPageState extends State<CalendarPage> {
             label: 'Сотрудники',
             icon: Icons.people,
             onTap: () => context.go('/employees')),
-        NavItem(label: 'Ещё', icon: Icons.more_horiz, onTap: () {}),
       ],
       actions: [
         if (user != null)
