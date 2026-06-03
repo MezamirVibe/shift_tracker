@@ -272,6 +272,78 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     });
   }
 
+  String _formatDate(DateTime d) {
+    return '${d.day.toString().padLeft(2, '0')}.'
+        '${d.month.toString().padLeft(2, '0')}.'
+        '${d.year}';
+  }
+
+  String _scheduleLabel(ScheduleType type) {
+    switch (type) {
+      case ScheduleType.twoTwo:
+        return '2/2';
+      case ScheduleType.fiveTwo:
+        return '5/2';
+    }
+  }
+
+  Widget _heroCard(bool isPhone) {
+    final roleName = _linkedUser == null
+        ? null
+        : AuthService.instance.roleById(_linkedUser!.roleId)?.name;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: EdgeInsets.all(isPhone ? 14 : 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _fullName,
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _position,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                Chip(label: Text('Оклад $_salary ₽')),
+                Chip(label: Text('Премия $_bonus ₽')),
+                Chip(label: Text('График ${_scheduleLabel(_scheduleType)}')),
+                if (_linkedUser != null)
+                  Chip(label: Text('Логин: ${_linkedUser!.login}')),
+                if (roleName != null) Chip(label: Text('Роль: $roleName')),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                FilledButton.icon(
+                  onPressed: _edit,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Редактировать'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _fire,
+                  icon: const Icon(Icons.person_off_outlined),
+                  label: const Text('Уволить'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -280,6 +352,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+
     if (_loading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -306,21 +380,10 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
           icon: const Icon(Icons.arrow_back),
           onPressed: _popWithUpdated,
         ),
-        title: Text(_fullName),
-        actions: [
-          IconButton(
-            tooltip: 'Редактировать',
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: _edit,
-          ),
-          IconButton(
-            tooltip: 'Уволить',
-            icon: const Icon(Icons.person_off_outlined),
-            onPressed: _fire,
-          ),
-        ],
+        title: const Text('Карточка сотрудника'),
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           tabs: const [
             Tab(text: 'График'),
             Tab(text: 'Структура'),
@@ -330,54 +393,65 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          _ScheduleTab(
-            scheduleType: _scheduleType,
-            startDate: _startDate,
-            shiftHours: _shiftHours,
-            breakHours: _breakHours,
-            onChanged:
-                (nextType, nextStart, nextShiftHours, nextBreakHours) async {
-              final current = await _getFreshEmployee();
-              if (!mounted || current == null) return;
+          Padding(
+            padding: EdgeInsets.fromLTRB(isPhone ? 8 : 12, isPhone ? 8 : 12,
+                isPhone ? 8 : 12, 0),
+            child: _heroCard(isPhone),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _ScheduleTab(
+                  scheduleType: _scheduleType,
+                  startDate: _startDate,
+                  shiftHours: _shiftHours,
+                  breakHours: _breakHours,
+                  onChanged:
+                      (nextType, nextStart, nextShiftHours, nextBreakHours) async {
+                    final current = await _getFreshEmployee();
+                    if (!mounted || current == null) return;
 
-              final updated = current.copyWith(
-                scheduleType: nextType,
-                scheduleStartDate: nextStart,
-                shiftHours: nextShiftHours,
-                breakHours: nextBreakHours,
-              );
-              await _saveEmployee(updated);
-            },
-          ),
-          _StructureTab(
-            departmentId: _departmentId,
-            groupId: _groupId,
-            storage: _structureStorage,
-            onChanged: (depId, grpId) async {
-              final current = await _getFreshEmployee();
-              if (!mounted || current == null) return;
+                    final updated = current.copyWith(
+                      scheduleType: nextType,
+                      scheduleStartDate: nextStart,
+                      shiftHours: nextShiftHours,
+                      breakHours: nextBreakHours,
+                    );
+                    await _saveEmployee(updated);
+                  },
+                ),
+                _StructureTab(
+                  departmentId: _departmentId,
+                  groupId: _groupId,
+                  storage: _structureStorage,
+                  onChanged: (depId, grpId) async {
+                    final current = await _getFreshEmployee();
+                    if (!mounted || current == null) return;
 
-              final updated = current.copyWith(
-                departmentId: depId,
-                groupId: grpId,
-                clearDepartment: depId == null,
-                clearGroup: grpId == null,
-              );
-              await _saveEmployee(updated);
-            },
+                    final updated = current.copyWith(
+                      departmentId: depId,
+                      groupId: grpId,
+                      clearDepartment: depId == null,
+                      clearGroup: grpId == null,
+                    );
+                    await _saveEmployee(updated);
+                  },
+                ),
+                _SalaryTab(salary: _salary, bonus: _bonus),
+                _AccessTab(
+                  user: _linkedUser,
+                  roleName: _linkedUser == null
+                      ? null
+                      : AuthService.instance.roleById(_linkedUser!.roleId)?.name,
+                  onResetPassword: _resetPassword,
+                ),
+                const _HistoryTab(),
+              ],
+            ),
           ),
-          _SalaryTab(salary: _salary, bonus: _bonus),
-          _AccessTab(
-            user: _linkedUser,
-            roleName: _linkedUser == null
-                ? null
-                : AuthService.instance.roleById(_linkedUser!.roleId)?.name,
-            onResetPassword: _resetPassword,
-          ),
-          const _HistoryTab(),
         ],
       ),
     );
@@ -398,8 +472,22 @@ class _AccessTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (user == null) {
-      return const Center(
-        child: Text('Связанная учётная запись не найдена.'),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.person_off_outlined, size: 40),
+              const SizedBox(height: 12),
+              Text(
+                'Связанная учётная запись не найдена.',
+                style: Theme.of(context).textTheme.titleMedium,
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -407,17 +495,30 @@ class _AccessTab extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       children: [
         Card(
+          margin: EdgeInsets.zero,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Доступ в приложение',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                Text('Логин: ${user!.login}'),
-                const SizedBox(height: 8),
-                Text('Роль: ${roleName ?? user!.roleId}'),
+                Text(
+                  'Доступ в приложение',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Управление учётной записью сотрудника.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    Chip(label: Text('Логин: ${user!.login}')),
+                    Chip(label: Text('Роль: ${roleName ?? user!.roleId}')),
+                  ],
+                ),
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: onResetPassword,
@@ -509,8 +610,9 @@ class _StructureTabState extends State<_StructureTab> {
       padding: const EdgeInsets.all(12),
       children: [
         Card(
+          margin: EdgeInsets.zero,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -518,7 +620,12 @@ class _StructureTabState extends State<_StructureTab> {
                   'Подразделение',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
+                Text(
+                  'Определи, где числится сотрудник.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
                   initialValue: _depId,
                   decoration: const InputDecoration(
@@ -550,13 +657,22 @@ class _StructureTabState extends State<_StructureTab> {
         ),
         const SizedBox(height: 12),
         Card(
+          margin: EdgeInsets.zero,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Группа', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
+                Text(
+                  'Группа',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Выбери группу внутри подразделения.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
                   initialValue: _groupId,
                   decoration: const InputDecoration(
@@ -611,24 +727,49 @@ class _ScheduleTab extends StatelessWidget {
     required this.onChanged,
   });
 
+  String _scheduleLabel(ScheduleType type) {
+    switch (type) {
+      case ScheduleType.twoTwo:
+        return '2/2';
+      case ScheduleType.fiveTwo:
+        return '5/2';
+    }
+  }
+
+  String _formatDate(DateTime d) {
+    return '${d.day.toString().padLeft(2, '0')}.'
+        '${d.month.toString().padLeft(2, '0')}.'
+        '${d.year}';
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
         Card(
+          margin: EdgeInsets.zero,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Тип графика',
+                  'Параметры графика',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
+                Text(
+                  'Основные параметры рабочего графика сотрудника.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 14),
                 DropdownButtonFormField<ScheduleType>(
                   initialValue: scheduleType,
+                  decoration: const InputDecoration(
+                    labelText: 'Тип графика',
+                    border: OutlineInputBorder(),
+                  ),
                   items: const [
                     DropdownMenuItem(
                       value: ScheduleType.twoTwo,
@@ -644,59 +785,48 @@ class _ScheduleTab extends StatelessWidget {
                     await onChanged(v, startDate, shiftHours, breakHours);
                   },
                 ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Дата старта графика',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${startDate.day.toString().padLeft(2, '0')}.'
-                        '${startDate.month.toString().padLeft(2, '0')}.'
-                        '${startDate.year}',
-                      ),
+                const SizedBox(height: 12),
+                Card(
+                  margin: EdgeInsets.zero,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Дата старта: ${_formatDate(startDate)}',
+                          ),
+                        ),
+                        FilledButton.tonal(
+                          onPressed: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2100),
+                              initialDate: startDate,
+                            );
+                            if (picked == null) return;
+                            await onChanged(
+                              scheduleType,
+                              picked,
+                              shiftHours,
+                              breakHours,
+                            );
+                          },
+                          child: const Text('Выбрать'),
+                        ),
+                      ],
                     ),
-                    FilledButton.tonal(
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2100),
-                          initialDate: startDate,
-                        );
-                        if (picked == null) return;
-                        await onChanged(
-                          scheduleType,
-                          picked,
-                          shiftHours,
-                          breakHours,
-                        );
-                      },
-                      child: const Text('Выбрать'),
-                    ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  'Длительность смены',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
                 DropdownButtonFormField<int>(
                   initialValue: shiftHours,
+                  decoration: const InputDecoration(
+                    labelText: 'Длительность смены',
+                    border: OutlineInputBorder(),
+                  ),
                   items: const [
                     DropdownMenuItem(value: 9, child: Text('9 часов')),
                     DropdownMenuItem(value: 12, child: Text('12 часов')),
@@ -708,13 +838,12 @@ class _ScheduleTab extends StatelessWidget {
                   },
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  'Перерыв',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
                 DropdownButtonFormField<int>(
                   initialValue: breakHours,
+                  decoration: const InputDecoration(
+                    labelText: 'Перерыв',
+                    border: OutlineInputBorder(),
+                  ),
                   items: List.generate(
                     shiftHours,
                     (i) => DropdownMenuItem<int>(
@@ -733,16 +862,22 @@ class _ScheduleTab extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Card(
+          margin: EdgeInsets.zero,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Пример: ближайшие 14 дней',
+                  'Быстрый обзор',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
+                Text(
+                  'Ближайшие 14 дней по текущему графику.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
                 ...List.generate(14, (i) {
                   final d = DateTime.now().add(Duration(days: i));
                   final isWork = isWorkDay(
@@ -753,10 +888,15 @@ class _ScheduleTab extends StatelessWidget {
                   final label =
                       '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}';
 
-                  return ListTile(
-                    dense: true,
-                    title: Text(label),
-                    trailing: Text(isWork ? 'Смена' : 'Выходной'),
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    color: Theme.of(context).colorScheme.surfaceContainerLowest,
+                    child: ListTile(
+                      dense: true,
+                      title: Text(label),
+                      subtitle: Text('График ${_scheduleLabel(scheduleType)}'),
+                      trailing: Text(isWork ? 'Смена' : 'Выходной'),
+                    ),
                   );
                 }),
               ],
@@ -780,18 +920,31 @@ class _SalaryTab extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       children: [
         Card(
+          margin: EdgeInsets.zero,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Оклад', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Text('$salary ₽'),
-                const SizedBox(height: 12),
-                Text('Премия', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Text('$bonus ₽'),
+                Text(
+                  'Оплата',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Базовые параметры оплаты сотрудника.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    Chip(label: Text('Оклад $salary ₽')),
+                    Chip(label: Text('Премия $bonus ₽')),
+                    Chip(label: Text('Итого ${salary + bonus} ₽')),
+                  ],
+                ),
               ],
             ),
           ),
@@ -805,6 +958,16 @@ class _HistoryTab extends StatelessWidget {
   const _HistoryTab();
 
   @override
-  Widget build(BuildContext context) =>
-      const Center(child: Text('История: позже'));
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          'История изменений появится позже.',
+          style: Theme.of(context).textTheme.titleMedium,
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
 }

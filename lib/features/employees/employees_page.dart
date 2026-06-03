@@ -35,9 +35,16 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   bool get _canViewEmployees =>
       AuthService.instance.hasPerm(AppPermission.viewEmployees);
+
   bool get _canEditEmployees =>
       AuthService.instance.hasPerm(AppPermission.editEmployees);
+
   bool get _isSuperAdmin => AuthService.instance.isCurrentUserSuperAdmin;
+
+  bool get _canAddEmployees =>
+      _canEditEmployees ||
+      _isSuperAdmin ||
+      AuthService.instance.hasPerm(AppPermission.manageUsers);
 
   @override
   void initState() {
@@ -260,8 +267,16 @@ class _EmployeesPageState extends State<EmployeesPage> {
   }
 
   Future<void> _addEmployee() async {
+    if (!_canAddEmployees) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Нет прав на создание сотрудников')),
+      );
+      return;
+    }
+
     final draft = await showDialog<EmployeeDraft>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => const EmployeeEditorDialog(
         showAccessFields: true,
       ),
@@ -302,7 +317,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
     if (!mounted) return;
 
     final roleName =
-        AuthService.instance.roleById(result.user.roleId)?.name ?? result.user.roleId;
+        AuthService.instance.roleById(result.user.roleId)?.name ??
+            result.user.roleId;
 
     await _showCredentialsDialog(
       login: result.user.login,
@@ -349,6 +365,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     }
 
     return Card(
+      margin: EdgeInsets.zero,
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -360,6 +377,17 @@ class _EmployeesPageState extends State<EmployeesPage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _statsRow() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        Chip(label: Text('Видно: ${_filteredEmployees.length}')),
+        Chip(label: Text('Всего: ${_employeesAll.length}')),
+      ],
     );
   }
 
@@ -382,25 +410,26 @@ class _EmployeesPageState extends State<EmployeesPage> {
         final filterWidth = fieldWidth();
 
         return Card(
+          margin: EdgeInsets.zero,
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Фильтры и поиск',
+                  'Поиск и фильтры',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
-                  'Можно быстро найти сотрудника по ФИО, должности, подразделению или группе.',
+                  'Быстрый поиск по ФИО, должности, подразделению и группе.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _searchCtrl,
                   decoration: InputDecoration(
-                    labelText: 'Поиск',
+                    labelText: 'Поиск сотрудника',
                     hintText: 'Например: Иванов, сварщик, цех 1',
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.search),
@@ -500,6 +529,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+                _statsRow(),
               ],
             ),
           ),
@@ -508,81 +539,70 @@ class _EmployeesPageState extends State<EmployeesPage> {
     );
   }
 
-  Widget _buildToolbar(bool canEdit) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isNarrow = constraints.maxWidth < 640;
-
-        if (isNarrow) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Сотрудники',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Карточки сотрудников и их доступ в приложение.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 12),
-              if (canEdit)
-                FilledButton.icon(
+  Widget _heroCard(bool isPhone) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: EdgeInsets.all(isPhone ? 14 : 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Сотрудники',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Карточки сотрудников, структура, должности и доступ в приложение.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            if (_canAddEmployees)
+              SizedBox(
+                width: isPhone ? double.infinity : null,
+                child: FilledButton.icon(
                   onPressed: _addEmployee,
                   icon: const Icon(Icons.person_add_alt_1),
                   label: const Text('Добавить сотрудника'),
                 ),
-            ],
-          );
-        }
-
-        return Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Сотрудники',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Карточки сотрудников и их доступ в приложение.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            if (canEdit)
-              FilledButton.icon(
-                onPressed: _addEmployee,
-                icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Добавить сотрудника'),
               ),
           ],
-        );
-      },
+        ),
+      ),
     );
   }
 
-  Widget _emptyState(bool noBinding, bool canEdit) {
+  Widget _emptyState(bool noBinding) {
     final text = noBinding
         ? 'Нет данных из-за отсутствия привязки.\nПопросите настроить доступ в админке.'
         : (_employeesAll.isEmpty
-            ? (canEdit
-                ? 'Список пока пуст.\nСоздай первого сотрудника через кнопку выше.'
+            ? (_canAddEmployees
+                ? 'Список пока пуст.\nСоздай первого сотрудника.'
                 : 'Список сотрудников пока пуст.')
             : 'По текущим фильтрам и поиску сотрудников не найдено.');
 
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.titleMedium,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.people_outline, size: 40),
+            const SizedBox(height: 12),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            if (_canAddEmployees && _employeesAll.isEmpty) ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _addEmployee,
+                icon: const Icon(Icons.person_add_alt_1),
+                label: const Text('Добавить сотрудника'),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -595,32 +615,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
     return Card(
       margin: EdgeInsets.zero,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        title: Text(e.fullName),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(e.position),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  Chip(label: Text(dep)),
-                  Chip(label: Text(grp)),
-                  Chip(label: Text('Оклад ${e.salary} ₽')),
-                  Chip(label: Text('Премия ${e.bonus} ₽')),
-                  if (linkedUser != null)
-                    Chip(label: Text('Логин: ${linkedUser.login}')),
-                ],
-              ),
-            ],
-          ),
-        ),
-        trailing: const Icon(Icons.chevron_right),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
         onTap: () async {
           if (!canEdit) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -638,6 +634,43 @@ class _EmployeesPageState extends State<EmployeesPage> {
             await _loadAll();
           }
         },
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      e.fullName,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                e.position,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(label: Text(dep)),
+                  Chip(label: Text(grp)),
+                  Chip(label: Text('Оклад ${e.salary} ₽')),
+                  Chip(label: Text('Премия ${e.bonus} ₽')),
+                  if (linkedUser != null)
+                    Chip(label: Text('Логин: ${linkedUser.login}')),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -647,9 +680,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final canView = _canViewEmployees;
     final canEdit = _canEditEmployees;
     final list = _filteredEmployees;
+    final isPhone = MediaQuery.of(context).size.shortestSide < 600;
 
     final u = AuthService.instance.currentUser;
-    final currentRole = u == null ? null : AuthService.instance.roleById(u.roleId);
+    final currentRole =
+        u == null ? null : AuthService.instance.roleById(u.roleId);
     final noBinding =
         u != null && !_isSuperAdmin && _employeesVisible.isEmpty && currentRole != null;
 
@@ -669,7 +704,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         ),
       ],
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(isPhone ? 8 : 12),
         child: !canView
             ? const Card(
                 child: Padding(
@@ -691,12 +726,13 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 ? const Center(child: CircularProgressIndicator())
                 : Column(
                     children: [
-                      _buildToolbar(canEdit),
+                      _heroCard(isPhone),
                       const SizedBox(height: 12),
                       _scopeHint(),
                       if (noBinding && currentRole?.scopeKind != ScopeKind.all) ...[
                         const SizedBox(height: 12),
                         const Card(
+                          margin: EdgeInsets.zero,
                           child: Padding(
                             padding: EdgeInsets.all(12),
                             child: Row(
@@ -718,11 +754,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       const SizedBox(height: 12),
                       Expanded(
                         child: list.isEmpty
-                            ? _emptyState(noBinding, canEdit)
+                            ? _emptyState(noBinding)
                             : ListView.separated(
                                 itemCount: list.length,
                                 separatorBuilder: (_, __) =>
-                                    const SizedBox(height: 8),
+                                    const SizedBox(height: 10),
                                 itemBuilder: (context, index) {
                                   return _employeeTile(list[index], canEdit);
                                 },
