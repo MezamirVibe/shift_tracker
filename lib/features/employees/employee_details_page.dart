@@ -396,8 +396,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       body: Column(
         children: [
           Padding(
-            padding: EdgeInsets.fromLTRB(isPhone ? 8 : 12, isPhone ? 8 : 12,
-                isPhone ? 8 : 12, 0),
+            padding: EdgeInsets.fromLTRB(
+                isPhone ? 8 : 12, isPhone ? 8 : 12, isPhone ? 8 : 12, 0),
             child: _heroCard(isPhone),
           ),
           Expanded(
@@ -409,8 +409,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
                   startDate: _startDate,
                   shiftHours: _shiftHours,
                   breakHours: _breakHours,
-                  onChanged:
-                      (nextType, nextStart, nextShiftHours, nextBreakHours) async {
+                  onChanged: (nextType, nextStart, nextShiftHours,
+                      nextBreakHours) async {
                     final current = await _getFreshEmployee();
                     if (!mounted || current == null) return;
 
@@ -445,7 +445,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
                   user: _linkedUser,
                   roleName: _linkedUser == null
                       ? null
-                      : AuthService.instance.roleById(_linkedUser!.roleId)?.name,
+                      : AuthService.instance
+                          .roleById(_linkedUser!.roleId)
+                          ?.name,
                   onResetPassword: _resetPassword,
                 ),
                 const _HistoryTab(),

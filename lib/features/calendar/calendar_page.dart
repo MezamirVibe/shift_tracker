@@ -334,6 +334,71 @@ class _CalendarPageState extends State<CalendarPage> {
     await AuthService.instance.logout();
   }
 
+  Future<void> _changePassword() async {
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    final repeatController = TextEditingController();
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Сменить пароль'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: currentController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Текущий пароль'),
+              ),
+              TextField(
+                controller: newController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Новый пароль (минимум 10 символов)',
+                ),
+              ),
+              TextField(
+                controller: repeatController,
+                obscureText: true,
+                decoration:
+                    const InputDecoration(labelText: 'Повторите новый пароль'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Сменить'),
+          ),
+        ],
+      ),
+    );
+    if (submitted != true || !mounted) return;
+    if (newController.text != repeatController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Новые пароли не совпадают.')),
+      );
+      return;
+    }
+    final error = await AuthService.instance.changePassword(
+      currentPassword: currentController.text,
+      newPassword: newController.text,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error ?? 'Пароль изменён. Войдите с новым паролем.'),
+      ),
+    );
+  }
+
   List<GroupModel> get _groupsForSelectedDepartment {
     final depId = _selectedDepartmentId;
     if (depId == null) return const [];
@@ -609,6 +674,11 @@ class _CalendarPageState extends State<CalendarPage> {
             icon: const Icon(Icons.admin_panel_settings_outlined),
             onPressed: () => context.push('/admin'),
           ),
+        IconButton(
+          tooltip: 'Сменить пароль',
+          icon: const Icon(Icons.password),
+          onPressed: _changePassword,
+        ),
         IconButton(
           tooltip: 'Выйти',
           icon: const Icon(Icons.logout),

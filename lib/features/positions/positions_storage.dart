@@ -1,7 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:path_provider/path_provider.dart';
+import '../../core/api_client.dart';
 
 class PositionModel {
   final String id;
@@ -35,34 +32,32 @@ class PositionModel {
 }
 
 class PositionsStorage {
-  static const _positionsFile = 'positions.json';
-
-  Future<File> _file(String name) async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}${Platform.pathSeparator}$name');
-  }
-
   Future<List<PositionModel>> loadPositions() async {
-    try {
-      final f = await _file(_positionsFile);
-      if (!await f.exists()) return [];
-      final text = await f.readAsString();
-      if (text.trim().isEmpty) return [];
-      final data = jsonDecode(text) as List;
-      final items =
-          data.map((e) => PositionModel.fromJson(e as Map)).toList();
-
-      items.sort((a, b) => a.name.compareTo(b.name));
-      return items;
-    } catch (_) {
-      return [];
-    }
+    final data =
+        await ApiClient.instance.request('GET', '/api/v1/positions') as List;
+    final items = data.whereType<Map>().map((item) {
+      final json = Map<String, dynamic>.from(item);
+      return PositionModel(
+          id: json['id'] as String, name: json['name'] as String);
+    }).toList();
+    items.sort((a, b) => a.name.compareTo(b.name));
+    return items;
   }
 
   Future<void> savePositions(List<PositionModel> items) async {
-    final f = await _file(_positionsFile);
-    await f.writeAsString(
-      jsonEncode(items.map((e) => e.toJson()).toList()),
-    );
+    final existing = {for (final item in await loadPositions()) item.id: item};
+    final wanted = {for (final item in items) item.id: item};
+    for (final item in items) {
+      await ApiClient.instance.request(
+        existing.containsKey(item.id) ? 'PATCH' : 'POST',
+        existing.containsKey(item.id)
+            ? '/api/v1/positions/${item.id}'
+            : '/api/v1/positions',
+        body: {'id': item.id, 'name': item.name},
+      );
+    }
+    for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
+      await ApiClient.instance.request('DELETE', '/api/v1/positions/$id');
+    }
   }
 }
