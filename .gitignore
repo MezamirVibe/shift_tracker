@@ -20,6 +20,15 @@ coverage/
 # --- Logs ---
 *.log
 
+# --- Python ---
+__pycache__/
+*.py[cod]
+
+# --- Deployment secrets and local backups ---
+deploy/.env
+deploy/backups/
+*.dump
+
 # --- Android / Gradle ---
 android/.gradle/
 android/local.properties

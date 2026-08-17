@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/id.dart';
+
 import '../employees/employees_storage.dart';
 import '../positions/positions_storage.dart';
 
@@ -97,11 +99,12 @@ class _PositionsPageState extends State<PositionsPage> {
     }
 
     final item = PositionModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: newUuidV4(),
       name: name,
     );
 
-    final updated = [..._positions, item]..sort((a, b) => a.name.compareTo(b.name));
+    final updated = [..._positions, item]
+      ..sort((a, b) => a.name.compareTo(b.name));
     await _positionsStorage.savePositions(updated);
 
     if (!mounted) return;

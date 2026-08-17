@@ -2,6 +2,8 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/api_client.dart';
+import '../../core/id.dart';
 import '../../shared/extensions/iterable_x.dart';
 import '../employees/employees_storage.dart';
 import 'auth_models.dart';
@@ -39,35 +41,47 @@ class AuthService extends ChangeNotifier {
   UserAccount? get currentUser => _currentUser;
 
   bool get isLoggedIn => _currentUser != null;
-  bool get hasUsers => _users.isNotEmpty;
+  bool _serverHasUsers = true;
+  bool get hasUsers => _serverHasUsers;
 
   Future<void> init() async {
-    _users = await _storage.loadUsers();
-
-    final loadedRoles = await _storage.loadRoles();
-    if (loadedRoles.isNotEmpty) {
-      _roles = loadedRoles;
-    } else {
-      final legacyPolicies = await _storage.loadRolePolicies();
-      _roles = _buildRolesFromLegacyPolicies(legacyPolicies);
-
-      if (_roles.isEmpty) {
-        _roles = _buildDefaultRoles();
+    final api = ApiClient.instance;
+    try {
+      _serverHasUsers = !await api.bootstrapRequired();
+      final restored = await api.restoreSession();
+      if (restored != null) {
+        _currentUser = UserAccount.fromApiJson(restored);
+        await _reloadServerState();
       }
-
-      await _storage.saveRoles(_roles);
-    }
-
-    final sessionId = await _storage.loadSessionUserId();
-    if (sessionId != null) {
-      _currentUser = _users
-          .where((u) => u.id == sessionId)
-          .cast<UserAccount?>()
-          .firstOrNull;
+    } catch (_) {
+      _currentUser = null;
+      _users = const [];
+      _roles = const [];
     }
 
     _initialized = true;
     notifyListeners();
+  }
+
+  Future<void> _reloadServerState() async {
+    final api = ApiClient.instance;
+    final roleData = await api.request('GET', '/api/v1/roles') as List;
+    _roles = roleData
+        .whereType<Map>()
+        .map((item) => AppRole.fromApiJson(Map<String, dynamic>.from(item)))
+        .toList();
+
+    try {
+      final userData = await api.request('GET', '/api/v1/users') as List;
+      _users = userData
+          .whereType<Map>()
+          .map((item) =>
+              UserAccount.fromApiJson(Map<String, dynamic>.from(item)))
+          .toList();
+    } on ApiException catch (error) {
+      if (error.statusCode != 403) rethrow;
+      _users = _currentUser == null ? const [] : [_currentUser!];
+    }
   }
 
   AppRole? roleById(String? id) {
@@ -169,67 +183,20 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<LoginResult> loginDetailed(String login, String password) async {
-    final user = _users
-        .where((u) => u.login == login.trim())
-        .cast<UserAccount?>()
-        .firstOrNull;
-
-    if (user == null) {
-      return const LoginResult.fail('Неверный логин или пароль');
-    }
-
-    final lockUntil = user.lockUntil;
-    if (lockUntil != null && DateTime.now().isBefore(lockUntil)) {
-      final local = lockUntil.toLocal();
-      final hh = local.hour.toString().padLeft(2, '0');
-      final mm = local.minute.toString().padLeft(2, '0');
-      return LoginResult.fail(
-        'Слишком много неудачных попыток. Повторите после $hh:$mm',
+    try {
+      final data = await ApiClient.instance.login(login, password);
+      _currentUser = UserAccount.fromApiJson(data);
+      _serverHasUsers = true;
+      await _reloadServerState();
+      notifyListeners();
+      return const LoginResult.success();
+    } on ApiException catch (error) {
+      return LoginResult.fail(error.message);
+    } catch (_) {
+      return const LoginResult.fail(
+        'Сервер недоступен. Проверьте интернет-соединение.',
       );
     }
-
-    final ok = _storage.verifyPassword(
-      password: password,
-      saltB64: user.saltB64,
-      hashB64: user.hashB64,
-      iterations: user.iterations,
-    );
-
-    if (!ok) {
-      final nextAttempts = user.failedLoginAttempts + 1;
-      final shouldLock = nextAttempts >= 4;
-      final updated = user.copyWith(
-        failedLoginAttempts: nextAttempts,
-        lockUntilIso:
-            shouldLock ? DateTime.now().add(const Duration(minutes: 5)).toIso8601String() : null,
-        clearLockUntil: !shouldLock,
-      );
-
-      _replaceUser(updated);
-      await _storage.saveUsers(_users);
-
-      if (shouldLock) {
-        return const LoginResult.fail(
-          'Слишком много неудачных попыток. Вход заблокирован на 5 минут.',
-        );
-      }
-
-      return LoginResult.fail(
-        'Неверный логин или пароль. Попытка $nextAttempts из 3 без блокировки.',
-      );
-    }
-
-    final cleared = user.copyWith(
-      failedLoginAttempts: 0,
-      clearLockUntil: true,
-    );
-    _replaceUser(cleared);
-    await _storage.saveUsers(_users);
-
-    _currentUser = cleared;
-    await _storage.saveSessionUserId(cleared.id);
-    notifyListeners();
-    return const LoginResult.success();
   }
 
   Future<bool> login(String login, String password) async {
@@ -238,53 +205,47 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await ApiClient.instance.logout();
     _currentUser = null;
-    await _storage.saveSessionUserId(null);
+    _users = const [];
+    _roles = const [];
     notifyListeners();
+  }
+
+  Future<String?> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    if (newPassword.length < 10) {
+      return 'Новый пароль должен содержать не менее 10 символов.';
+    }
+    try {
+      await ApiClient.instance.request(
+        'POST',
+        '/api/v1/auth/change-password',
+        body: {
+          'current_password': currentPassword,
+          'new_password': newPassword,
+        },
+      );
+      await ApiClient.instance.clearSession();
+      _currentUser = null;
+      _users = const [];
+      _roles = const [];
+      notifyListeners();
+      return null;
+    } on ApiException catch (error) {
+      return error.message;
+    } catch (_) {
+      return 'Сервер недоступен. Проверьте интернет-соединение.';
+    }
   }
 
   Future<String?> createFirstAdmin({
     required String login,
     required String password,
   }) async {
-    if (_users.isNotEmpty) return null;
-
-    if (_roles.isEmpty) {
-      _roles = _buildDefaultRoles();
-      await _storage.saveRoles(_roles);
-    }
-
-    final superAdminRole = _roles.firstWhere(
-      (r) => r.name.trim().toLowerCase() == 'суперадмин',
-      orElse: () => _roles.first,
-    );
-
-    final p = _storage.createPasswordHash(password);
-    final user = UserAccount(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      login: login.trim(),
-      roleId: superAdminRole.id,
-      lastName: '',
-      firstName: login.trim(),
-      middleName: '',
-      saltB64: p.saltB64,
-      hashB64: p.hashB64,
-      iterations: p.iterations,
-      departmentId: null,
-      groupId: null,
-      employeeId: null,
-      failedLoginAttempts: 0,
-      lockUntilIso: null,
-    );
-
-    _users = [user];
-    await _storage.saveUsers(_users);
-
-    _currentUser = user;
-    await _storage.saveSessionUserId(user.id);
-
-    notifyListeners();
-    return user.id;
+    return null;
   }
 
   Future<bool> createUser({
@@ -367,7 +328,7 @@ class AuthService extends ChangeNotifier {
           final employees = await _employeesStorage.load();
 
           final newEmployee = EmployeeModel(
-            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            id: newUuidV4(),
             fullName: [
               normalizedLastName,
               normalizedFirstName,
@@ -394,10 +355,35 @@ class AuthService extends ChangeNotifier {
         break;
     }
 
+    try {
+      await ApiClient.instance.request(
+        'POST',
+        '/api/v1/users',
+        body: {
+          'login': normalizedLogin,
+          'password': password,
+          'role_id': role.id,
+          'last_name': normalizedLastName,
+          'first_name': normalizedFirstName,
+          'middle_name': normalizedMiddleName,
+          'department_id': dep,
+          'group_id': grp,
+          'employee_id': linkedEmployeeId ?? emp,
+        },
+      );
+      await _reloadServerState();
+      notifyListeners();
+      return true;
+    } on ApiException {
+      return false;
+    }
+
+    // Legacy local-storage fallback kept for data migration builds.
+    // ignore: dead_code
     final p = _storage.createPasswordHash(password);
 
     final user = UserAccount(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: newUuidV4(),
       login: normalizedLogin,
       roleId: role.id,
       lastName: normalizedLastName,
@@ -447,8 +433,11 @@ class AuthService extends ChangeNotifier {
     final role = roleById(roleId);
     if (role == null) return null;
 
-    final nameParts =
-        fullName.trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty).toList();
+    final nameParts = fullName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((x) => x.isNotEmpty)
+        .toList();
     final lastName = nameParts.isNotEmpty ? nameParts.first : '';
     final firstName = nameParts.length > 1 ? nameParts[1] : fullName.trim();
     final middleName =
@@ -457,7 +446,7 @@ class AuthService extends ChangeNotifier {
     final employees = await _employeesStorage.load();
 
     final employee = EmployeeModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: newUuidV4(),
       fullName: fullName.trim(),
       position: position.trim(),
       salary: salary,
@@ -501,10 +490,35 @@ class AuthService extends ChangeNotifier {
     }
 
     final password = generateReadablePassword();
+    try {
+      final data = await ApiClient.instance.request(
+        'POST',
+        '/api/v1/users',
+        body: {
+          'login': normalizedLogin,
+          'password': password,
+          'role_id': role.id,
+          'last_name': lastName,
+          'first_name': firstName,
+          'middle_name': middleName,
+          'department_id': boundDepartmentId,
+          'group_id': boundGroupId,
+          'employee_id': employee.id,
+        },
+      ) as Map<String, dynamic>;
+      final user = UserAccount.fromApiJson(data);
+      await _reloadServerState();
+      notifyListeners();
+      return (employee: employee, user: user, password: password);
+    } on ApiException {
+      return null;
+    }
+
+    // ignore: dead_code
     final p = _storage.createPasswordHash(password);
 
     final user = UserAccount(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: newUuidV4(),
       login: normalizedLogin,
       roleId: role.id,
       lastName: lastName,
@@ -536,6 +550,19 @@ class AuthService extends ChangeNotifier {
         _users.where((u) => u.id == userId).cast<UserAccount?>().firstOrNull;
     if (target == null) return null;
 
+    try {
+      final data = await ApiClient.instance.request(
+        'POST',
+        '/api/v1/users/$userId/reset-password',
+      ) as Map<String, dynamic>;
+      await _reloadServerState();
+      notifyListeners();
+      return data['temporary_password'] as String;
+    } on ApiException {
+      return null;
+    }
+
+    // ignore: dead_code
     final newPassword = generateReadablePassword();
     final p = _storage.createPasswordHash(newPassword);
 
@@ -614,6 +641,32 @@ class AuthService extends ChangeNotifier {
         break;
     }
 
+    try {
+      final data = await ApiClient.instance.request(
+        'PATCH',
+        '/api/v1/users/$userId',
+        body: {
+          'role_id': role.id,
+          'last_name': normalizedLastName,
+          'first_name': normalizedFirstName,
+          'middle_name': normalizedMiddleName,
+          'department_id': dep,
+          'group_id': grp,
+          'employee_id': emp,
+          'is_active': true,
+        },
+      ) as Map<String, dynamic>;
+      if (_currentUser?.id == userId) {
+        _currentUser = UserAccount.fromApiJson(data);
+      }
+      await _reloadServerState();
+      notifyListeners();
+      return true;
+    } on ApiException {
+      return false;
+    }
+
+    // ignore: dead_code
     _users = _users.map((u) {
       if (u.id != userId) return u;
       return u.copyWith(
@@ -651,6 +704,16 @@ class AuthService extends ChangeNotifier {
 
     if (_currentUser?.id == userId) return false;
 
+    try {
+      await ApiClient.instance.request('DELETE', '/api/v1/users/$userId');
+      await _reloadServerState();
+      notifyListeners();
+      return true;
+    } on ApiException {
+      return false;
+    }
+
+    // ignore: dead_code
     _users = _users.where((u) => u.id != userId).toList();
     await _storage.saveUsers(_users);
     notifyListeners();
@@ -685,6 +748,25 @@ class AuthService extends ChangeNotifier {
       isSystem: false,
     );
 
+    try {
+      await ApiClient.instance.request(
+        'POST',
+        '/api/v1/roles',
+        body: {
+          'id': role.id,
+          'name': role.name,
+          'scope_kind': scopeKindToString(role.scopeKind),
+          'permissions': role.permissions.map(permToString).toList(),
+        },
+      );
+      await _reloadServerState();
+      notifyListeners();
+      return role.id;
+    } on ApiException {
+      return null;
+    }
+
+    // ignore: dead_code
     _roles = [..._roles, role];
     await _storage.saveRoles(_roles);
 
@@ -707,6 +789,26 @@ class AuthService extends ChangeNotifier {
     final normalizedName = name?.trim();
     final affectsCurrentUser = _currentUser?.roleId == id;
 
+    try {
+      await ApiClient.instance.request(
+        'PATCH',
+        '/api/v1/roles/$id',
+        body: {
+          if (normalizedName != null && normalizedName.isNotEmpty)
+            'name': normalizedName,
+          if (scopeKind != null) 'scope_kind': scopeKindToString(scopeKind),
+          if (permissions != null)
+            'permissions': permissions.map(permToString).toList(),
+        },
+      );
+      await _reloadServerState();
+      if (affectsCurrentUser) notifyListeners();
+      return true;
+    } on ApiException {
+      return false;
+    }
+
+    // ignore: dead_code
     _roles = _roles.map((r) {
       if (r.id != id) return r;
       return r.copyWith(
@@ -737,6 +839,16 @@ class AuthService extends ChangeNotifier {
 
     if (_users.any((u) => u.roleId == id)) return false;
 
+    try {
+      await ApiClient.instance.request('DELETE', '/api/v1/roles/$id');
+      await _reloadServerState();
+      notifyListeners();
+      return true;
+    } on ApiException {
+      return false;
+    }
+
+    // ignore: dead_code
     _roles = _roles.where((r) => r.id != id).toList();
     await _storage.saveRoles(_roles);
 

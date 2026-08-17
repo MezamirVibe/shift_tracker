@@ -131,6 +131,24 @@ class UserAccount {
     );
   }
 
+  static UserAccount fromApiJson(Map<String, dynamic> json) {
+    final role = Map<String, dynamic>.from(json['role'] as Map);
+    return UserAccount(
+      id: json['id'] as String,
+      login: json['login'] as String,
+      roleId: role['id'] as String,
+      lastName: (json['last_name'] as String?) ?? '',
+      firstName: (json['first_name'] as String?) ?? '',
+      middleName: (json['middle_name'] as String?) ?? '',
+      saltB64: '',
+      hashB64: '',
+      iterations: 0,
+      departmentId: json['department_id'] as String?,
+      groupId: json['group_id'] as String?,
+      employeeId: json['employee_id'] as String?,
+    );
+  }
+
   UserAccount copyWith({
     String? login,
     String? roleId,

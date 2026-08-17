@@ -204,6 +204,17 @@ class AppRole {
     );
   }
 
+  static AppRole fromApiJson(Map<String, dynamic> json) => AppRole(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        scopeKind: scopeKindFromString(json['scope_kind'] as String?),
+        permissions: ((json['permissions'] as List?) ?? const [])
+            .whereType<String>()
+            .map(permFromString)
+            .toSet(),
+        isSystem: json['is_system'] == true,
+      );
+
   AppRole copyWith({
     String? id,
     String? name,

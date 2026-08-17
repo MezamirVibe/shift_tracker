@@ -100,7 +100,8 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
                         auth.currentUser?.roleId == selected.id;
 
                     if (isCurrentUsersRole) {
-                      _snack('Нельзя удалить роль, которая назначена вам сейчас');
+                      _snack(
+                          'Нельзя удалить роль, которая назначена вам сейчас');
                       return;
                     }
 
@@ -405,8 +406,7 @@ class _RoleDetailsState extends State<_RoleDetails> {
                 Row(
                   children: [
                     FilledButton(
-                      onPressed:
-                          (_saving || isCurrentUsersRole) ? null : _save,
+                      onPressed: (_saving || isCurrentUsersRole) ? null : _save,
                       child: Text(_saving ? 'Сохраняем...' : 'Сохранить'),
                     ),
                     const SizedBox(width: 12),

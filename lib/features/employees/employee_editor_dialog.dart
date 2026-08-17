@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/id.dart';
+
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../positions/positions_storage.dart';
@@ -247,11 +249,12 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     }
 
     final item = PositionModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: newUuidV4(),
       name: name,
     );
 
-    final updated = [..._positions, item]..sort((a, b) => a.name.compareTo(b.name));
+    final updated = [..._positions, item]
+      ..sort((a, b) => a.name.compareTo(b.name));
     await _positionsStorage.savePositions(updated);
 
     if (!mounted) return;
@@ -304,7 +307,8 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
 
     if (_shiftHours <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Длительность смены должна быть больше 0')),
+        const SnackBar(
+            content: Text('Длительность смены должна быть больше 0')),
       );
       return;
     }

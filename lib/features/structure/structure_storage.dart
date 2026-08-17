@@ -1,7 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:path_provider/path_provider.dart';
+import '../../core/api_client.dart';
 
 class DepartmentModel {
   final String id;
@@ -53,47 +50,66 @@ class GroupModel {
 }
 
 class StructureStorage {
-  static const _departmentsFile = 'departments.json';
-  static const _groupsFile = 'groups.json';
-
-  Future<File> _file(String name) async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}${Platform.pathSeparator}$name');
-  }
-
   Future<List<DepartmentModel>> loadDepartments() async {
-    try {
-      final f = await _file(_departmentsFile);
-      if (!await f.exists()) return [];
-      final text = await f.readAsString();
-      if (text.trim().isEmpty) return [];
-      final data = jsonDecode(text) as List;
-      return data.map((e) => DepartmentModel.fromJson(e as Map)).toList();
-    } catch (_) {
-      return [];
-    }
+    final data =
+        await ApiClient.instance.request('GET', '/api/v1/departments') as List;
+    return data.whereType<Map>().map((item) {
+      final json = Map<String, dynamic>.from(item);
+      return DepartmentModel(
+          id: json['id'] as String, name: json['name'] as String);
+    }).toList();
   }
 
   Future<void> saveDepartments(List<DepartmentModel> items) async {
-    final f = await _file(_departmentsFile);
-    await f.writeAsString(jsonEncode(items.map((e) => e.toJson()).toList()));
-  }
-
-  Future<List<GroupModel>> loadGroups() async {
-    try {
-      final f = await _file(_groupsFile);
-      if (!await f.exists()) return [];
-      final text = await f.readAsString();
-      if (text.trim().isEmpty) return [];
-      final data = jsonDecode(text) as List;
-      return data.map((e) => GroupModel.fromJson(e as Map)).toList();
-    } catch (_) {
-      return [];
+    final existing = {
+      for (final item in await loadDepartments()) item.id: item
+    };
+    final wanted = {for (final item in items) item.id: item};
+    for (final item in items) {
+      await ApiClient.instance.request(
+        existing.containsKey(item.id) ? 'PATCH' : 'POST',
+        existing.containsKey(item.id)
+            ? '/api/v1/departments/${item.id}'
+            : '/api/v1/departments',
+        body: {'id': item.id, 'name': item.name},
+      );
+    }
+    for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
+      await ApiClient.instance.request('DELETE', '/api/v1/departments/$id');
     }
   }
 
+  Future<List<GroupModel>> loadGroups() async {
+    final data =
+        await ApiClient.instance.request('GET', '/api/v1/groups') as List;
+    return data.whereType<Map>().map((item) {
+      final json = Map<String, dynamic>.from(item);
+      return GroupModel(
+        id: json['id'] as String,
+        departmentId: json['department_id'] as String,
+        name: json['name'] as String,
+      );
+    }).toList();
+  }
+
   Future<void> saveGroups(List<GroupModel> items) async {
-    final f = await _file(_groupsFile);
-    await f.writeAsString(jsonEncode(items.map((e) => e.toJson()).toList()));
+    final existing = {for (final item in await loadGroups()) item.id: item};
+    final wanted = {for (final item in items) item.id: item};
+    for (final item in items) {
+      await ApiClient.instance.request(
+        existing.containsKey(item.id) ? 'PATCH' : 'POST',
+        existing.containsKey(item.id)
+            ? '/api/v1/groups/${item.id}'
+            : '/api/v1/groups',
+        body: {
+          'id': item.id,
+          'department_id': item.departmentId,
+          'name': item.name,
+        },
+      );
+    }
+    for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
+      await ApiClient.instance.request('DELETE', '/api/v1/groups/$id');
+    }
   }
 }

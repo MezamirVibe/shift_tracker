@@ -316,9 +316,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
     if (!mounted) return;
 
-    final roleName =
-        AuthService.instance.roleById(result.user.roleId)?.name ??
-            result.user.roleId;
+    final roleName = AuthService.instance.roleById(result.user.roleId)?.name ??
+        result.user.roleId;
 
     await _showCredentialsDialog(
       login: result.user.login,
@@ -685,8 +684,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final u = AuthService.instance.currentUser;
     final currentRole =
         u == null ? null : AuthService.instance.roleById(u.roleId);
-    final noBinding =
-        u != null && !_isSuperAdmin && _employeesVisible.isEmpty && currentRole != null;
+    final noBinding = u != null &&
+        !_isSuperAdmin &&
+        _employeesVisible.isEmpty &&
+        currentRole != null;
 
     return AdaptiveScaffold(
       title: 'Сотрудники',
@@ -729,7 +730,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       _heroCard(isPhone),
                       const SizedBox(height: 12),
                       _scopeHint(),
-                      if (noBinding && currentRole?.scopeKind != ScopeKind.all) ...[
+                      if (noBinding &&
+                          currentRole?.scopeKind != ScopeKind.all) ...[
                         const SizedBox(height: 12),
                         const Card(
                           margin: EdgeInsets.zero,

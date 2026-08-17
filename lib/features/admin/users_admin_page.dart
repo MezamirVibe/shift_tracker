@@ -908,7 +908,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
   @override
   Widget build(BuildContext context) {
-    final roles = _auth.roles.toList()..sort((a, b) => a.name.compareTo(b.name));
+    final roles = _auth.roles.toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
 
     if (_roleId != null && roles.every((r) => r.id != _roleId)) {
       _roleId = roles.isNotEmpty ? roles.first.id : null;

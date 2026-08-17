@@ -1,7 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:path_provider/path_provider.dart';
+import '../../core/api_client.dart';
 
 /// Факт по дню
 enum FactStatus {
@@ -87,40 +84,16 @@ class AttendanceRecord {
 /// dateIso (yyyy-mm-dd) -> employeeId -> AttendanceRecord json
 /// + служебный ключ "_meta": { closed: bool, closedAt: iso, reopenedAt?: iso }
 class AttendanceStorage {
-  static const _fileName = 'attendance.json';
   static const _metaKey = '_meta';
-
-  Future<File> _file() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}${Platform.pathSeparator}$_fileName');
-  }
 
   /// Публично: читаем весь raw, чтобы календарь мог быстро посчитать месяц (без 31 чтения файла)
   Future<Map<String, dynamic>> loadAllRaw() async {
-    try {
-      final f = await _file();
-      if (!await f.exists()) return {};
-      final text = await f.readAsString();
-      if (text.trim().isEmpty) return {};
-      final data = jsonDecode(text);
-      if (data is Map<String, dynamic>) return data;
-      return {};
-    } catch (_) {
-      return {};
-    }
-  }
-
-  Future<void> _saveAllRaw(Map<String, dynamic> raw) async {
-    final f = await _file();
-    await f.writeAsString(jsonEncode(raw));
-  }
-
-  Map<String, dynamic> _ensureDay(Map<String, dynamic> all, String dateIso) {
-    final existing = all[dateIso];
-    if (existing is Map<String, dynamic>) return existing;
-    final created = <String, dynamic>{};
-    all[dateIso] = created;
-    return created;
+    final year = DateTime.now().year;
+    final data = await ApiClient.instance.request(
+      'GET',
+      '/api/v1/attendance?date_from=${year - 5}-01-01&date_to=${year + 5}-12-31',
+    );
+    return Map<String, dynamic>.from(data as Map);
   }
 
   bool _isClosedFromDayMap(Map<String, dynamic> day) {
@@ -165,17 +138,15 @@ class AttendanceStorage {
     String? comment,
     int? workedMinutes,
   }) async {
-    final all = await loadAllRaw();
-    final day = _ensureDay(all, dateIso);
-
-    day[employeeId] = AttendanceRecord(
-      fact: fact,
-      comment: comment,
-      workedMinutes: workedMinutes,
-      updatedAt: DateTime.now().toIso8601String(),
-    ).toJson();
-
-    await _saveAllRaw(all);
+    await ApiClient.instance.request(
+      'PUT',
+      '/api/v1/attendance/$dateIso/$employeeId',
+      body: {
+        'fact': factStatusToString(fact),
+        'comment': comment,
+        'worked_minutes': workedMinutes,
+      },
+    );
   }
 
   /// Закрыть день:
@@ -186,62 +157,17 @@ class AttendanceStorage {
     required String dateIso,
     required List<String> plannedEmployeeIds,
   }) async {
-    final all = await loadAllRaw();
-    final day = _ensureDay(all, dateIso);
-
-    for (final id in plannedEmployeeIds) {
-      final rec = day[id];
-
-      if (rec is Map<String, dynamic>) {
-        final r = AttendanceRecord.fromJson(rec);
-        if (r.fact == FactStatus.none) {
-          day[id] = AttendanceRecord(
-            fact: FactStatus.absent,
-            comment: r.comment,
-            workedMinutes: 0,
-            updatedAt: DateTime.now().toIso8601String(),
-          ).toJson();
-        } else {
-          // норм — оставляем как есть
-          // (но можно подправить workedMinutes если пусто — не делаем автоматически)
-        }
-      } else {
-        day[id] = AttendanceRecord(
-          fact: FactStatus.absent,
-          workedMinutes: 0,
-          updatedAt: DateTime.now().toIso8601String(),
-        ).toJson();
-      }
-    }
-
-    day[_metaKey] = <String, dynamic>{
-      'closed': true,
-      'closedAt': DateTime.now().toIso8601String(),
-    };
-
-    await _saveAllRaw(all);
+    await ApiClient.instance.request(
+      'POST',
+      '/api/v1/attendance/$dateIso/close',
+      body: {'planned_employee_ids': plannedEmployeeIds},
+    );
   }
 
   Future<void> reopenDay({required String dateIso}) async {
-    final all = await loadAllRaw();
-    final day = all[dateIso];
-    if (day is! Map<String, dynamic>) return;
-
-    final meta = day[_metaKey];
-    if (meta is Map<String, dynamic>) {
-      day[_metaKey] = <String, dynamic>{
-        ...meta,
-        'closed': false,
-        'reopenedAt': DateTime.now().toIso8601String(),
-      };
-    } else {
-      day[_metaKey] = <String, dynamic>{
-        'closed': false,
-        'reopenedAt': DateTime.now().toIso8601String(),
-      };
-    }
-
-    all[dateIso] = day;
-    await _saveAllRaw(all);
+    await ApiClient.instance.request(
+      'POST',
+      '/api/v1/attendance/$dateIso/reopen',
+    );
   }
 }

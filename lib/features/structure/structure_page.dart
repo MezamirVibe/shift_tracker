@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/id.dart';
+
 import 'structure_storage.dart';
 
 class StructurePage extends StatefulWidget {
@@ -83,7 +85,7 @@ class _StructurePageState extends State<StructurePage>
     if (name == null) return;
 
     final dep = DepartmentModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: newUuidV4(),
       name: name,
     );
 
@@ -202,7 +204,7 @@ class _StructurePageState extends State<StructurePage>
     if (name.isEmpty) return;
 
     final g = GroupModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: newUuidV4(),
       departmentId: selected.id,
       name: name,
     );
