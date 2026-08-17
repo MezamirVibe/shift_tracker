@@ -89,6 +89,15 @@ class PasswordChangeIn(BaseModel):
     new_password: str = Field(min_length=10, max_length=256)
 
 
+class UserPreferencesIn(BaseModel):
+    settings: dict = Field(default_factory=dict)
+
+
+class UserPreferencesOut(ApiModel):
+    settings: dict
+    updated_at: datetime | None = None
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
@@ -146,6 +155,17 @@ class EmployeeIn(BaseModel):
     schedule_start_date: date
     shift_hours: int = Field(default=12, ge=1, le=24)
     break_hours: int = Field(default=1, ge=0, le=23)
+    custom_workdays: list[int] = Field(
+        default_factory=lambda: [1, 2, 3, 4, 5], min_length=1, max_length=7
+    )
+
+    @field_validator("custom_workdays")
+    @classmethod
+    def validate_custom_workdays(cls, value: list[int]) -> list[int]:
+        normalized = sorted(set(value))
+        if any(day < 1 or day > 7 for day in normalized):
+            raise ValueError("Дни недели должны быть в диапазоне от 1 до 7")
+        return normalized
 
 
 class EmployeeOut(EmployeeIn):
@@ -168,7 +188,18 @@ class EmployeeUpdate(BaseModel):
     schedule_start_date: date | None = None
     shift_hours: int | None = Field(default=None, ge=1, le=24)
     break_hours: int | None = Field(default=None, ge=0, le=23)
+    custom_workdays: list[int] | None = Field(default=None, min_length=1, max_length=7)
     is_active: bool | None = None
+
+    @field_validator("custom_workdays")
+    @classmethod
+    def validate_custom_workdays(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        normalized = sorted(set(value))
+        if any(day < 1 or day > 7 for day in normalized):
+            raise ValueError("Дни недели должны быть в диапазоне от 1 до 7")
+        return normalized
 
 
 class AttendanceRecordIn(BaseModel):

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
@@ -36,8 +35,12 @@ class _MonthReportPageState extends State<MonthReportPage> {
   }
 
   Future<void> _load() async {
-    final employees = await _employeesStorage.load();
-    final raw = await _attendanceStorage.loadAllRaw();
+    final results = await Future.wait([
+      _employeesStorage.load(),
+      _attendanceStorage.loadMonth(widget.year, widget.month),
+    ]);
+    final employees = results[0] as List<EmployeeModel>;
+    final raw = results[1] as Map<String, dynamic>;
 
     if (!mounted) return;
     setState(() {
@@ -72,24 +75,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
 
     return AdaptiveScaffold(
       title: title,
-      selectedIndex: 2,
-      items: [
-        NavItem(
-          label: 'Календарь',
-          icon: Icons.calendar_month,
-          onTap: () => context.go('/'),
-        ),
-        NavItem(
-          label: 'Сотрудники',
-          icon: Icons.people,
-          onTap: () => context.go('/employees'),
-        ),
-        NavItem(
-          label: 'Табель',
-          icon: Icons.table_chart,
-          onTap: () {},
-        ),
-      ],
+      selectedRoute: '/schedule',
       actions: [
         IconButton(
           icon: const Icon(Icons.refresh),
@@ -125,6 +111,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
                           day: d0,
                           type: e.scheduleType,
                           startDate: e.scheduleStartDate,
+                          customWorkdays: e.customWorkdays,
                         );
 
                         if (!isPlanned) continue;

@@ -1,3 +1,4 @@
+import json
 import secrets
 import string
 import uuid
@@ -9,7 +10,7 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -30,6 +31,7 @@ from .models import (
     Role,
     ScopeKind,
     User,
+    UserPreference,
     utcnow,
 )
 from .schemas import (
@@ -56,6 +58,8 @@ from .schemas import (
     UserCreate,
     UserOut,
     UserUpdate,
+    UserPreferencesIn,
+    UserPreferencesOut,
     PasswordResetOut,
 )
 from .security import (
@@ -137,6 +141,15 @@ async def seed_roles(session: AsyncSession) -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.execute(
+            text("ALTER TYPE schedule_type ADD VALUE IF NOT EXISTS 'custom'")
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS "
+                "custom_workdays JSONB NOT NULL DEFAULT '[1,2,3,4,5]'::jsonb"
+            )
+        )
     async with SessionFactory() as session:
         await seed_roles(session)
     yield
@@ -435,6 +448,52 @@ async def logout(
 @app.get("/api/v1/auth/me", response_model=UserOut)
 async def me(user: User = Depends(current_user)) -> User:
     return user
+
+
+@app.get("/api/v1/preferences", response_model=UserPreferencesOut)
+async def get_preferences(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserPreferencesOut:
+    preference = await session.get(UserPreference, user.id)
+    if preference is None:
+        return UserPreferencesOut(settings={}, updated_at=None)
+    return UserPreferencesOut(
+        settings=preference.settings or {},
+        updated_at=preference.updated_at,
+    )
+
+
+@app.put("/api/v1/preferences", response_model=UserPreferencesOut)
+async def save_preferences(
+    payload: UserPreferencesIn,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserPreferencesOut:
+    if len(json.dumps(payload.settings, ensure_ascii=False)) > 65536:
+        raise api_error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Настройки слишком большие")
+
+    preference = await session.get(UserPreference, user.id)
+    if preference is None:
+        preference = UserPreference(user_id=user.id, settings=payload.settings)
+        session.add(preference)
+    else:
+        preference.settings = payload.settings
+        preference.updated_at = utcnow()
+
+    await audit(
+        session,
+        actor=user,
+        action="update_preferences",
+        entity_type="user_preferences",
+        entity_id=str(user.id),
+    )
+    await session.commit()
+    await session.refresh(preference)
+    return UserPreferencesOut(
+        settings=preference.settings,
+        updated_at=preference.updated_at,
+    )
 
 
 @app.post("/api/v1/auth/change-password", status_code=status.HTTP_204_NO_CONTENT)
@@ -964,6 +1023,7 @@ async def update_employee(
         schedule_start_date=changes.get("schedule_start_date", item.schedule_start_date),
         shift_hours=changes.get("shift_hours", item.shift_hours),
         break_hours=changes.get("break_hours", item.break_hours),
+        custom_workdays=changes.get("custom_workdays", item.custom_workdays),
     )
     await validate_employee_links(session, candidate)
     if user.role.scope_kind == ScopeKind.department and candidate.department_id != user.department_id:

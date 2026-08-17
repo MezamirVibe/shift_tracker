@@ -35,6 +35,7 @@ class ScopeKind(str, enum.Enum):
 class ScheduleType(str, enum.Enum):
     twoTwo = "twoTwo"
     fiveTwo = "fiveTwo"
+    custom = "custom"
 
 
 class FactStatus(str, enum.Enum):
@@ -113,6 +114,9 @@ class Employee(Base):
     schedule_start_date: Mapped[date] = mapped_column(Date, default=date.today)
     shift_hours: Mapped[int] = mapped_column(Integer, default=12)
     break_hours: Mapped[int] = mapped_column(Integer, default=1)
+    custom_workdays: Mapped[list[int]] = mapped_column(
+        JSONB, default=lambda: [1, 2, 3, 4, 5]
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -149,6 +153,20 @@ class User(Base):
     )
 
     role: Mapped[Role] = relationship()
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    settings: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class AttendanceDay(Base):

@@ -46,17 +46,29 @@ class AuthService extends ChangeNotifier {
 
   Future<void> init() async {
     final api = ApiClient.instance;
+    final cached = await Future.wait([
+      _storage.loadUsers(),
+      _storage.loadRoles(),
+    ]);
+    _users = cached[0] as List<UserAccount>;
+    _roles = cached[1] as List<AppRole>;
+
     try {
       _serverHasUsers = !await api.bootstrapRequired();
-      final restored = await api.restoreSession();
-      if (restored != null) {
-        _currentUser = UserAccount.fromApiJson(restored);
-        await _reloadServerState();
-      }
     } catch (_) {
-      _currentUser = null;
-      _users = const [];
-      _roles = const [];
+      // Временная ошибка сети не должна менять локальное состояние входа.
+    }
+
+    final restored = await api.restoreSession();
+    if (restored != null) {
+      _currentUser = UserAccount.fromApiJson(restored);
+      try {
+        await _reloadServerState();
+      } catch (_) {
+        if (_users.every((user) => user.id != _currentUser!.id)) {
+          _users = [..._users, _currentUser!];
+        }
+      }
     }
 
     _initialized = true;
@@ -65,23 +77,34 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _reloadServerState() async {
     final api = ApiClient.instance;
-    final roleData = await api.request('GET', '/api/v1/roles') as List;
+    final roleFuture = api.request('GET', '/api/v1/roles');
+    final userFuture = () async {
+      try {
+        return await api.request('GET', '/api/v1/users') as List;
+      } on ApiException catch (error) {
+        if (error.statusCode != 403) rethrow;
+        return _currentUser == null ? <dynamic>[] : [_currentUser!.toJson()];
+      }
+    }();
+    final results = await Future.wait([roleFuture, userFuture]);
+    final roleData = results[0] as List;
+    final userData = results[1] as List;
+
     _roles = roleData
         .whereType<Map>()
         .map((item) => AppRole.fromApiJson(Map<String, dynamic>.from(item)))
         .toList();
+    _users = userData.whereType<Map>().map((item) {
+      final json = Map<String, dynamic>.from(item);
+      return json.containsKey('last_name')
+          ? UserAccount.fromApiJson(json)
+          : UserAccount.fromJson(json);
+    }).toList();
 
-    try {
-      final userData = await api.request('GET', '/api/v1/users') as List;
-      _users = userData
-          .whereType<Map>()
-          .map((item) =>
-              UserAccount.fromApiJson(Map<String, dynamic>.from(item)))
-          .toList();
-    } on ApiException catch (error) {
-      if (error.statusCode != 403) rethrow;
-      _users = _currentUser == null ? const [] : [_currentUser!];
-    }
+    await Future.wait([
+      _storage.saveRoles(_roles),
+      _storage.saveUsers(_users),
+    ]);
   }
 
   AppRole? roleById(String? id) {
@@ -187,7 +210,13 @@ class AuthService extends ChangeNotifier {
       final data = await ApiClient.instance.login(login, password);
       _currentUser = UserAccount.fromApiJson(data);
       _serverHasUsers = true;
-      await _reloadServerState();
+      try {
+        await _reloadServerState();
+      } catch (_) {
+        if (_users.every((user) => user.id != _currentUser!.id)) {
+          _users = [..._users, _currentUser!];
+        }
+      }
       notifyListeners();
       return const LoginResult.success();
     } on ApiException catch (error) {
@@ -267,6 +296,7 @@ class AuthService extends ChangeNotifier {
     DateTime? employeeScheduleStartDate,
     int employeeShiftHours = 12,
     int employeeBreakHours = 1,
+    List<int> employeeCustomWorkdays = const [1, 2, 3, 4, 5],
   }) async {
     if (!hasPerm(AppPermission.manageUsers) && !isCurrentUserSuperAdmin) {
       return false;
@@ -325,8 +355,6 @@ class AuthService extends ChangeNotifier {
             return false;
           }
 
-          final employees = await _employeesStorage.load();
-
           final newEmployee = EmployeeModel(
             id: newUuidV4(),
             fullName: [
@@ -345,9 +373,10 @@ class AuthService extends ChangeNotifier {
             scheduleStartDate: employeeScheduleStartDate ?? DateTime.now(),
             shiftHours: employeeShiftHours,
             breakHours: employeeBreakHours,
+            customWorkdays: employeeCustomWorkdays,
           );
 
-          await _employeesStorage.save([...employees, newEmployee]);
+          await _employeesStorage.create(newEmployee);
           emp = newEmployee.id;
         } else {
           if (emp == null || emp.isEmpty) return false;
@@ -417,6 +446,7 @@ class AuthService extends ChangeNotifier {
     required DateTime scheduleStartDate,
     required int shiftHours,
     required int breakHours,
+    required List<int> customWorkdays,
     required String login,
     required String roleId,
   }) async {
@@ -443,8 +473,6 @@ class AuthService extends ChangeNotifier {
     final middleName =
         nameParts.length > 2 ? nameParts.sublist(2).join(' ') : '';
 
-    final employees = await _employeesStorage.load();
-
     final employee = EmployeeModel(
       id: newUuidV4(),
       fullName: fullName.trim(),
@@ -457,9 +485,10 @@ class AuthService extends ChangeNotifier {
       scheduleStartDate: scheduleStartDate,
       shiftHours: shiftHours,
       breakHours: breakHours,
+      customWorkdays: customWorkdays,
     );
 
-    await _employeesStorage.save([...employees, employee]);
+    await _employeesStorage.create(employee);
 
     String? boundDepartmentId;
     String? boundGroupId;
@@ -853,71 +882,6 @@ class AuthService extends ChangeNotifier {
     await _storage.saveRoles(_roles);
 
     return true;
-  }
-
-  List<AppRole> _buildDefaultRoles() {
-    return [
-      const AppRole(
-        id: 'super_admin',
-        name: 'Суперадмин',
-        scopeKind: ScopeKind.all,
-        permissions: <AppPermission>{},
-      ),
-      const AppRole(
-        id: 'manager',
-        name: 'Руководитель',
-        scopeKind: ScopeKind.department,
-        permissions: <AppPermission>{
-          AppPermission.viewCalendar,
-          AppPermission.viewEmployees,
-          AppPermission.viewAttendance,
-          AppPermission.editAttendance,
-          AppPermission.editEmployees,
-          AppPermission.manageUsers,
-          AppPermission.editRolePolicies,
-        },
-      ),
-      const AppRole(
-        id: 'master',
-        name: 'Мастер',
-        scopeKind: ScopeKind.group,
-        permissions: <AppPermission>{
-          AppPermission.viewCalendar,
-          AppPermission.viewEmployees,
-          AppPermission.viewAttendance,
-          AppPermission.editAttendance,
-        },
-      ),
-      const AppRole(
-        id: 'worker',
-        name: 'Рабочий',
-        scopeKind: ScopeKind.self,
-        permissions: <AppPermission>{
-          AppPermission.viewCalendar,
-          AppPermission.viewEmployees,
-          AppPermission.viewAttendance,
-        },
-      ),
-    ];
-  }
-
-  List<AppRole> _buildRolesFromLegacyPolicies(List<RolePolicy> legacyPolicies) {
-    final defaults = _buildDefaultRoles();
-    final byId = <String, AppRole>{
-      for (final r in defaults) r.id: r,
-    };
-
-    for (final policy in legacyPolicies) {
-      final roleId = roleIdFromLegacyRole(policy.role);
-      final existing = byId[roleId];
-      if (existing == null) continue;
-
-      byId[roleId] = existing.copyWith(
-        permissions: policy.permissions,
-      );
-    }
-
-    return byId.values.toList();
   }
 
   String _generateUniqueRoleId(String raw) {

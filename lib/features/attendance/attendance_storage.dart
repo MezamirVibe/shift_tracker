@@ -86,6 +86,28 @@ class AttendanceRecord {
 class AttendanceStorage {
   static const _metaKey = '_meta';
 
+  String _iso(DateTime day) => '${day.year.toString().padLeft(4, '0')}-'
+      '${day.month.toString().padLeft(2, '0')}-'
+      '${day.day.toString().padLeft(2, '0')}';
+
+  Future<Map<String, dynamic>> loadRange(
+    DateTime from,
+    DateTime to,
+  ) async {
+    final data = await ApiClient.instance.request(
+      'GET',
+      '/api/v1/attendance?date_from=${_iso(from)}&date_to=${_iso(to)}',
+    );
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<Map<String, dynamic>> loadMonth(int year, int month) {
+    return loadRange(
+      DateTime(year, month, 1),
+      DateTime(year, month + 1, 0),
+    );
+  }
+
   /// Публично: читаем весь raw, чтобы календарь мог быстро посчитать месяц (без 31 чтения файла)
   Future<Map<String, dynamic>> loadAllRaw() async {
     final year = DateTime.now().year;
@@ -94,6 +116,31 @@ class AttendanceStorage {
       '/api/v1/attendance?date_from=${year - 5}-01-01&date_to=${year + 5}-12-31',
     );
     return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<({Map<String, AttendanceRecord> records, bool closed})> loadDay(
+    String dateIso,
+  ) async {
+    final all = await loadRange(
+      DateTime.parse(dateIso),
+      DateTime.parse(dateIso),
+    );
+    final rawDay = all[dateIso];
+    if (rawDay is! Map) {
+      return (records: <String, AttendanceRecord>{}, closed: false);
+    }
+
+    final day = Map<String, dynamic>.from(rawDay);
+    final records = <String, AttendanceRecord>{};
+    for (final entry in day.entries) {
+      if (entry.key == _metaKey) continue;
+      final value = entry.value;
+      if (value is Map) {
+        records[entry.key] =
+            AttendanceRecord.fromJson(Map<String, dynamic>.from(value));
+      }
+    }
+    return (records: records, closed: _isClosedFromDayMap(day));
   }
 
   bool _isClosedFromDayMap(Map<String, dynamic> day) {

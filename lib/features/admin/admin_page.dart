@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
@@ -40,24 +39,7 @@ class AdminPage extends StatelessWidget {
       length: safeLength,
       child: AdaptiveScaffold(
         title: 'Администрирование',
-        selectedIndex: 2,
-        items: [
-          NavItem(
-            label: 'Календарь',
-            icon: Icons.calendar_month,
-            onTap: () => context.go('/'),
-          ),
-          NavItem(
-            label: 'Сотрудники',
-            icon: Icons.people,
-            onTap: () => context.go('/employees'),
-          ),
-          NavItem(
-            label: 'Админ',
-            icon: Icons.admin_panel_settings,
-            onTap: () => context.go('/admin'),
-          ),
-        ],
+        selectedRoute: '/admin',
         child: Column(
           children: [
             Container(

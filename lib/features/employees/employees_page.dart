@@ -8,6 +8,7 @@ import '../auth/auth_service.dart';
 import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
+import 'schedule_utils.dart';
 
 class EmployeesPage extends StatefulWidget {
   const EmployeesPage({super.key});
@@ -31,6 +32,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   String? _selectedDepartmentId;
   String? _selectedGroupId;
+  String? _selectedEmployeeId;
   String _search = '';
 
   bool get _canViewEmployees =>
@@ -85,9 +87,14 @@ class _EmployeesPageState extends State<EmployeesPage> {
       setState(() => _loading = true);
     }
 
-    final employees = await _storage.load();
-    final deps = await _structureStorage.loadDepartments();
-    final groups = await _structureStorage.loadGroups();
+    final results = await Future.wait([
+      _storage.load(),
+      _structureStorage.loadDepartments(),
+      _structureStorage.loadGroups(),
+    ]);
+    final employees = results[0] as List<EmployeeModel>;
+    final deps = results[1] as List<DepartmentModel>;
+    final groups = results[2] as List<GroupModel>;
 
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
@@ -101,6 +108,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
       _employeesVisible = visible;
       _departments = deps;
       _groups = groups;
+      final selectedStillVisible = visible.any(
+        (employee) => employee.id == _selectedEmployeeId,
+      );
+      if (!selectedStillVisible) {
+        _selectedEmployeeId = visible.isEmpty ? null : visible.first.id;
+      }
       _loading = false;
     });
 
@@ -212,7 +225,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
   }) async {
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Сотрудник и учётная запись созданы'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -236,15 +249,15 @@ class _EmployeesPageState extends State<EmployeesPage> {
             onPressed: () async {
               final text = 'Логин: $login\nПароль: $password\nРоль: $roleName';
               await Clipboard.setData(ClipboardData(text: text));
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
                 const SnackBar(content: Text('Данные для входа скопированы')),
               );
             },
             child: const Text('Скопировать'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Закрыть'),
           ),
         ],
@@ -295,6 +308,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
       scheduleStartDate: draft.scheduleStartDate,
       shiftHours: draft.shiftHours,
       breakHours: draft.breakHours,
+      customWorkdays: draft.customWorkdays,
       login: draft.login ?? '',
       roleId: draft.roleId ?? BuiltInRoleIds.worker,
     );
@@ -674,12 +688,181 @@ class _EmployeesPageState extends State<EmployeesPage> {
     );
   }
 
+  Future<void> _openEmployee(EmployeeModel employee, bool canEdit) async {
+    if (!canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Нет прав на редактирование сотрудников')),
+      );
+      return;
+    }
+    final result = await context.push<Map>('/employee/${employee.id}');
+    if (!mounted) return;
+    if (result != null) await _loadAll();
+  }
+
+  Widget _desktopList(List<EmployeeModel> employees, bool canEdit) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: scheme.surfaceContainerHighest,
+            child: const _EmployeeTableRow(
+              name: 'Сотрудник',
+              position: 'Должность',
+              schedule: 'График',
+              department: 'Подразделение',
+              header: true,
+            ),
+          ),
+          Expanded(
+            child: ListView.separated(
+              itemCount: employees.length,
+              separatorBuilder: (_, __) => Divider(
+                height: 1,
+                color: scheme.outlineVariant,
+              ),
+              itemBuilder: (context, index) {
+                final employee = employees[index];
+                final selected = employee.id == _selectedEmployeeId;
+                final schedule = scheduleTypeLabel(employee.scheduleType);
+                return Material(
+                  color: selected
+                      ? scheme.primaryContainer.withValues(alpha: 0.55)
+                      : Colors.transparent,
+                  child: InkWell(
+                    onTap: () =>
+                        setState(() => _selectedEmployeeId = employee.id),
+                    onDoubleTap: () => _openEmployee(employee, canEdit),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 13,
+                      ),
+                      child: _EmployeeTableRow(
+                        name: employee.fullName,
+                        initials: _initials(employee.fullName),
+                        position:
+                            employee.position.isEmpty ? '—' : employee.position,
+                        schedule: schedule,
+                        department: _depName(employee.departmentId),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _employeePreview(bool canEdit) {
+    EmployeeModel? employee;
+    for (final item in _filteredEmployees) {
+      if (item.id == _selectedEmployeeId) employee = item;
+    }
+    if (employee == null) {
+      return const Card(child: Center(child: Text('Выберите сотрудника')));
+    }
+    final linked = AuthService.instance.userByEmployeeId(employee.id);
+    final schedule = scheduleTypeLabel(employee.scheduleType);
+    final worksToday = isWorkDay(
+      day: DateTime.now(),
+      type: employee.scheduleType,
+      startDate: employee.scheduleStartDate,
+      customWorkdays: employee.customWorkdays,
+    );
+    final statusColor = worksToday ? Colors.green : Colors.grey;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 32,
+                  child: Text(
+                    _initials(employee.fullName),
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(employee.fullName,
+                          style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: 3),
+                      Text(employee.position.isEmpty
+                          ? 'Должность не указана'
+                          : employee.position),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Chip(
+              avatar: Icon(
+                worksToday
+                    ? Icons.check_circle_outline
+                    : Icons.weekend_outlined,
+                size: 18,
+                color: statusColor,
+              ),
+              label:
+                  Text(worksToday ? 'Сегодня по графику' : 'Сегодня выходной'),
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 10),
+            _DetailLine(
+                label: 'Подразделение', value: _depName(employee.departmentId)),
+            _DetailLine(label: 'Группа', value: _groupName(employee.groupId)),
+            _DetailLine(label: 'Рабочий график', value: schedule),
+            _DetailLine(label: 'Смена', value: '${employee.shiftHours} ч'),
+            _DetailLine(label: 'Перерыв', value: '${employee.breakHours} ч'),
+            _DetailLine(label: 'Логин', value: linked?.login ?? 'Не создан'),
+            const Spacer(),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed:
+                    canEdit ? () => _openEmployee(employee!, canEdit) : null,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Редактировать'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _initials(String value) {
+    return value
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0].toUpperCase())
+        .join();
+  }
+
   @override
   Widget build(BuildContext context) {
     final canView = _canViewEmployees;
     final canEdit = _canEditEmployees;
     final list = _filteredEmployees;
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+    final isDesktop = MediaQuery.sizeOf(context).width >= 1100;
 
     final u = AuthService.instance.currentUser;
     final currentRole =
@@ -691,19 +874,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
     return AdaptiveScaffold(
       title: 'Сотрудники',
-      selectedIndex: 1,
-      items: [
-        NavItem(
-          label: 'Календарь',
-          icon: Icons.calendar_month,
-          onTap: () => context.go('/'),
-        ),
-        NavItem(
-          label: 'Сотрудники',
-          icon: Icons.people,
-          onTap: () => context.go('/employees'),
-        ),
-      ],
+      selectedRoute: '/employees',
       child: Padding(
         padding: EdgeInsets.all(isPhone ? 8 : 12),
         child: !canView
@@ -731,7 +902,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       const SizedBox(height: 12),
                       _scopeHint(),
                       if (noBinding &&
-                          currentRole?.scopeKind != ScopeKind.all) ...[
+                          currentRole.scopeKind != ScopeKind.all) ...[
                         const SizedBox(height: 12),
                         const Card(
                           margin: EdgeInsets.zero,
@@ -757,17 +928,108 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       Expanded(
                         child: list.isEmpty
                             ? _emptyState(noBinding)
-                            : ListView.separated(
-                                itemCount: list.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(height: 10),
-                                itemBuilder: (context, index) {
-                                  return _employeeTile(list[index], canEdit);
-                                },
-                              ),
+                            : isDesktop
+                                ? Row(
+                                    children: [
+                                      Expanded(
+                                          flex: 7,
+                                          child: _desktopList(list, canEdit)),
+                                      const SizedBox(width: 12),
+                                      SizedBox(
+                                          width: 360,
+                                          child: _employeePreview(canEdit)),
+                                    ],
+                                  )
+                                : ListView.separated(
+                                    itemCount: list.length,
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(height: 10),
+                                    itemBuilder: (context, index) {
+                                      return _employeeTile(
+                                          list[index], canEdit);
+                                    },
+                                  ),
                       ),
                     ],
                   ),
+      ),
+    );
+  }
+}
+
+class _EmployeeTableRow extends StatelessWidget {
+  final String name;
+  final String? initials;
+  final String position;
+  final String schedule;
+  final String department;
+  final bool header;
+
+  const _EmployeeTableRow({
+    required this.name,
+    this.initials,
+    required this.position,
+    required this.schedule,
+    required this.department,
+    this.header = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = header
+        ? Theme.of(context).textTheme.labelLarge
+        : Theme.of(context).textTheme.bodyMedium;
+    return Row(
+      children: [
+        Expanded(
+          flex: 4,
+          child: Row(
+            children: [
+              if (!header) ...[
+                CircleAvatar(radius: 18, child: Text(initials ?? '')),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                  child: Text(name,
+                      overflow: TextOverflow.ellipsis, style: style)),
+            ],
+          ),
+        ),
+        Expanded(
+            flex: 3,
+            child:
+                Text(position, overflow: TextOverflow.ellipsis, style: style)),
+        Expanded(flex: 2, child: Text(schedule, style: style)),
+        Expanded(
+            flex: 3,
+            child: Text(department,
+                overflow: TextOverflow.ellipsis, style: style)),
+      ],
+    );
+  }
+}
+
+class _DetailLine extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _DetailLine({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+          ),
+          Expanded(child: Text(value, textAlign: TextAlign.right)),
+        ],
       ),
     );
   }

@@ -29,24 +29,37 @@ class ApiClient {
   String? _accessToken;
   String? _refreshToken;
   Map<String, dynamic>? _currentUser;
+  Future<bool>? _refreshInFlight;
+
+  static const _accessTokenKey = 'shift_tracker_access_token';
+  static const _refreshTokenKey = 'shift_tracker_refresh_token';
+  static const _currentUserKey = 'shift_tracker_current_user';
 
   Map<String, dynamic>? get currentUser => _currentUser;
   bool get hasSession => _accessToken != null && _refreshToken != null;
 
   Future<void> _saveSession() async {
     if (!hasSession) {
-      await _storage.delete(key: 'shift_tracker_access_token');
-      await _storage.delete(key: 'shift_tracker_refresh_token');
+      await _storage.delete(key: _accessTokenKey);
+      await _storage.delete(key: _refreshTokenKey);
+      await _storage.delete(key: _currentUserKey);
       return;
     }
     await _storage.write(
-      key: 'shift_tracker_access_token',
+      key: _accessTokenKey,
       value: _accessToken,
     );
     await _storage.write(
-      key: 'shift_tracker_refresh_token',
+      key: _refreshTokenKey,
       value: _refreshToken,
     );
+    final user = _currentUser;
+    if (user != null) {
+      await _storage.write(
+        key: _currentUserKey,
+        value: jsonEncode(user),
+      );
+    }
   }
 
   Future<bool> bootstrapRequired() async {
@@ -70,16 +83,31 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>?> restoreSession() async {
+    Map<String, dynamic>? cachedUser;
     try {
-      _accessToken = await _storage.read(key: 'shift_tracker_access_token');
-      _refreshToken = await _storage.read(key: 'shift_tracker_refresh_token');
+      _accessToken = await _storage.read(key: _accessTokenKey);
+      _refreshToken = await _storage.read(key: _refreshTokenKey);
+      final cachedRaw = await _storage.read(key: _currentUserKey);
+      if (cachedRaw != null && cachedRaw.trim().isNotEmpty) {
+        final decoded = jsonDecode(cachedRaw);
+        if (decoded is Map) {
+          cachedUser = Map<String, dynamic>.from(decoded);
+          _currentUser = cachedUser;
+        }
+      }
       if (!hasSession) return null;
       final result = await request('GET', '/api/v1/auth/me');
       _currentUser = Map<String, dynamic>.from(result as Map);
+      await _saveSession();
       return _currentUser;
+    } on ApiException catch (error) {
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        await clearSession();
+        return null;
+      }
+      return cachedUser;
     } catch (_) {
-      await clearSession();
-      return null;
+      return cachedUser;
     }
   }
 
@@ -113,7 +141,17 @@ class ApiClient {
     await _saveSession();
   }
 
-  Future<bool> _refresh() async {
+  Future<bool> _refresh() => _refreshInFlight ??= _runRefresh();
+
+  Future<bool> _runRefresh() async {
+    try {
+      return await _performRefresh();
+    } finally {
+      _refreshInFlight = null;
+    }
+  }
+
+  Future<bool> _performRefresh() async {
     final refresh = _refreshToken;
     if (refresh == null) return false;
     try {
@@ -125,9 +163,12 @@ class ApiClient {
       ) as Map<String, dynamic>;
       await _acceptTokenPair(pair);
       return true;
-    } catch (_) {
-      await clearSession();
-      return false;
+    } on ApiException catch (error) {
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        await clearSession();
+        return false;
+      }
+      rethrow;
     }
   }
 

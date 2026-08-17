@@ -3,6 +3,7 @@
 .packages
 .pub/
 build/
+dist/
 .pub-cache/
 
 # If you use FVM

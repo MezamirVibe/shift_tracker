@@ -21,6 +21,7 @@ class EmployeeDraft {
   final DateTime scheduleStartDate;
   final int shiftHours;
   final int breakHours;
+  final List<int> customWorkdays;
 
   final String? login;
   final String? roleId;
@@ -36,6 +37,7 @@ class EmployeeDraft {
     required this.scheduleStartDate,
     required this.shiftHours,
     required this.breakHours,
+    required this.customWorkdays,
     this.login,
     this.roleId,
   });
@@ -84,6 +86,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
   late DateTime _scheduleStartDate;
   late int _shiftHours;
   late int _breakHours;
+  late List<int> _customWorkdays;
 
   @override
   void initState() {
@@ -106,6 +109,10 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     _scheduleStartDate = init?.scheduleStartDate ?? DateTime.now();
     _shiftHours = init?.shiftHours ?? 12;
     _breakHours = init?.breakHours ?? 1;
+    _customWorkdays = [...?init?.customWorkdays];
+    if (_customWorkdays.isEmpty) {
+      _customWorkdays = [1, 2, 3, 4, 5];
+    }
 
     _loadData();
   }
@@ -125,9 +132,14 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
       _loadingPositions = true;
     });
 
-    final deps = await _structureStorage.loadDepartments();
-    final groups = await _structureStorage.loadGroups();
-    final positions = await _positionsStorage.loadPositions();
+    final results = await Future.wait([
+      _structureStorage.loadDepartments(),
+      _structureStorage.loadGroups(),
+      _positionsStorage.loadPositions(),
+    ]);
+    final deps = results[0] as List<DepartmentModel>;
+    final groups = results[1] as List<GroupModel>;
+    final positions = results[2] as List<PositionModel>;
 
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
@@ -161,7 +173,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
 
   void _normalizeSelectedGroup() {
     if (_groupId == null) return;
-    final g = _groups.cast<dynamic?>().firstWhere(
+    final g = _groups.cast<dynamic>().firstWhere(
           (x) => x?.id == _groupId,
           orElse: () => null,
         );
@@ -222,6 +234,11 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
         ],
       ),
     );
+
+    if (!mounted) {
+      ctrl.dispose();
+      return;
+    }
 
     if (ok != true) {
       ctrl.dispose();
@@ -329,6 +346,13 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
       return;
     }
 
+    if (_scheduleType == ScheduleType.custom && _customWorkdays.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Выбери хотя бы один рабочий день')),
+      );
+      return;
+    }
+
     Navigator.of(context).pop(
       EmployeeDraft(
         fullName: name,
@@ -341,6 +365,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
         scheduleStartDate: _scheduleStartDate,
         shiftHours: _shiftHours,
         breakHours: _breakHours,
+        customWorkdays: [..._customWorkdays]..sort(),
         login: widget.showAccessFields ? login : null,
         roleId: widget.showAccessFields ? _roleId : null,
       ),
@@ -499,12 +524,57 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                     value: ScheduleType.fiveTwo,
                     child: Text('5/2'),
                   ),
+                  DropdownMenuItem(
+                    value: ScheduleType.custom,
+                    child: Text('Произвольный'),
+                  ),
                 ],
                 onChanged: (v) {
                   if (v == null) return;
                   setState(() => _scheduleType = v);
                 },
               ),
+              if (_scheduleType == ScheduleType.custom) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Рабочие дни недели',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: const [
+                      (1, 'Пн'),
+                      (2, 'Вт'),
+                      (3, 'Ср'),
+                      (4, 'Чт'),
+                      (5, 'Пт'),
+                      (6, 'Сб'),
+                      (7, 'Вс'),
+                    ].map((item) {
+                      return FilterChip(
+                        label: Text(item.$2),
+                        selected: _customWorkdays.contains(item.$1),
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              _customWorkdays.add(item.$1);
+                            } else {
+                              _customWorkdays.remove(item.$1);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               InkWell(
                 onTap: _pickStartDate,
@@ -535,10 +605,13 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                   labelText: 'Длительность смены',
                   border: OutlineInputBorder(),
                 ),
-                items: const [
-                  DropdownMenuItem(value: 9, child: Text('9 часов')),
-                  DropdownMenuItem(value: 12, child: Text('12 часов')),
-                ],
+                items: List.generate(
+                  24,
+                  (index) => DropdownMenuItem(
+                    value: index + 1,
+                    child: Text('${index + 1} ч'),
+                  ),
+                ),
                 onChanged: (v) {
                   if (v == null) return;
                   setState(() {

@@ -7,20 +7,25 @@ import '../features/auth/splash_page.dart';
 
 import '../features/admin/admin_page.dart' as adm;
 import '../features/calendar/calendar_page.dart' as cal;
+import '../features/dashboard/dashboard_page.dart' as dashboard;
 import '../features/day/day_page.dart' as day;
 import '../features/employees/employee_details_page.dart' as emp_details;
 import '../features/employees/employees_page.dart' as emp;
+import '../features/preferences/preferences_page.dart' as preferences;
 
 class AppRouter {
   static const String splash = '/splash';
   static const String login = '/login';
   static const String bootstrap = '/bootstrap';
 
-  static const String calendar = '/';
+  static const String dashboardPath = '/';
+  static const String calendar = '/schedule';
+  static const String fullCalendar = '/calendar';
   static const String dayPath = '/day';
   static const String employees = '/employees';
   static const String employee = '/employee';
   static const String admin = '/admin';
+  static const String settings = '/settings';
 
   static GoRouter makeRouter() {
     final auth = AuthService.instance;
@@ -47,7 +52,7 @@ class AppRouter {
         }
 
         if (isAuthRoute) {
-          return calendar;
+          return dashboardPath;
         }
 
         // ВАЖНО:
@@ -73,8 +78,20 @@ class AppRouter {
           builder: (_, __) => const adm.AdminPage(),
         ),
         GoRoute(
+          path: dashboardPath,
+          builder: (_, __) => const dashboard.DashboardPage(),
+        ),
+        GoRoute(
           path: calendar,
           builder: (_, __) => const cal.CalendarPage(),
+        ),
+        GoRoute(
+          path: fullCalendar,
+          builder: (_, __) => const cal.CalendarPage(fullView: true),
+        ),
+        GoRoute(
+          path: settings,
+          builder: (_, __) => const preferences.PreferencesPage(),
         ),
         GoRoute(
           path: '$dayPath/:date',

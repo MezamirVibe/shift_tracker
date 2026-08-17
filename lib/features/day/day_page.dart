@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../attendance/attendance_storage.dart';
@@ -7,6 +6,7 @@ import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
+import '../structure/structure_storage.dart';
 
 class DayPage extends StatefulWidget {
   final String dateIso;
@@ -19,6 +19,7 @@ class DayPage extends StatefulWidget {
 class _DayPageState extends State<DayPage> {
   final _employeesStorage = EmployeesStorage();
   final _attendanceStorage = AttendanceStorage();
+  final _structureStorage = StructureStorage();
 
   bool _loading = true;
   bool _closed = false;
@@ -27,7 +28,9 @@ class _DayPageState extends State<DayPage> {
   late final String _dateIso;
 
   List<EmployeeModel> _planned = <EmployeeModel>[];
+  List<GroupModel> _groups = <GroupModel>[];
   Map<String, AttendanceRecord> _recordsById = <String, AttendanceRecord>{};
+  bool _groupByGroup = true;
 
   @override
   void initState() {
@@ -41,7 +44,12 @@ class _DayPageState extends State<DayPage> {
       AuthService.instance.hasPerm(AppPermission.editAttendance);
 
   Future<void> _load() async {
-    final allEmployees = await _employeesStorage.load();
+    final results = await Future.wait([
+      _employeesStorage.load(),
+      _structureStorage.loadGroups(),
+    ]);
+    final allEmployees = results[0] as List<EmployeeModel>;
+    final groups = results[1] as List<GroupModel>;
 
     // ✅ scope по роли
     final visibleEmployees =
@@ -53,17 +61,18 @@ class _DayPageState extends State<DayPage> {
         day: d,
         type: e.scheduleType,
         startDate: e.scheduleStartDate,
+        customWorkdays: e.customWorkdays,
       );
     }).toList();
 
-    final records = await _attendanceStorage.loadDayRecords(_dateIso);
-    final closed = await _attendanceStorage.isDayClosed(_dateIso);
+    final attendance = await _attendanceStorage.loadDay(_dateIso);
 
     if (!mounted) return;
     setState(() {
       _planned = planned;
-      _recordsById = records;
-      _closed = closed;
+      _groups = groups..sort((a, b) => a.name.compareTo(b.name));
+      _recordsById = attendance.records;
+      _closed = attendance.closed;
       _loading = false;
     });
   }
@@ -298,6 +307,121 @@ class _DayPageState extends State<DayPage> {
     await _load();
   }
 
+  String _groupName(String? groupId) {
+    if (groupId == null) return 'Без группы';
+    for (final group in _groups) {
+      if (group.id == groupId) return group.name;
+    }
+    return 'Без группы';
+  }
+
+  Widget _employeeTile(EmployeeModel employee, bool canEditNow) {
+    final fact = _factOf(employee);
+    final minutes = _minutesFor(employee, fact);
+    final hours = (minutes / 60).toStringAsFixed(minutes % 60 == 0 ? 0 : 1);
+    final record = _recordOf(employee);
+    final comment = record?.comment?.trim();
+    final hasComment = comment != null && comment.isNotEmpty;
+
+    return ListTile(
+      title: Text(employee.fullName),
+      subtitle: Text(
+        '${employee.position} • ${_factLabel(fact)}${hasComment ? ' • $comment' : ''}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('$hours ч'),
+          const SizedBox(width: 12),
+          SegmentedButton<FactStatus>(
+            segments: const [
+              ButtonSegment(
+                value: FactStatus.worked,
+                label: Text('Вышел'),
+                icon: Icon(Icons.check),
+              ),
+              ButtonSegment(
+                value: FactStatus.absent,
+                label: Text('Прогул'),
+                icon: Icon(Icons.close),
+              ),
+            ],
+            selected: {
+              if (fact == FactStatus.worked) FactStatus.worked,
+              if (fact == FactStatus.absent) FactStatus.absent,
+            },
+            emptySelectionAllowed: true,
+            onSelectionChanged: canEditNow
+                ? (selection) async {
+                    if (selection.isEmpty) {
+                      await _setFact(
+                        employee,
+                        FactStatus.none,
+                        workedMinutes: employee.paidShiftHours * 60,
+                      );
+                      return;
+                    }
+                    final value = selection.first;
+                    await _setFact(
+                      employee,
+                      value,
+                      workedMinutes: value == FactStatus.worked
+                          ? employee.paidShiftHours * 60
+                          : 0,
+                    );
+                  }
+                : null,
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Подробно',
+            icon: const Icon(Icons.tune),
+            onPressed: () => _edit(employee),
+          ),
+        ],
+      ),
+      onTap: () => _edit(employee),
+    );
+  }
+
+  Widget _employeesList(bool canEditNow) {
+    if (!_groupByGroup) {
+      return ListView.separated(
+        itemCount: _planned.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) =>
+            _employeeTile(_planned[index], canEditNow),
+      );
+    }
+
+    final grouped = <String, List<EmployeeModel>>{};
+    for (final employee in _planned) {
+      grouped.putIfAbsent(_groupName(employee.groupId), () => []).add(employee);
+    }
+    final names = grouped.keys.toList()..sort();
+
+    return ListView(
+      children: [
+        for (final name in names)
+          ExpansionTile(
+            key: PageStorageKey('day-group-$name'),
+            initiallyExpanded: true,
+            leading: const Icon(Icons.groups_2_outlined),
+            title: Text(name),
+            subtitle: Text('${grouped[name]!.length} сотрудников по плану'),
+            children: [
+              for (var index = 0; index < grouped[name]!.length; index++) ...[
+                if (index > 0) const Divider(height: 1, indent: 56),
+                _employeeTile(grouped[name]![index], canEditNow),
+              ],
+            ],
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title =
@@ -317,19 +441,7 @@ class _DayPageState extends State<DayPage> {
 
     return AdaptiveScaffold(
       title: 'День: $title',
-      selectedIndex: 0,
-      items: [
-        NavItem(
-          label: 'Календарь',
-          icon: Icons.calendar_month,
-          onTap: () => context.go('/'),
-        ),
-        NavItem(
-          label: 'Сотрудники',
-          icon: Icons.people,
-          onTap: () => context.go('/employees'),
-        ),
-      ],
+      selectedRoute: '/day/${widget.dateIso}',
       actions: [
         IconButton(
           tooltip: 'Обновить',
@@ -407,6 +519,14 @@ class _DayPageState extends State<DayPage> {
                           Text('Прогул: $absentCount'),
                           Text('Бол.: $sickCount'),
                           Text('Отп.: $vacationCount'),
+                          FilterChip(
+                            avatar:
+                                const Icon(Icons.groups_2_outlined, size: 18),
+                            label: const Text('Разделить по группам'),
+                            selected: _groupByGroup,
+                            onSelected: (value) =>
+                                setState(() => _groupByGroup = value),
+                          ),
                         ],
                       ),
                     ),
@@ -418,91 +538,7 @@ class _DayPageState extends State<DayPage> {
                             child: Text(
                                 'Никто не запланирован в смену по графику.'),
                           )
-                        : ListView.separated(
-                            itemCount: _planned.length,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, index) {
-                              final e = _planned[index];
-                              final fact = _factOf(e);
-
-                              final minutes = _minutesFor(e, fact);
-                              final hours = (minutes / 60)
-                                  .toStringAsFixed(minutes % 60 == 0 ? 0 : 1);
-
-                              final rec = _recordOf(e);
-                              final comment = rec?.comment?.trim();
-                              final hasComment =
-                                  comment != null && comment.isNotEmpty;
-
-                              return ListTile(
-                                title: Text(e.fullName),
-                                subtitle: Text(
-                                  '${e.position} • ${_factLabel(fact)}${hasComment ? ' • $comment' : ''}',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text('$hours ч'),
-                                    const SizedBox(width: 12),
-                                    SegmentedButton<FactStatus>(
-                                      segments: const [
-                                        ButtonSegment(
-                                          value: FactStatus.worked,
-                                          label: Text('Вышел'),
-                                          icon: Icon(Icons.check),
-                                        ),
-                                        ButtonSegment(
-                                          value: FactStatus.absent,
-                                          label: Text('Прогул'),
-                                          icon: Icon(Icons.close),
-                                        ),
-                                      ],
-                                      selected: {
-                                        if (fact == FactStatus.worked)
-                                          FactStatus.worked,
-                                        if (fact == FactStatus.absent)
-                                          FactStatus.absent,
-                                      },
-                                      emptySelectionAllowed: true,
-                                      onSelectionChanged: canEditNow
-                                          ? (set) async {
-                                              if (set.isEmpty) {
-                                                await _setFact(
-                                                  e,
-                                                  FactStatus.none,
-                                                  workedMinutes:
-                                                      e.paidShiftHours * 60,
-                                                );
-                                                return;
-                                              }
-                                              final v = set.first;
-                                              final minutesToSave =
-                                                  v == FactStatus.worked
-                                                      ? (e.paidShiftHours * 60)
-                                                      : 0;
-                                              await _setFact(
-                                                e,
-                                                v,
-                                                workedMinutes: minutesToSave,
-                                              );
-                                            }
-                                          : null,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    IconButton(
-                                      tooltip: 'Подробно',
-                                      icon: const Icon(Icons.tune),
-                                      onPressed: () => _edit(e),
-                                    ),
-                                  ],
-                                ),
-                                onTap: () => _edit(e),
-                              );
-                            },
-                          ),
+                        : _employeesList(canEditNow),
                   ),
                 ],
               ),
