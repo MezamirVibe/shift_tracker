@@ -20,6 +20,15 @@ class PreferencesService extends ChangeNotifier {
   UserPreferences _preferences = UserPreferences.defaults();
   UserPreferences get preferences => _preferences;
   AppThemeChoice get theme => _preferences.theme;
+  Set<String> get hiddenGroupIds => _preferences.hiddenGroupIds;
+  Set<String> get adminHiddenGroupIds => _preferences.adminHiddenGroupIds;
+  Set<String> get effectiveHiddenGroupIds => {
+        ..._preferences.hiddenGroupIds,
+        ..._preferences.adminHiddenGroupIds,
+      };
+
+  bool isGroupVisible(String? groupId) =>
+      groupId == null || !effectiveHiddenGroupIds.contains(groupId);
 
   bool _loading = false;
   bool get loading => _loading;
@@ -134,6 +143,29 @@ class PreferencesService extends ChangeNotifier {
     notifyListeners();
     await _save();
   }
+
+  Future<void> setHiddenGroupIds(Set<String> groupIds) async {
+    final clean = groupIds
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet();
+    if (setEquals(clean, _preferences.hiddenGroupIds)) return;
+    _preferences = _preferences.copyWith(hiddenGroupIds: clean);
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setGroupHidden(String groupId, {required bool hidden}) async {
+    final next = {..._preferences.hiddenGroupIds};
+    if (hidden) {
+      next.add(groupId);
+    } else {
+      next.remove(groupId);
+    }
+    await setHiddenGroupIds(next);
+  }
+
+  Future<void> restoreAllUserHiddenGroups() => setHiddenGroupIds(const {});
 
   Future<void> updateLayout({
     required bool mobile,

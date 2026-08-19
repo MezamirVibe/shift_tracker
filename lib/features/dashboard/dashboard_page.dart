@@ -53,6 +53,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _error = null;
     });
     try {
+      await _preferences.syncForCurrentUser(force: true);
       final results = await Future.wait([
         _employeesStorage.load(),
         _attendanceStorage.loadRange(
@@ -63,7 +64,12 @@ class _DashboardPageState extends State<DashboardPage> {
       if (!mounted) return;
       final allEmployees = results[0] as List<EmployeeModel>;
       setState(() {
-        _employees = AuthService.instance.filterEmployeesByScope(allEmployees);
+        _employees = AuthService.instance
+            .filterEmployeesByScope(allEmployees)
+            .where(
+              (employee) => _preferences.isGroupVisible(employee.groupId),
+            )
+            .toList();
         _attendance = results[1] as Map<String, dynamic>;
         _loading = false;
       });

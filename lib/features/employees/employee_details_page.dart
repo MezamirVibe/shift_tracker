@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -45,6 +47,16 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   int _shiftHours = 12;
   int _breakHours = 1;
   List<int> _customWorkdays = const [1, 2, 3, 4, 5];
+
+  Timer? _scheduleSaveTimer;
+  Future<void> _scheduleSaveQueue = Future<void>.value();
+  ({
+    ScheduleType type,
+    DateTime start,
+    int shiftHours,
+    int breakHours,
+    List<int> customWorkdays,
+  })? _pendingSchedule;
 
   UserAccount? _linkedUser;
 
@@ -114,6 +126,60 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
         SnackBar(content: Text('Не удалось сохранить: $error')),
       );
     }
+  }
+
+  void _changeSchedule(
+    ScheduleType type,
+    DateTime start,
+    int shiftHours,
+    int breakHours,
+    List<int> customWorkdays,
+  ) {
+    final normalizedDays = [...customWorkdays]..sort();
+    setState(() {
+      _scheduleType = type;
+      _startDate = start;
+      _shiftHours = shiftHours;
+      _breakHours = breakHours;
+      _customWorkdays = normalizedDays;
+    });
+
+    _pendingSchedule = (
+      type: type,
+      start: start,
+      shiftHours: shiftHours,
+      breakHours: breakHours,
+      customWorkdays: normalizedDays,
+    );
+    _scheduleSaveTimer?.cancel();
+    _scheduleSaveTimer = Timer(
+      const Duration(milliseconds: 350),
+      _flushScheduleSave,
+    );
+  }
+
+  void _flushScheduleSave() {
+    _scheduleSaveTimer?.cancel();
+    _scheduleSaveTimer = null;
+    final pending = _pendingSchedule;
+    if (pending == null) return;
+    _pendingSchedule = null;
+
+    _scheduleSaveQueue = _scheduleSaveQueue.then((_) async {
+      await _storage.updateSchedule(
+        employeeId: widget.id,
+        scheduleType: pending.type,
+        scheduleStartDate: pending.start,
+        shiftHours: pending.shiftHours,
+        breakHours: pending.breakHours,
+        customWorkdays: pending.customWorkdays,
+      );
+    }).catchError((Object error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить график: $error')),
+      );
+    });
   }
 
   Future<void> _edit() async {
@@ -266,6 +332,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   }
 
   void _popWithUpdated() {
+    _flushScheduleSave();
     context.pop(<String, dynamic>{
       'id': widget.id,
       'fullName': _fullName,
@@ -352,6 +419,10 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
 
   @override
   void dispose() {
+    _scheduleSaveTimer?.cancel();
+    if (_pendingSchedule != null) {
+      _flushScheduleSave();
+    }
     _tabController.dispose();
     super.dispose();
   }
@@ -416,20 +487,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
                   shiftHours: _shiftHours,
                   breakHours: _breakHours,
                   customWorkdays: _customWorkdays,
-                  onChanged: (nextType, nextStart, nextShiftHours,
-                      nextBreakHours, nextCustomWorkdays) async {
-                    final current = await _getFreshEmployee();
-                    if (!mounted || current == null) return;
-
-                    final updated = current.copyWith(
-                      scheduleType: nextType,
-                      scheduleStartDate: nextStart,
-                      shiftHours: nextShiftHours,
-                      breakHours: nextBreakHours,
-                      customWorkdays: nextCustomWorkdays,
-                    );
-                    await _saveEmployee(updated);
-                  },
+                  onChanged: _changeSchedule,
                 ),
                 _StructureTab(
                   departmentId: _departmentId,
@@ -723,7 +781,7 @@ class _ScheduleTab extends StatelessWidget {
   final int breakHours;
   final List<int> customWorkdays;
 
-  final Future<void> Function(
+  final void Function(
     ScheduleType scheduleType,
     DateTime startDate,
     int shiftHours,
@@ -799,9 +857,9 @@ class _ScheduleTab extends StatelessWidget {
                       child: Text('Произвольный'),
                     ),
                   ],
-                  onChanged: (v) async {
+                  onChanged: (v) {
                     if (v == null) return;
-                    await onChanged(
+                    onChanged(
                       v,
                       startDate,
                       shiftHours,
@@ -829,7 +887,7 @@ class _ScheduleTab extends StatelessWidget {
                         return FilterChip(
                           label: Text(item.$2),
                           selected: customWorkdays.contains(item.$1),
-                          onSelected: (selected) async {
+                          onSelected: (selected) {
                             final next = [...customWorkdays];
                             if (selected) {
                               next.add(item.$1);
@@ -837,7 +895,7 @@ class _ScheduleTab extends StatelessWidget {
                               next.remove(item.$1);
                             }
                             next.sort();
-                            await onChanged(
+                            onChanged(
                               scheduleType,
                               startDate,
                               shiftHours,
@@ -872,7 +930,7 @@ class _ScheduleTab extends StatelessWidget {
                               initialDate: startDate,
                             );
                             if (picked == null) return;
-                            await onChanged(
+                            onChanged(
                               scheduleType,
                               picked,
                               shiftHours,
@@ -900,10 +958,10 @@ class _ScheduleTab extends StatelessWidget {
                       child: Text('${index + 1} ч'),
                     ),
                   ),
-                  onChanged: (v) async {
+                  onChanged: (v) {
                     if (v == null) return;
                     final nextBreak = breakHours >= v ? v - 1 : breakHours;
-                    await onChanged(
+                    onChanged(
                       scheduleType,
                       startDate,
                       v,
@@ -926,9 +984,9 @@ class _ScheduleTab extends StatelessWidget {
                       child: Text('$i час(а)'),
                     ),
                   ),
-                  onChanged: (v) async {
+                  onChanged: (v) {
                     if (v == null) return;
-                    await onChanged(
+                    onChanged(
                       scheduleType,
                       startDate,
                       shiftHours,

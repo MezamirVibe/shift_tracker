@@ -6,6 +6,7 @@ import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
+import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
 
 class DayPage extends StatefulWidget {
@@ -20,6 +21,8 @@ class _DayPageState extends State<DayPage> {
   final _employeesStorage = EmployeesStorage();
   final _attendanceStorage = AttendanceStorage();
   final _structureStorage = StructureStorage();
+  final _preferences = PreferencesService.instance;
+  final _searchController = TextEditingController();
 
   bool _loading = true;
   bool _closed = false;
@@ -29,15 +32,31 @@ class _DayPageState extends State<DayPage> {
 
   List<EmployeeModel> _planned = <EmployeeModel>[];
   List<GroupModel> _groups = <GroupModel>[];
+  Set<String> _scopeGroupIds = <String>{};
   Map<String, AttendanceRecord> _recordsById = <String, AttendanceRecord>{};
   bool _groupByGroup = true;
+  String _search = '';
+  FactStatus? _statusFilter;
+  bool _bulkSaving = false;
+  final Set<String> _savingEmployeeIds = <String>{};
 
   @override
   void initState() {
     super.initState();
     _dateIso = widget.dateIso;
     _day = DateTime.parse(widget.dateIso);
+    _searchController.addListener(() {
+      if (mounted) {
+        setState(() => _search = _searchController.text.trim().toLowerCase());
+      }
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   bool get _canEditAttendance =>
@@ -47,13 +66,18 @@ class _DayPageState extends State<DayPage> {
     final results = await Future.wait([
       _employeesStorage.load(),
       _structureStorage.loadGroups(),
+      _attendanceStorage.loadDay(_dateIso),
+      _preferences.syncForCurrentUser(force: true),
     ]);
     final allEmployees = results[0] as List<EmployeeModel>;
     final groups = results[1] as List<GroupModel>;
 
     // ✅ scope по роли
-    final visibleEmployees =
+    final scopedEmployees =
         AuthService.instance.filterEmployeesByScope(allEmployees);
+    final visibleEmployees = scopedEmployees
+        .where((employee) => _preferences.isGroupVisible(employee.groupId))
+        .toList();
 
     final d = dateOnly(_day);
     final planned = visibleEmployees.where((e) {
@@ -65,12 +89,22 @@ class _DayPageState extends State<DayPage> {
       );
     }).toList();
 
-    final attendance = await _attendanceStorage.loadDay(_dateIso);
+    final attendance =
+        results[2] as ({Map<String, AttendanceRecord> records, bool closed});
+    final configurableGroups = groups
+        .where(
+          (group) => !_preferences.adminHiddenGroupIds.contains(group.id),
+        )
+        .toList();
 
     if (!mounted) return;
     setState(() {
       _planned = planned;
-      _groups = groups..sort((a, b) => a.name.compareTo(b.name));
+      _groups = configurableGroups..sort((a, b) => a.name.compareTo(b.name));
+      _scopeGroupIds = scopedEmployees
+          .map((employee) => employee.groupId)
+          .whereType<String>()
+          .toSet();
       _recordsById = attendance.records;
       _closed = attendance.closed;
       _loading = false;
@@ -83,11 +117,11 @@ class _DayPageState extends State<DayPage> {
   String _factLabel(FactStatus s) {
     switch (s) {
       case FactStatus.none:
-        return 'Без факта';
+        return 'Не заполнено';
       case FactStatus.worked:
         return 'Вышел';
       case FactStatus.absent:
-        return 'Прогул';
+        return 'Неявка';
       case FactStatus.sick:
         return 'Больничный';
       case FactStatus.vacation:
@@ -108,21 +142,180 @@ class _DayPageState extends State<DayPage> {
     }
   }
 
+  TimeOfDay _parseTime(String? value, TimeOfDay fallback) {
+    final parts = value?.split(':');
+    if (parts == null || parts.length < 2) return fallback;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null || hour > 23 || minute > 59) {
+      return fallback;
+    }
+    return TimeOfDay(hour: hour, minute: minute);
+  }
+
+  String _timeValue(TimeOfDay value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+  ({TimeOfDay start, TimeOfDay end}) _defaultTimes(EmployeeModel employee) {
+    const start = TimeOfDay(hour: 8, minute: 0);
+    final endTotal = start.hour * 60 + employee.shiftHours * 60;
+    return (
+      start: start,
+      end: TimeOfDay(hour: (endTotal ~/ 60) % 24, minute: endTotal % 60),
+    );
+  }
+
+  int _workedMinutesBetween(
+    TimeOfDay start,
+    TimeOfDay end,
+    EmployeeModel employee, {
+    bool deductBreak = true,
+  }) {
+    final startMinutes = start.hour * 60 + start.minute;
+    var endMinutes = end.hour * 60 + end.minute;
+    if (endMinutes <= startMinutes) endMinutes += 24 * 60;
+    final breakMinutes = deductBreak ? employee.breakHours * 60 : 0;
+    return (endMinutes - startMinutes - breakMinutes).clamp(0, 24 * 60);
+  }
+
   Future<void> _setFact(
     EmployeeModel e,
     FactStatus fact, {
     String? comment,
     int? workedMinutes,
+    String? actualStart,
+    String? actualEnd,
   }) async {
-    await _attendanceStorage.setFact(
-      dateIso: _dateIso,
-      employeeId: e.id,
+    final previous = _recordsById[e.id];
+    final next = AttendanceRecord(
       fact: fact,
       comment: comment,
       workedMinutes: workedMinutes,
+      actualStart: actualStart,
+      actualEnd: actualEnd,
     );
-    if (!mounted) return;
-    await _load();
+    setState(() {
+      _recordsById = {..._recordsById, e.id: next};
+      _savingEmployeeIds.add(e.id);
+    });
+    try {
+      await _attendanceStorage.setFact(
+        dateIso: _dateIso,
+        employeeId: e.id,
+        fact: fact,
+        comment: comment,
+        workedMinutes: workedMinutes,
+        actualStart: actualStart,
+        actualEnd: actualEnd,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        final restored = {..._recordsById};
+        if (previous == null) {
+          restored.remove(e.id);
+        } else {
+          restored[e.id] = previous;
+        }
+        _recordsById = restored;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить отметку: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingEmployeeIds.remove(e.id));
+    }
+  }
+
+  Future<void> _setFacts(
+    List<EmployeeModel> employees,
+    FactStatus fact,
+  ) async {
+    if (employees.isEmpty || _bulkSaving || _closed) return;
+    final targets = fact == FactStatus.worked
+        ? employees.where((employee) => _factOf(employee) != fact).toList()
+        : employees;
+    if (targets.isEmpty) return;
+    final updates = <String, AttendanceRecord>{
+      for (final employee in targets)
+        employee.id: AttendanceRecord(
+          fact: fact,
+          comment: _recordsById[employee.id]?.comment,
+          workedMinutes:
+              fact == FactStatus.worked ? employee.paidShiftHours * 60 : 0,
+          actualStart: fact == FactStatus.worked
+              ? _timeValue(_defaultTimes(employee).start)
+              : null,
+          actualEnd: fact == FactStatus.worked
+              ? _timeValue(_defaultTimes(employee).end)
+              : null,
+        ),
+    };
+    final previous = Map<String, AttendanceRecord>.from(_recordsById);
+    setState(() {
+      _bulkSaving = true;
+      _recordsById = {..._recordsById, ...updates};
+    });
+    try {
+      await _attendanceStorage.setFacts(
+        dateIso: _dateIso,
+        recordsByEmployeeId: updates,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _recordsById = previous);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Не удалось выполнить массовую отметку: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _bulkSaving = false);
+    }
+  }
+
+  bool _allWorked(List<EmployeeModel> employees) =>
+      employees.isNotEmpty &&
+      employees.every((employee) => _factOf(employee) == FactStatus.worked);
+
+  Future<void> _toggleAllWorked(
+    List<EmployeeModel> employees, {
+    required String markTitle,
+    required String clearTitle,
+  }) async {
+    if (employees.isEmpty) return;
+    final clear = _allWorked(employees);
+    final targetCount = clear
+        ? employees.length
+        : employees
+            .where((employee) => _factOf(employee) != FactStatus.worked)
+            .length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(clear ? clearTitle : markTitle),
+        content: Text(
+          clear
+              ? 'Снять отметку о выходе у $targetCount сотрудников?'
+              : 'Отметить статус «Вышел» для $targetCount сотрудников?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(clear ? 'Снять отметки' : 'Отметить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _setFacts(
+        employees,
+        clear ? FactStatus.none : FactStatus.worked,
+      );
+    }
   }
 
   Future<void> _edit(EmployeeModel e) async {
@@ -132,9 +325,12 @@ class _DayPageState extends State<DayPage> {
     FactStatus fact = current?.fact ?? FactStatus.none;
     final commentController =
         TextEditingController(text: current?.comment ?? '');
-    final workedMinutesController = TextEditingController(
-      text: (current?.workedMinutes ?? (e.paidShiftHours * 60)).toString(),
-    );
+    final defaults = _defaultTimes(e);
+    var actualStart = _parseTime(current?.actualStart, defaults.start);
+    var actualEnd = _parseTime(current?.actualEnd, defaults.end);
+    var deductBreak = current?.workedMinutes == null ||
+        current!.workedMinutes ==
+            _workedMinutesBetween(actualStart, actualEnd, e);
 
     final saved = await showDialog<bool>(
       context: context,
@@ -143,72 +339,141 @@ class _DayPageState extends State<DayPage> {
           builder: (context, setLocalState) => AlertDialog(
             title: Text(e.fullName),
             content: SizedBox(
-              width: 520,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<FactStatus>(
-                    initialValue: fact,
-                    items: const [
-                      DropdownMenuItem(
-                        value: FactStatus.none,
-                        child: Text('Без факта'),
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<FactStatus>(
+                      initialValue: fact,
+                      items: const [
+                        DropdownMenuItem(
+                          value: FactStatus.none,
+                          child: Text('Не заполнено'),
+                        ),
+                        DropdownMenuItem(
+                          value: FactStatus.worked,
+                          child: Text('Вышел'),
+                        ),
+                        DropdownMenuItem(
+                          value: FactStatus.absent,
+                          child: Text('Неявка'),
+                        ),
+                        DropdownMenuItem(
+                          value: FactStatus.sick,
+                          child: Text('Больничный'),
+                        ),
+                        DropdownMenuItem(
+                          value: FactStatus.vacation,
+                          child: Text('Отпуск'),
+                        ),
+                      ],
+                      onChanged: canEditNow
+                          ? (v) {
+                              if (v == null) return;
+                              setLocalState(() => fact = v);
+                            }
+                          : null,
+                      decoration: const InputDecoration(labelText: 'Факт'),
+                    ),
+                    if (fact == FactStatus.worked) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: canEditNow
+                                  ? () async {
+                                      final selected = await showTimePicker(
+                                        context: context,
+                                        initialTime: actualStart,
+                                        helpText: 'Время начала работы',
+                                      );
+                                      if (selected != null) {
+                                        setLocalState(
+                                          () => actualStart = selected,
+                                        );
+                                      }
+                                    }
+                                  : null,
+                              icon: const Icon(Icons.login),
+                              label: Text(
+                                'Начало: ${_timeValue(actualStart)}',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: canEditNow
+                                  ? () async {
+                                      final selected = await showTimePicker(
+                                        context: context,
+                                        initialTime: actualEnd,
+                                        helpText: 'Время окончания работы',
+                                      );
+                                      if (selected != null) {
+                                        setLocalState(
+                                            () => actualEnd = selected);
+                                      }
+                                    }
+                                  : null,
+                              icon: const Icon(Icons.logout),
+                              label: Text(
+                                'Окончание: ${_timeValue(actualEnd)}',
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      DropdownMenuItem(
-                        value: FactStatus.worked,
-                        child: Text('Вышел'),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Оплачиваемое время: ${_workedMinutesBetween(actualStart, actualEnd, e, deductBreak: deductBreak)} мин '
+                          '(перерыв: ${deductBreak ? e.breakHours * 60 : 0} мин)',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ),
-                      DropdownMenuItem(
-                        value: FactStatus.absent,
-                        child: Text('Прогул'),
+                      if (e.breakHours > 0)
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: deductBreak,
+                          title: Text(
+                            'Вычесть стандартный перерыв '
+                            '(${e.breakHours * 60} мин)',
+                          ),
+                          subtitle: const Text(
+                            'Отключите, если сотрудник не использовал перерыв.',
+                          ),
+                          onChanged: canEditNow
+                              ? (value) => setLocalState(
+                                    () => deductBreak = value,
+                                  )
+                              : null,
+                        ),
+                    ],
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: commentController,
+                      enabled: canEditNow,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Комментарий',
+                        hintText: 'Например: отпустили раньше в 15:00',
                       ),
-                      DropdownMenuItem(
-                        value: FactStatus.sick,
-                        child: Text('Больничный'),
-                      ),
-                      DropdownMenuItem(
-                        value: FactStatus.vacation,
-                        child: Text('Отпуск'),
+                    ),
+                    if (!canEditNow) ...[
+                      const SizedBox(height: 12),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Режим просмотра: нет прав или день закрыт.',
+                        ),
                       ),
                     ],
-                    onChanged: canEditNow
-                        ? (v) {
-                            if (v == null) return;
-                            setLocalState(() => fact = v);
-                          }
-                        : null,
-                    decoration: const InputDecoration(labelText: 'Факт'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: workedMinutesController,
-                    enabled: canEditNow && fact == FactStatus.worked,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: 'Минуты (оплачиваемые)',
-                      helperText: fact == FactStatus.worked
-                          ? 'По умолчанию: ${e.paidShiftHours} ч = ${e.paidShiftHours * 60} мин'
-                          : 'Для этого статуса минуты = 0',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: commentController,
-                    enabled: canEditNow,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Комментарий',
-                      hintText: 'Например: причина, примечание…',
-                    ),
-                  ),
-                  if (!canEditNow) ...[
-                    const SizedBox(height: 12),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Режим просмотра: нет прав или день закрыт.'),
-                    ),
                   ],
-                ],
+                ),
               ),
             ),
             actions: [
@@ -227,12 +492,17 @@ class _DayPageState extends State<DayPage> {
       },
     );
 
+    final comment = commentController.text.trim();
+    commentController.dispose();
     if (saved != true) return;
 
-    final comment = commentController.text.trim();
-    final parsedMinutes = int.tryParse(workedMinutesController.text.trim());
-    final minutesToSave = (fact == FactStatus.worked)
-        ? (parsedMinutes ?? (e.paidShiftHours * 60))
+    final minutesToSave = fact == FactStatus.worked
+        ? _workedMinutesBetween(
+            actualStart,
+            actualEnd,
+            e,
+            deductBreak: deductBreak,
+          )
         : 0;
 
     await _setFact(
@@ -240,6 +510,8 @@ class _DayPageState extends State<DayPage> {
       fact,
       comment: comment.isEmpty ? null : comment,
       workedMinutes: minutesToSave,
+      actualStart: fact == FactStatus.worked ? _timeValue(actualStart) : null,
+      actualEnd: fact == FactStatus.worked ? _timeValue(actualEnd) : null,
     );
   }
 
@@ -251,7 +523,7 @@ class _DayPageState extends State<DayPage> {
       builder: (context) => AlertDialog(
         title: const Text('Закрыть день?'),
         content: const Text(
-          'После закрытия дня все, кто остался "Без факта", автоматически станут "Прогул".\n\nПродолжить?',
+          'После закрытия дня все сотрудники со статусом «Не заполнено» автоматически получат статус «Неявка».\n\nПродолжить?',
         ),
         actions: [
           TextButton(
@@ -315,18 +587,153 @@ class _DayPageState extends State<DayPage> {
     return 'Без группы';
   }
 
+  List<GroupModel> get _groupsAvailableForCurrentUser {
+    final auth = AuthService.instance;
+    final user = auth.currentUser;
+    final role = auth.roleById(user?.roleId);
+    if (user == null || role == null) return const [];
+    switch (role.scopeKind) {
+      case ScopeKind.all:
+        return List<GroupModel>.of(_groups);
+      case ScopeKind.department:
+        return _groups
+            .where((group) => group.departmentId == user.departmentId)
+            .toList();
+      case ScopeKind.group:
+        return _groups.where((group) => group.id == user.groupId).toList();
+      case ScopeKind.self:
+        return _groups
+            .where((group) => _scopeGroupIds.contains(group.id))
+            .toList();
+    }
+  }
+
+  Future<void> _manageGroupVisibility() async {
+    final available = _groupsAvailableForCurrentUser
+      ..sort((a, b) => a.name.compareTo(b.name));
+    var hidden = {..._preferences.hiddenGroupIds};
+    final adminHiddenCount = _preferences.adminHiddenGroupIds.length;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Видимость групп'),
+          content: SizedBox(
+            width: 580,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Скрытые группы не показываются в вашем графике. '
+                  'Настройка сохраняется только для вашей учётной записи.',
+                ),
+                if (adminHiddenCount > 0) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Администратор ограничил доступ ещё к $adminHiddenCount группам. '
+                    'Эти ограничения пользователь изменить не может.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Flexible(
+                  child: available.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text('Доступных для настройки групп нет.'),
+                          ),
+                        )
+                      : ListView(
+                          shrinkWrap: true,
+                          children: [
+                            for (final group in available)
+                              SwitchListTile(
+                                value: !hidden.contains(group.id),
+                                title: Text(group.name),
+                                subtitle: Text(
+                                  hidden.contains(group.id)
+                                      ? 'Скрыта вами'
+                                      : 'Показывается',
+                                ),
+                                onChanged: (visible) {
+                                  setDialogState(() {
+                                    if (visible) {
+                                      hidden.remove(group.id);
+                                    } else {
+                                      hidden.add(group.id);
+                                    }
+                                  });
+                                },
+                              ),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: hidden.isEmpty
+                  ? null
+                  : () => setDialogState(() => hidden = <String>{}),
+              child: const Text('Показать все группы'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    await _preferences.setHiddenGroupIds(hidden);
+    if (mounted) await _load();
+  }
+
+  List<EmployeeModel> get _filteredPlanned {
+    return _planned.where((employee) {
+      if (_statusFilter != null && _factOf(employee) != _statusFilter) {
+        return false;
+      }
+      if (_search.isEmpty) return true;
+      final haystack = '${employee.fullName} ${employee.position} '
+              '${_groupName(employee.groupId)} ${_factLabel(_factOf(employee))}'
+          .toLowerCase();
+      return haystack.contains(_search);
+    }).toList();
+  }
+
   Widget _employeeTile(EmployeeModel employee, bool canEditNow) {
     final fact = _factOf(employee);
     final minutes = _minutesFor(employee, fact);
     final hours = (minutes / 60).toStringAsFixed(minutes % 60 == 0 ? 0 : 1);
     final record = _recordOf(employee);
+    final actualTime = fact == FactStatus.worked &&
+            record?.actualStart != null &&
+            record?.actualEnd != null
+        ? '${record!.actualStart}–${record.actualEnd}'
+        : null;
     final comment = record?.comment?.trim();
     final hasComment = comment != null && comment.isNotEmpty;
+    final saving = _savingEmployeeIds.contains(employee.id);
+    final canChange = canEditNow && !_bulkSaving && !saving;
 
     return ListTile(
       title: Text(employee.fullName),
       subtitle: Text(
-        '${employee.position} • ${_factLabel(fact)}${hasComment ? ' • $comment' : ''}',
+        '${employee.position} • ${_factLabel(fact)}'
+        '${actualTime == null ? '' : ' • $actualTime'}'
+        '${hasComment ? ' • $comment' : ''}',
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
@@ -335,69 +742,88 @@ class _DayPageState extends State<DayPage> {
         children: [
           Text('$hours ч'),
           const SizedBox(width: 12),
-          SegmentedButton<FactStatus>(
-            segments: const [
-              ButtonSegment(
-                value: FactStatus.worked,
-                label: Text('Вышел'),
-                icon: Icon(Icons.check),
+          if (saving)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 18),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              ButtonSegment(
-                value: FactStatus.absent,
-                label: Text('Прогул'),
-                icon: Icon(Icons.close),
-              ),
-            ],
-            selected: {
-              if (fact == FactStatus.worked) FactStatus.worked,
-              if (fact == FactStatus.absent) FactStatus.absent,
-            },
-            emptySelectionAllowed: true,
-            onSelectionChanged: canEditNow
-                ? (selection) async {
-                    if (selection.isEmpty) {
+            )
+          else
+            SegmentedButton<FactStatus>(
+              segments: const [
+                ButtonSegment(
+                  value: FactStatus.worked,
+                  label: Text('Вышел'),
+                  icon: Icon(Icons.check),
+                ),
+                ButtonSegment(
+                  value: FactStatus.absent,
+                  label: Text('Неявка'),
+                  icon: Icon(Icons.close),
+                ),
+              ],
+              selected: {
+                if (fact == FactStatus.worked) FactStatus.worked,
+                if (fact == FactStatus.absent) FactStatus.absent,
+              },
+              emptySelectionAllowed: true,
+              onSelectionChanged: canChange
+                  ? (selection) async {
+                      if (selection.isEmpty) {
+                        await _setFact(
+                          employee,
+                          FactStatus.none,
+                          workedMinutes: employee.paidShiftHours * 60,
+                        );
+                        return;
+                      }
+                      final value = selection.first;
+                      final defaults = _defaultTimes(employee);
                       await _setFact(
                         employee,
-                        FactStatus.none,
-                        workedMinutes: employee.paidShiftHours * 60,
+                        value,
+                        workedMinutes: value == FactStatus.worked
+                            ? employee.paidShiftHours * 60
+                            : 0,
+                        actualStart: value == FactStatus.worked
+                            ? (record?.actualStart ??
+                                _timeValue(defaults.start))
+                            : null,
+                        actualEnd: value == FactStatus.worked
+                            ? (record?.actualEnd ?? _timeValue(defaults.end))
+                            : null,
                       );
-                      return;
                     }
-                    final value = selection.first;
-                    await _setFact(
-                      employee,
-                      value,
-                      workedMinutes: value == FactStatus.worked
-                          ? employee.paidShiftHours * 60
-                          : 0,
-                    );
-                  }
-                : null,
-          ),
+                  : null,
+            ),
           const SizedBox(width: 8),
           IconButton(
             tooltip: 'Подробно',
             icon: const Icon(Icons.tune),
-            onPressed: () => _edit(employee),
+            onPressed: canChange ? () => _edit(employee) : null,
           ),
         ],
       ),
-      onTap: () => _edit(employee),
+      onTap: canChange ? () => _edit(employee) : null,
     );
   }
 
   Widget _employeesList(bool canEditNow) {
+    final visible = _filteredPlanned;
     if (!_groupByGroup) {
       return ListView.separated(
-        itemCount: _planned.length,
+        itemCount: visible.length,
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, index) =>
-            _employeeTile(_planned[index], canEditNow),
+            _employeeTile(visible[index], canEditNow),
       );
     }
 
     final grouped = <String, List<EmployeeModel>>{};
-    for (final employee in _planned) {
+    for (final employee in visible) {
       grouped.putIfAbsent(_groupName(employee.groupId), () => []).add(employee);
     }
     final names = grouped.keys.toList()..sort();
@@ -412,6 +838,32 @@ class _DayPageState extends State<DayPage> {
             title: Text(name),
             subtitle: Text('${grouped[name]!.length} сотрудников по плану'),
             children: [
+              if (canEditNow)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(56, 4, 16, 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.tonalIcon(
+                      onPressed: _bulkSaving
+                          ? null
+                          : () => _toggleAllWorked(
+                                grouped[name]!,
+                                markTitle: 'Вся группа вышла?',
+                                clearTitle: 'Снять отметки у всей группы?',
+                              ),
+                      icon: Icon(
+                        _allWorked(grouped[name]!)
+                            ? Icons.remove_done
+                            : Icons.done_all,
+                      ),
+                      label: Text(
+                        _allWorked(grouped[name]!)
+                            ? 'Снять отметки у всей группы'
+                            : 'Отметить всю группу вышедшей',
+                      ),
+                    ),
+                  ),
+                ),
               for (var index = 0; index < grouped[name]!.length; index++) ...[
                 if (index > 0) const Divider(height: 1, indent: 56),
                 _employeeTile(grouped[name]![index], canEditNow),
@@ -436,6 +888,9 @@ class _DayPageState extends State<DayPage> {
         _planned.where((e) => _factOf(e) == FactStatus.sick).length;
     final vacationCount =
         _planned.where((e) => _factOf(e) == FactStatus.vacation).length;
+    final unfilledCount =
+        _planned.where((e) => _factOf(e) == FactStatus.none).length;
+    final visibleCount = _filteredPlanned.length;
 
     final canEditNow = _canEditAttendance && !_closed;
 
@@ -450,7 +905,9 @@ class _DayPageState extends State<DayPage> {
         ),
         if (!_loading && !_closed)
           FilledButton.icon(
-            onPressed: (canEditNow && _planned.isNotEmpty) ? _closeDay : null,
+            onPressed: (canEditNow && _planned.isNotEmpty && !_bulkSaving)
+                ? _closeDay
+                : null,
             icon: const Icon(Icons.lock),
             label: const Text('Закрыть день'),
           ),
@@ -510,23 +967,166 @@ class _DayPageState extends State<DayPage> {
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
-                      child: Wrap(
-                        spacing: 16,
-                        runSpacing: 8,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Text('По плану: $plannedCount'),
-                          Text('Вышли: $workedCount'),
-                          Text('Прогул: $absentCount'),
-                          Text('Бол.: $sickCount'),
-                          Text('Отп.: $vacationCount'),
-                          FilterChip(
-                            avatar:
-                                const Icon(Icons.groups_2_outlined, size: 18),
-                            label: const Text('Разделить по группам'),
-                            selected: _groupByGroup,
-                            onSelected: (value) =>
-                                setState(() => _groupByGroup = value),
+                          Wrap(
+                            spacing: 16,
+                            runSpacing: 8,
+                            children: [
+                              Text('По плану: $plannedCount'),
+                              Text('Вышли: $workedCount'),
+                              Text('Неявка: $absentCount'),
+                              Text('Больничный: $sickCount'),
+                              Text('Отпуск: $vacationCount'),
+                              Text(
+                                'Не заполнено: $unfilledCount',
+                                style: TextStyle(
+                                  color: unfilledCount > 0
+                                      ? Theme.of(context).colorScheme.error
+                                      : null,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
+                          const Divider(height: 24),
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final narrow = constraints.maxWidth < 760;
+                              final search = TextField(
+                                controller: _searchController,
+                                decoration: InputDecoration(
+                                  labelText: 'Найти сотрудника',
+                                  hintText: 'ФИО, должность или группа',
+                                  prefixIcon: const Icon(Icons.search),
+                                  suffixIcon: _search.isEmpty
+                                      ? null
+                                      : IconButton(
+                                          onPressed: _searchController.clear,
+                                          icon: const Icon(Icons.clear),
+                                        ),
+                                  border: const OutlineInputBorder(),
+                                ),
+                              );
+                              final status =
+                                  DropdownButtonFormField<FactStatus?>(
+                                initialValue: _statusFilter,
+                                decoration: const InputDecoration(
+                                  labelText: 'Показать статус',
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: const [
+                                  DropdownMenuItem<FactStatus?>(
+                                    value: null,
+                                    child: Text('Все статусы'),
+                                  ),
+                                  DropdownMenuItem<FactStatus?>(
+                                    value: FactStatus.none,
+                                    child: Text('Не заполнено'),
+                                  ),
+                                  DropdownMenuItem<FactStatus?>(
+                                    value: FactStatus.worked,
+                                    child: Text('Вышел'),
+                                  ),
+                                  DropdownMenuItem<FactStatus?>(
+                                    value: FactStatus.absent,
+                                    child: Text('Неявка'),
+                                  ),
+                                  DropdownMenuItem<FactStatus?>(
+                                    value: FactStatus.sick,
+                                    child: Text('Больничный'),
+                                  ),
+                                  DropdownMenuItem<FactStatus?>(
+                                    value: FactStatus.vacation,
+                                    child: Text('Отпуск'),
+                                  ),
+                                ],
+                                onChanged: (value) =>
+                                    setState(() => _statusFilter = value),
+                              );
+                              if (narrow) {
+                                return Column(
+                                  children: [
+                                    search,
+                                    const SizedBox(height: 10),
+                                    status,
+                                  ],
+                                );
+                              }
+                              return Row(
+                                children: [
+                                  Expanded(child: search),
+                                  const SizedBox(width: 10),
+                                  SizedBox(width: 240, child: status),
+                                ],
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              if (canEditNow)
+                                FilledButton.icon(
+                                  onPressed: _bulkSaving
+                                      ? null
+                                      : () => _toggleAllWorked(
+                                            _filteredPlanned,
+                                            markTitle: _search.isEmpty &&
+                                                    _statusFilter == null
+                                                ? 'Вся смена вышла?'
+                                                : 'Отметить найденных?',
+                                            clearTitle: _search.isEmpty &&
+                                                    _statusFilter == null
+                                                ? 'Снять отметки у всей смены?'
+                                                : 'Снять отметки у найденных?',
+                                          ),
+                                  icon: Icon(
+                                    _allWorked(_filteredPlanned)
+                                        ? Icons.remove_done
+                                        : Icons.done_all,
+                                  ),
+                                  label: Text(
+                                    _allWorked(_filteredPlanned)
+                                        ? (_search.isEmpty &&
+                                                _statusFilter == null
+                                            ? 'Снять отметки у всей смены'
+                                            : 'Снять отметки у найденных')
+                                        : (_search.isEmpty &&
+                                                _statusFilter == null
+                                            ? 'Отметить всю смену вышедшей'
+                                            : 'Отметить найденных вышедшими'),
+                                  ),
+                                ),
+                              FilterChip(
+                                avatar: const Icon(Icons.groups_2_outlined,
+                                    size: 18),
+                                label: const Text('Разделить по группам'),
+                                selected: _groupByGroup,
+                                onSelected: (value) =>
+                                    setState(() => _groupByGroup = value),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: _manageGroupVisibility,
+                                icon: const Icon(Icons.visibility_off_outlined),
+                                label: Text(
+                                  _preferences.hiddenGroupIds.isEmpty
+                                      ? 'Видимость групп'
+                                      : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}',
+                                ),
+                              ),
+                              Text('Показано: $visibleCount'),
+                            ],
+                          ),
+                          if (_bulkSaving) ...[
+                            const SizedBox(height: 12),
+                            const LinearProgressIndicator(),
+                            const SizedBox(height: 4),
+                            const Text('Сохраняем массовую отметку…'),
+                          ],
                         ],
                       ),
                     ),
@@ -538,7 +1138,13 @@ class _DayPageState extends State<DayPage> {
                             child: Text(
                                 'Никто не запланирован в смену по графику.'),
                           )
-                        : _employeesList(canEditNow),
+                        : visibleCount == 0
+                            ? const Center(
+                                child: Text(
+                                  'По выбранному поиску и статусу сотрудников нет.',
+                                ),
+                              )
+                            : _employeesList(canEditNow),
                   ),
                 ],
               ),

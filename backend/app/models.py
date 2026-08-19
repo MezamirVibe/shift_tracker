@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -195,6 +196,8 @@ class AttendanceRecord(Base):
     )
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     worked_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actual_start: Mapped[time | None] = mapped_column(Time, nullable=True)
+    actual_end: Mapped[time | None] = mapped_column(Time, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )

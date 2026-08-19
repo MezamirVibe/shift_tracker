@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
+import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
@@ -20,6 +21,7 @@ class EmployeesPage extends StatefulWidget {
 class _EmployeesPageState extends State<EmployeesPage> {
   final _storage = EmployeesStorage();
   final _structureStorage = StructureStorage();
+  final _preferences = PreferencesService.instance;
   final _searchCtrl = TextEditingController();
 
   bool _loading = true;
@@ -87,6 +89,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
       setState(() => _loading = true);
     }
 
+    await _preferences.syncForCurrentUser(force: true);
     final results = await Future.wait([
       _storage.load(),
       _structureStorage.loadDepartments(),
@@ -99,15 +102,20 @@ class _EmployeesPageState extends State<EmployeesPage> {
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
 
-    final visible = AuthService.instance.filterEmployeesByScope(employees);
+    final visible = AuthService.instance
+        .filterEmployeesByScope(employees)
+        .where((employee) => _preferences.isGroupVisible(employee.groupId))
+        .toList();
+    final visibleGroups =
+        groups.where((group) => _preferences.isGroupVisible(group.id)).toList();
 
     if (!mounted) return;
 
     setState(() {
-      _employeesAll = employees;
+      _employeesAll = visible;
       _employeesVisible = visible;
       _departments = deps;
-      _groups = groups;
+      _groups = visibleGroups;
       final selectedStillVisible = visible.any(
         (employee) => employee.id == _selectedEmployeeId,
       );

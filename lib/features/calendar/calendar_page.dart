@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -8,6 +10,7 @@ import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
+import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
 
 class _DaySummary {
@@ -27,18 +30,20 @@ class _DaySummary {
     required this.closed,
   });
 
-  int get factsTotal => worked + absent + sick + vacation;
-
   double get completionRatio {
     if (planned <= 0) {
-      return factsTotal > 0 ? 1.0 : 0.0;
+      return worked > 0 ? 1.0 : 0.0;
     }
-    return (factsTotal / planned).clamp(0.0, 1.0);
+    return (worked / planned).clamp(0.0, 1.0);
   }
 
-  bool get hasOverflow => planned > 0 && factsTotal > planned;
+  int get missing => planned > worked ? planned - worked : 0;
 
-  bool get hasUnexpectedOutputWhenNoPlan => planned == 0 && factsTotal > 0;
+  int get away => absent + sick + vacation;
+
+  bool get hasOverflow => planned > 0 && worked > planned;
+
+  bool get hasUnexpectedOutputWhenNoPlan => planned == 0 && worked > 0;
 }
 
 class CalendarPage extends StatefulWidget {
@@ -54,6 +59,7 @@ class _CalendarPageState extends State<CalendarPage> {
   final _employeesStorage = EmployeesStorage();
   final _attendanceStorage = AttendanceStorage();
   final _structureStorage = StructureStorage();
+  final _preferences = PreferencesService.instance;
 
   bool _loading = true;
 
@@ -71,8 +77,10 @@ class _CalendarPageState extends State<CalendarPage> {
   DateTime _weekStart = dateOnly(DateTime.now()).subtract(
     Duration(days: DateTime.now().weekday - DateTime.monday),
   );
+  DateTime _selectedScheduleDay = dateOnly(DateTime.now());
 
   late final PageController _pageController;
+  Timer? _attendanceRefreshTimer;
   final int _basePage = 2400;
 
   static const _monthNamesRu = [
@@ -94,13 +102,31 @@ class _CalendarPageState extends State<CalendarPage> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _basePage);
+    AttendanceStorage.changes.addListener(_onAttendanceChanged);
     _loadAndRecalc();
   }
 
   @override
   void dispose() {
+    AttendanceStorage.changes.removeListener(_onAttendanceChanged);
+    _attendanceRefreshTimer?.cancel();
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _onAttendanceChanged() {
+    _attendanceRefreshTimer?.cancel();
+    _attendanceRefreshTimer = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) {
+        unawaited(_loadAndRecalc(forMonth: _month));
+      }
+    });
+  }
+
+  Future<void> _openDay(DateTime day) async {
+    await context.push('/day/${_isoDate(dateOnly(day))}');
+    if (!mounted) return;
+    await _loadAndRecalc(forMonth: _month);
   }
 
   DateTime _monthFromPage(int page) {
@@ -203,8 +229,11 @@ class _CalendarPageState extends State<CalendarPage> {
   Future<void> _loadAndRecalc({DateTime? forMonth}) async {
     final targetMonth = forMonth ?? _month;
 
-    setState(() => _loading = true);
+    if (_employeesVisible.isEmpty) {
+      setState(() => _loading = true);
+    }
 
+    await _preferences.syncForCurrentUser(force: true);
     final results = await Future.wait([
       _employeesStorage.load(),
       _attendanceStorage.loadRange(
@@ -223,7 +252,12 @@ class _CalendarPageState extends State<CalendarPage> {
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
 
-    final visible = AuthService.instance.filterEmployeesByScope(employees);
+    final visible = AuthService.instance
+        .filterEmployeesByScope(employees)
+        .where((employee) => _preferences.isGroupVisible(employee.groupId))
+        .toList();
+    final visibleGroups =
+        groups.where((group) => _preferences.isGroupVisible(group.id)).toList();
 
     if (!mounted) return;
 
@@ -231,7 +265,7 @@ class _CalendarPageState extends State<CalendarPage> {
       _month = DateTime(targetMonth.year, targetMonth.month, 1);
       _employeesVisible = visible;
       _departments = deps;
-      _groups = groups;
+      _groups = visibleGroups;
     });
 
     _applyRoleLocksToFilters();
@@ -273,6 +307,7 @@ class _CalendarPageState extends State<CalendarPage> {
         );
       }).toList();
 
+      final employeeIds = employeesForCalc.map((e) => e.id).toSet();
       final plannedIds = plannedEmployees.map((e) => e.id).toSet();
       final plannedCount = plannedEmployees.length;
 
@@ -291,7 +326,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
         for (final entry in dayMapAny.entries) {
           if (entry.key == '_meta') continue;
-          if (!plannedIds.contains(entry.key)) continue;
+          if (!employeeIds.contains(entry.key)) continue;
 
           final v = entry.value;
           if (v is Map) {
@@ -301,13 +336,13 @@ class _CalendarPageState extends State<CalendarPage> {
                 worked++;
                 break;
               case FactStatus.absent:
-                absent++;
+                if (plannedIds.contains(entry.key)) absent++;
                 break;
               case FactStatus.sick:
-                sick++;
+                if (plannedIds.contains(entry.key)) sick++;
                 break;
               case FactStatus.vacation:
-                vacation++;
+                if (plannedIds.contains(entry.key)) vacation++;
                 break;
               case FactStatus.none:
                 break;
@@ -329,93 +364,14 @@ class _CalendarPageState extends State<CalendarPage> {
     return out;
   }
 
-  Future<void> _logout() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Выйти из аккаунта?'),
-        content:
-            const Text('Ты выйдешь из приложения и попадёшь на экран входа.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Выйти'),
-          ),
-        ],
-      ),
+  void _recalculateFromLoaded() {
+    final filtered = _applyFiltersWithinVisible(_employeesVisible);
+    final summary = _calcSummaryForMonth(
+      _month,
+      filtered,
+      _rawAttendance,
     );
-
-    if (ok != true) return;
-    await AuthService.instance.logout();
-  }
-
-  Future<void> _changePassword() async {
-    final currentController = TextEditingController();
-    final newController = TextEditingController();
-    final repeatController = TextEditingController();
-    final submitted = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Сменить пароль'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: currentController,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Текущий пароль'),
-              ),
-              TextField(
-                controller: newController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Новый пароль (минимум 10 символов)',
-                ),
-              ),
-              TextField(
-                controller: repeatController,
-                obscureText: true,
-                decoration:
-                    const InputDecoration(labelText: 'Повторите новый пароль'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Сменить'),
-          ),
-        ],
-      ),
-    );
-    if (submitted != true || !mounted) return;
-    if (newController.text != repeatController.text) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Новые пароли не совпадают.')),
-      );
-      return;
-    }
-    final error = await AuthService.instance.changePassword(
-      currentPassword: currentController.text,
-      newPassword: newController.text,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(error ?? 'Пароль изменён. Войдите с новым паролем.'),
-      ),
-    );
+    setState(() => _summaryByDateIso = summary);
   }
 
   List<GroupModel> get _groupsForSelectedDepartment {
@@ -507,12 +463,12 @@ class _CalendarPageState extends State<CalendarPage> {
                 ],
                 onChanged: depLocked
                     ? null
-                    : (v) async {
+                    : (v) {
                         setState(() {
                           _selectedDepartmentId = v;
                           _selectedGroupId = null;
                         });
-                        await _loadAndRecalc(forMonth: _month);
+                        _recalculateFromLoaded();
                       },
               ),
             ),
@@ -541,9 +497,9 @@ class _CalendarPageState extends State<CalendarPage> {
                     ? null
                     : (_selectedDepartmentId == null)
                         ? null
-                        : (v) async {
+                        : (v) {
                             setState(() => _selectedGroupId = v);
-                            await _loadAndRecalc(forMonth: _month);
+                            _recalculateFromLoaded();
                           },
               ),
             ),
@@ -579,7 +535,7 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  Widget _legend() {
+  Widget _calendarLegend() {
     final itemStyle = Theme.of(context).textTheme.bodySmall;
 
     Widget line(Color color, String label) {
@@ -626,10 +582,93 @@ class _CalendarPageState extends State<CalendarPage> {
           spacing: 16,
           runSpacing: 8,
           children: [
-            line(Colors.green, 'Выход по плану'),
-            line(Colors.orange, 'Перевыход'),
+            line(context.shiftColors.success, 'Вышли все по плану'),
+            line(Theme.of(context).colorScheme.primary, 'Вышли частично'),
+            line(context.shiftColors.warning, 'Вышли сверх плана'),
             dot(Theme.of(context).colorScheme.primary, 'Сегодня'),
-            dot(Colors.orange, 'День закрыт'),
+            dot(context.shiftColors.warning, 'День закрыт'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _scheduleLegend() {
+    final colors = context.shiftColors;
+
+    Widget item({
+      required IconData icon,
+      required Color foreground,
+      required Color background,
+      required String title,
+      required String description,
+    }) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(
+            radius: 11,
+            backgroundColor: background,
+            child: Icon(icon, size: 14, color: foreground),
+          ),
+          const SizedBox(width: 7),
+          Text('$title — $description',
+              style: Theme.of(context).textTheme.bodySmall),
+        ],
+      );
+    }
+
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Wrap(
+          spacing: 18,
+          runSpacing: 9,
+          children: [
+            item(
+              icon: Icons.event_available_outlined,
+              foreground: scheme.primary,
+              background: scheme.primaryContainer.withValues(alpha: 0.65),
+              title: 'Рабочая смена',
+              description: 'стоит в плане',
+            ),
+            item(
+              icon: Icons.check_circle_outline,
+              foreground: colors.success,
+              background: colors.successContainer,
+              title: 'Вышел на смену',
+              description: 'факт подтверждён',
+            ),
+            item(
+              icon: Icons.beach_access_outlined,
+              foreground: colors.vacation,
+              background: colors.vacationContainer,
+              title: 'Отпуск',
+              description: 'утверждённое отсутствие',
+            ),
+            item(
+              icon: Icons.medical_services_outlined,
+              foreground: colors.sick,
+              background: colors.sickContainer,
+              title: 'Больничный',
+              description: 'подтверждённое отсутствие',
+            ),
+            item(
+              icon: Icons.person_off_outlined,
+              foreground: scheme.error,
+              background: scheme.errorContainer,
+              title: 'Неявка',
+              description: 'сотрудник не вышел',
+            ),
+            item(
+              icon: Icons.weekend_outlined,
+              foreground: colors.neutral,
+              background: colors.neutralContainer,
+              title: 'Выходной',
+              description: 'смена не запланирована',
+            ),
           ],
         ),
       ),
@@ -668,7 +707,12 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   void _moveWeek(int delta) {
-    setState(() => _weekStart = _weekStart.add(Duration(days: delta * 7)));
+    final weekdayOffset = _selectedScheduleDay.weekday - DateTime.monday;
+    setState(() {
+      _weekStart = _weekStart.add(Duration(days: delta * 7));
+      _selectedScheduleDay =
+          _weekStart.add(Duration(days: weekdayOffset.clamp(0, 6)));
+    });
     final targetMonth = DateTime(_weekStart.year, _weekStart.month, 1);
     if (targetMonth.year != _month.year || targetMonth.month != _month.month) {
       _loadAndRecalc(forMonth: targetMonth);
@@ -719,25 +763,42 @@ class _CalendarPageState extends State<CalendarPage> {
     var away = 0;
     var missing = 0;
     for (final employee in employees) {
-      for (final day in days) {
-        final isPlanned = isWorkDay(
-          day: day,
-          type: employee.scheduleType,
-          startDate: employee.scheduleStartDate,
-          customWorkdays: employee.customWorkdays,
-        );
-        if (isPlanned) planned++;
-        final fact = _recordFor(day, employee.id)?.fact ?? FactStatus.none;
-        if (fact == FactStatus.worked) worked++;
-        if (fact == FactStatus.sick || fact == FactStatus.vacation) away++;
-        if (isPlanned &&
-            fact == FactStatus.none &&
-            day.isBefore(dateOnly(DateTime.now()))) {
-          missing++;
-        }
+      final isPlanned = isWorkDay(
+        day: _selectedScheduleDay,
+        type: employee.scheduleType,
+        startDate: employee.scheduleStartDate,
+        customWorkdays: employee.customWorkdays,
+      );
+      if (isPlanned) planned++;
+      final fact = _recordFor(_selectedScheduleDay, employee.id)?.fact ??
+          FactStatus.none;
+      if (fact == FactStatus.worked) worked++;
+      if (isPlanned &&
+          (fact == FactStatus.absent ||
+              fact == FactStatus.sick ||
+              fact == FactStatus.vacation)) {
+        away++;
+      }
+      if (isPlanned &&
+          fact == FactStatus.none &&
+          !_selectedScheduleDay.isAfter(dateOnly(DateTime.now()))) {
+        missing++;
       }
     }
     final end = days.last;
+    const dayNames = [
+      'понедельник',
+      'вторник',
+      'среда',
+      'четверг',
+      'пятница',
+      'суббота',
+      'воскресенье',
+    ];
+    final selectedLabel = '${dayNames[_selectedScheduleDay.weekday - 1]}, '
+        '${_selectedScheduleDay.day.toString().padLeft(2, '0')}.'
+        '${_selectedScheduleDay.month.toString().padLeft(2, '0')}.'
+        '${_selectedScheduleDay.year}';
     return Column(
       children: [
         Row(
@@ -765,10 +826,7 @@ class _CalendarPageState extends State<CalendarPage> {
             ),
             const Spacer(),
             OutlinedButton.icon(
-              onPressed: () {
-                final today = _isoDate(dateOnly(DateTime.now()));
-                context.push('/day/$today');
-              },
+              onPressed: () => _openDay(DateTime.now()),
               icon: const Icon(Icons.today_outlined),
               label: const Text('Сегодня'),
             ),
@@ -777,18 +835,26 @@ class _CalendarPageState extends State<CalendarPage> {
         const SizedBox(height: 12),
         _filtersBlock(false),
         const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Показатели за $selectedLabel',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        const SizedBox(height: 6),
         Row(
           children: [
             _desktopStat(
               icon: Icons.badge_outlined,
-              label: 'Плановых выходов',
+              label: 'План на смену',
               value: '$planned',
               color: Theme.of(context).colorScheme.primary,
             ),
             const SizedBox(width: 10),
             _desktopStat(
               icon: Icons.how_to_reg_outlined,
-              label: 'Отмечено выходов',
+              label: 'Фактически вышли',
               value: '$worked',
               color: Colors.green,
             ),
@@ -802,7 +868,7 @@ class _CalendarPageState extends State<CalendarPage> {
             const SizedBox(width: 10),
             _desktopStat(
               icon: Icons.warning_amber_rounded,
-              label: 'Нет отметки',
+              label: 'Не заполнено',
               value: '$missing',
               color: Colors.orange,
             ),
@@ -829,24 +895,45 @@ class _CalendarPageState extends State<CalendarPage> {
                       ),
                       for (final day in days)
                         Expanded(
-                          child: Column(
-                            children: [
-                              Text(
-                                const [
-                                  'Пн',
-                                  'Вт',
-                                  'Ср',
-                                  'Чт',
-                                  'Пт',
-                                  'Сб',
-                                  'Вс'
-                                ][day.weekday - 1],
-                                style: Theme.of(context).textTheme.labelMedium,
+                          child: Material(
+                            color: dateOnly(day) == _selectedScheduleDay
+                                ? Theme.of(context).colorScheme.primaryContainer
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            child: InkWell(
+                              onTap: () => setState(
+                                () => _selectedScheduleDay = dateOnly(day),
                               ),
-                              Text('${day.day}',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                            ],
+                              borderRadius: BorderRadius.circular(8),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      const [
+                                        'Пн',
+                                        'Вт',
+                                        'Ср',
+                                        'Чт',
+                                        'Пт',
+                                        'Сб',
+                                        'Вс'
+                                      ][day.weekday - 1],
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelMedium,
+                                    ),
+                                    Text(
+                                      '${day.day}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                     ],
@@ -938,7 +1025,7 @@ class _CalendarPageState extends State<CalendarPage> {
           ),
         ),
         const SizedBox(height: 10),
-        _legend(),
+        _scheduleLegend(),
       ],
     );
   }
@@ -958,29 +1045,29 @@ class _CalendarPageState extends State<CalendarPage> {
     Color background;
     switch (record?.fact ?? FactStatus.none) {
       case FactStatus.worked:
-        code = 'Д';
-        subtitle = '${employee.paidShiftHours} ч';
-        foreground = Theme.of(context).colorScheme.primary;
-        background = Theme.of(context).colorScheme.primaryContainer;
+        code = 'Вышел на смену';
+        subtitle = '${employee.paidShiftHours} ч отработано';
+        foreground = colors.success;
+        background = colors.successContainer;
         break;
       case FactStatus.vacation:
-        code = 'О';
+        code = 'Отпуск';
         foreground = colors.vacation;
         background = colors.vacationContainer;
         break;
       case FactStatus.sick:
-        code = 'Б';
+        code = 'Больничный';
         foreground = colors.sick;
         background = colors.sickContainer;
         break;
       case FactStatus.absent:
-        code = '!';
+        code = 'Неявка';
         foreground = Theme.of(context).colorScheme.error;
         background = Theme.of(context).colorScheme.errorContainer;
         break;
       case FactStatus.none:
-        code = planned ? 'Д' : 'ОТ';
-        subtitle = planned ? '${employee.shiftHours} ч' : '';
+        code = planned ? 'Рабочая смена' : 'Выходной';
+        subtitle = planned ? 'По плану · ${employee.shiftHours} ч' : '';
         foreground =
             planned ? Theme.of(context).colorScheme.primary : colors.neutral;
         background = planned
@@ -994,7 +1081,7 @@ class _CalendarPageState extends State<CalendarPage> {
     return Padding(
       padding: const EdgeInsets.all(5),
       child: InkWell(
-        onTap: () => context.push('/day/${_isoDate(day)}'),
+        onTap: () => _openDay(day),
         borderRadius: BorderRadius.circular(9),
         child: Container(
           decoration: BoxDecoration(
@@ -1003,9 +1090,20 @@ class _CalendarPageState extends State<CalendarPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(code,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  code,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                      color: foreground, fontWeight: FontWeight.w700)),
+                    color: foreground,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
               if (subtitle.isNotEmpty)
                 Text(subtitle,
                     style: TextStyle(color: foreground, fontSize: 11)),
@@ -1026,14 +1124,6 @@ class _CalendarPageState extends State<CalendarPage> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = AuthService.instance;
-    final user = auth.currentUser;
-
-    final canAdmin = user != null &&
-        (user.role == UserRole.superAdmin ||
-            auth.hasPerm(AppPermission.manageUsers) ||
-            auth.hasPerm(AppPermission.editRolePolicies));
-
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
     final isDesktop = MediaQuery.sizeOf(context).width >= 1100;
 
@@ -1052,22 +1142,6 @@ class _CalendarPageState extends State<CalendarPage> {
             widget.fullView ? '/schedule' : '/calendar',
           ),
         ),
-        if (canAdmin)
-          IconButton(
-            tooltip: 'Администрирование',
-            icon: const Icon(Icons.admin_panel_settings_outlined),
-            onPressed: () => context.push('/admin'),
-          ),
-        IconButton(
-          tooltip: 'Сменить пароль',
-          icon: const Icon(Icons.password),
-          onPressed: _changePassword,
-        ),
-        IconButton(
-          tooltip: 'Выйти',
-          icon: const Icon(Icons.logout),
-          onPressed: _logout,
-        ),
       ],
       child: Padding(
         padding: EdgeInsets.all(isPhone ? 8 : 16),
@@ -1081,7 +1155,7 @@ class _CalendarPageState extends State<CalendarPage> {
                       const SizedBox(height: 8),
                       _filtersBlock(isPhone),
                       const SizedBox(height: 8),
-                      _legend(),
+                      _calendarLegend(),
                       const SizedBox(height: 8),
                       _weekHeader(),
                       const SizedBox(height: 6),
@@ -1139,7 +1213,7 @@ class _CalendarPageState extends State<CalendarPage> {
                                         day: day,
                                         summary: s,
                                         compact: isPhone,
-                                        onTap: () => context.push('/day/$iso'),
+                                        onTap: () => _openDay(day),
                                       );
                                     },
                                   ),
@@ -1180,15 +1254,16 @@ class _DayCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final colors = context.shiftColors;
     final isToday = dateOnly(day) == dateOnly(DateTime.now());
 
     final borderColor =
         isToday ? scheme.primary : scheme.outlineVariant.withValues(alpha: 0.7);
 
     final fillColor = summary.hasUnexpectedOutputWhenNoPlan
-        ? Colors.deepOrange
+        ? colors.warning
         : summary.completionRatio >= 1
-            ? Colors.green
+            ? colors.success
             : scheme.primary;
 
     final padding = compact ? 5.0 : 8.0;
@@ -1248,23 +1323,76 @@ class _DayCell extends StatelessWidget {
             ),
             Padding(
               padding: EdgeInsets.all(padding),
-              child: Row(
-                children: [
-                  Text(
-                    '${day.day}',
-                    style: compact
-                        ? Theme.of(context).textTheme.labelLarge
-                        : Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const Spacer(),
-                  if (summary.closed)
-                    Icon(
-                      Icons.lock,
-                      size: compact ? 12 : 14,
-                      color: Colors.orange,
+              child: compact
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${day.day}',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${summary.worked}/${summary.planned}',
+                          style:
+                              Theme.of(context).textTheme.labelMedium?.copyWith(
+                                    color: fillColor,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                        ),
+                        if (summary.closed) ...[
+                          const SizedBox(width: 3),
+                          Icon(Icons.lock, size: 12, color: colors.warning),
+                        ],
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              '${day.day}',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const Spacer(),
+                            if (summary.closed)
+                              Icon(
+                                Icons.lock,
+                                size: 14,
+                                color: colors.warning,
+                              ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Row(
+                          children: [
+                            Icon(Icons.groups_2_outlined,
+                                size: 17, color: fillColor),
+                            const SizedBox(width: 5),
+                            Text(
+                              '${summary.worked} / ${summary.planned}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(
+                                    color: fillColor,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          summary.away > 0
+                              ? 'вышли / план · отсутствуют ${summary.away}'
+                              : 'вышли / план',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                        const SizedBox(height: 7),
+                      ],
                     ),
-                ],
-              ),
             ),
           ],
         ),

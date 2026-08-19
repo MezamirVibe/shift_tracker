@@ -23,6 +23,8 @@ void main() {
             size: DashboardWidgetSize.compact,
           ),
         ],
+        hiddenGroupIds: {'group-local'},
+        adminHiddenGroupIds: {'group-admin'},
       );
 
       final restored = UserPreferences.fromJson(
@@ -37,6 +39,8 @@ void main() {
       expect(restored.desktopWidgets.last.enabled, isFalse);
       expect(
           restored.mobileWidgets.single.type, DashboardWidgetType.weekSchedule);
+      expect(restored.hiddenGroupIds, {'group-local'});
+      expect(restored.adminHiddenGroupIds, {'group-admin'});
     });
 
     test('ignores unknown and duplicate widget identifiers', () {

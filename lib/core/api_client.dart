@@ -30,16 +30,19 @@ class ApiClient {
   String? _refreshToken;
   Map<String, dynamic>? _currentUser;
   Future<bool>? _refreshInFlight;
+  bool _persistSession = true;
 
   static const _accessTokenKey = 'shift_tracker_access_token';
   static const _refreshTokenKey = 'shift_tracker_refresh_token';
   static const _currentUserKey = 'shift_tracker_current_user';
+  static const _rememberLoginKey = 'shift_tracker_remember_login';
+  static const _savedLoginKey = 'shift_tracker_saved_login';
 
   Map<String, dynamic>? get currentUser => _currentUser;
   bool get hasSession => _accessToken != null && _refreshToken != null;
 
   Future<void> _saveSession() async {
-    if (!hasSession) {
+    if (!hasSession || !_persistSession) {
       await _storage.delete(key: _accessTokenKey);
       await _storage.delete(key: _refreshTokenKey);
       await _storage.delete(key: _currentUserKey);
@@ -71,7 +74,28 @@ class ApiClient {
     return (result as Map<String, dynamic>)['required'] == true;
   }
 
-  Future<Map<String, dynamic>> login(String login, String password) async {
+  Future<({String login, bool remember})> loadLoginPreference() async {
+    try {
+      final rememberRaw = await _storage.read(key: _rememberLoginKey);
+      final remember = rememberRaw != 'false';
+      final login = await _storage.read(key: _savedLoginKey) ?? '';
+      return (login: login, remember: remember);
+    } catch (_) {
+      return (login: '', remember: true);
+    }
+  }
+
+  Future<void> _saveLoginPreference(String login, bool remember) async {
+    await _storage.write(key: _rememberLoginKey, value: remember.toString());
+    await _storage.write(key: _savedLoginKey, value: login.trim());
+  }
+
+  Future<Map<String, dynamic>> login(
+    String login,
+    String password, {
+    bool rememberSession = true,
+  }) async {
+    _persistSession = rememberSession;
     final result = await request(
       'POST',
       '/api/v1/auth/login',
@@ -79,12 +103,19 @@ class ApiClient {
       body: {'login': login.trim(), 'password': password},
     ) as Map<String, dynamic>;
     await _acceptTokenPair(result);
+    await _saveLoginPreference(login, rememberSession);
     return _currentUser!;
   }
 
   Future<Map<String, dynamic>?> restoreSession() async {
     Map<String, dynamic>? cachedUser;
     try {
+      final loginPreference = await loadLoginPreference();
+      _persistSession = loginPreference.remember;
+      if (!_persistSession) {
+        await clearSession();
+        return null;
+      }
       _accessToken = await _storage.read(key: _accessTokenKey);
       _refreshToken = await _storage.read(key: _refreshTokenKey);
       final cachedRaw = await _storage.read(key: _currentUserKey);

@@ -1,7 +1,7 @@
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models import FactStatus, ScheduleType, ScopeKind
 
@@ -96,6 +96,14 @@ class UserPreferencesIn(BaseModel):
 class UserPreferencesOut(ApiModel):
     settings: dict
     updated_at: datetime | None = None
+
+
+class UserHiddenGroupsIn(BaseModel):
+    hidden_group_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+
+
+class UserHiddenGroupsOut(BaseModel):
+    hidden_group_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class TokenPair(BaseModel):
@@ -206,12 +214,30 @@ class AttendanceRecordIn(BaseModel):
     fact: FactStatus
     comment: str | None = Field(default=None, max_length=4000)
     worked_minutes: int | None = Field(default=None, ge=0, le=1440)
+    actual_start: time | None = None
+    actual_end: time | None = None
+
+    @model_validator(mode="after")
+    def validate_actual_times(self) -> "AttendanceRecordIn":
+        if (self.actual_start is None) != (self.actual_end is None):
+            raise ValueError("Нужно указать и начало, и окончание работы")
+        if self.fact != FactStatus.worked and self.actual_start is not None:
+            raise ValueError("Фактическое время доступно только для выхода на смену")
+        return self
 
 
 class AttendanceRecordOut(AttendanceRecordIn, ApiModel):
     day: date
     employee_id: uuid.UUID
     updated_at: datetime
+
+
+class AttendanceBulkItem(AttendanceRecordIn):
+    employee_id: uuid.UUID
+
+
+class AttendanceBulkIn(BaseModel):
+    records: list[AttendanceBulkItem] = Field(min_length=1, max_length=500)
 
 
 class AttendanceCloseIn(BaseModel):

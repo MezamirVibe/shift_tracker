@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -18,6 +19,20 @@ class LoginResult {
   const LoginResult.success() : this._(true, null);
 
   const LoginResult.fail(String message) : this._(false, message);
+}
+
+class EmployeeAccountCredentials {
+  final String employeeId;
+  final String fullName;
+  final String login;
+  final String password;
+
+  const EmployeeAccountCredentials({
+    required this.employeeId,
+    required this.fullName,
+    required this.login,
+    required this.password,
+  });
 }
 
 class AuthService extends ChangeNotifier {
@@ -53,26 +68,103 @@ class AuthService extends ChangeNotifier {
     _users = cached[0] as List<UserAccount>;
     _roles = cached[1] as List<AppRole>;
 
-    try {
-      _serverHasUsers = !await api.bootstrapRequired();
-    } catch (_) {
-      // Временная ошибка сети не должна менять локальное состояние входа.
+    final startup = await Future.wait([
+      api.bootstrapRequired().then<Object?>((required) => required).catchError(
+            (_) => null,
+          ),
+      api.restoreSession(),
+    ]);
+    final bootstrapRequired = startup[0] as bool?;
+    if (bootstrapRequired != null) {
+      _serverHasUsers = !bootstrapRequired;
     }
-
-    final restored = await api.restoreSession();
+    final restored = startup[1] as Map<String, dynamic>?;
     if (restored != null) {
       _currentUser = UserAccount.fromApiJson(restored);
-      try {
-        await _reloadServerState();
-      } catch (_) {
-        if (_users.every((user) => user.id != _currentUser!.id)) {
-          _users = [..._users, _currentUser!];
-        }
+      if (_users.every((user) => user.id != _currentUser!.id)) {
+        _users = [..._users, _currentUser!];
       }
     }
 
     _initialized = true;
     notifyListeners();
+    if (_currentUser != null) {
+      unawaited(_reloadServerStateInBackground());
+    }
+  }
+
+  Future<void> _reloadServerStateInBackground() async {
+    try {
+      await _reloadServerState();
+      notifyListeners();
+    } catch (_) {
+      // Кешированных данных достаточно для работы до восстановления сети.
+    }
+  }
+
+  Future<void> refreshServerState() async {
+    await _reloadServerState();
+    notifyListeners();
+  }
+
+  Future<EmployeeAccountCredentials?> createAccountForEmployee({
+    required EmployeeModel employee,
+    required String login,
+    String? password,
+    bool publishLocalChange = true,
+  }) async {
+    if (!hasPerm(AppPermission.manageUsers) && !isCurrentUserSuperAdmin) {
+      return null;
+    }
+    if (_users.any((user) => user.employeeId == employee.id)) return null;
+
+    final normalizedLogin = login.trim().toLowerCase();
+    if (normalizedLogin.length < 3 ||
+        _users.any((user) => user.login.toLowerCase() == normalizedLogin)) {
+      return null;
+    }
+
+    final parts = employee.fullName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    final lastName = parts.isNotEmpty ? parts.first : 'Сотрудник';
+    final firstName = parts.length > 1 ? parts[1] : 'Пользователь';
+    final middleName = parts.length > 2 ? parts.sublist(2).join(' ') : '';
+    final generatedPassword = password ?? generateReadablePassword();
+
+    try {
+      final data = await ApiClient.instance.request(
+        'POST',
+        '/api/v1/users',
+        body: {
+          'login': normalizedLogin,
+          'password': generatedPassword,
+          'role_id': BuiltInRoleIds.worker,
+          'last_name': lastName,
+          'first_name': firstName,
+          'middle_name': middleName,
+          'department_id': null,
+          'group_id': null,
+          'employee_id': employee.id,
+        },
+      ) as Map<String, dynamic>;
+      final user = UserAccount.fromApiJson(data);
+      _users = [..._users, user];
+      if (publishLocalChange) {
+        await _storage.saveUsers(_users);
+        notifyListeners();
+      }
+      return EmployeeAccountCredentials(
+        employeeId: employee.id,
+        fullName: employee.fullName,
+        login: normalizedLogin,
+        password: generatedPassword,
+      );
+    } on ApiException {
+      return null;
+    }
   }
 
   Future<void> _reloadServerState() async {
@@ -205,19 +297,24 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<LoginResult> loginDetailed(String login, String password) async {
+  Future<LoginResult> loginDetailed(
+    String login,
+    String password, {
+    bool rememberSession = true,
+  }) async {
     try {
-      final data = await ApiClient.instance.login(login, password);
+      final data = await ApiClient.instance.login(
+        login,
+        password,
+        rememberSession: rememberSession,
+      );
       _currentUser = UserAccount.fromApiJson(data);
       _serverHasUsers = true;
-      try {
-        await _reloadServerState();
-      } catch (_) {
-        if (_users.every((user) => user.id != _currentUser!.id)) {
-          _users = [..._users, _currentUser!];
-        }
+      if (_users.every((user) => user.id != _currentUser!.id)) {
+        _users = [..._users, _currentUser!];
       }
       notifyListeners();
+      unawaited(_reloadServerStateInBackground());
       return const LoginResult.success();
     } on ApiException catch (error) {
       return LoginResult.fail(error.message);
@@ -979,6 +1076,19 @@ class AuthService extends ChangeNotifier {
     }
 
     return b.toString();
+  }
+
+  String generateReadableLoginCode() {
+    const consonants = 'bcdfghjklmnprstvz';
+    const vowels = 'aeiou';
+    final code = StringBuffer();
+    for (var index = 0; index < 2; index++) {
+      code.write(consonants[_random.nextInt(consonants.length)]);
+      code.write(vowels[_random.nextInt(vowels.length)]);
+    }
+    code.write(_random.nextInt(10));
+    code.write(_random.nextInt(10));
+    return code.toString();
   }
 
   void _replaceUser(UserAccount updated) {

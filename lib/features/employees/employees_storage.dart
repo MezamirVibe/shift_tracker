@@ -169,8 +169,18 @@ class EmployeesStorage {
   static List<EmployeeModel>? _cachedEmployees;
   static DateTime? _cachedAt;
   static Future<List<EmployeeModel>>? _loadInFlight;
+  static String? _cacheUserId;
+  static String? _inFlightUserId;
 
   Future<List<EmployeeModel>> load({bool force = false}) {
+    final userId = ApiClient.instance.currentUser?['id'] as String?;
+    if (_cacheUserId != userId) {
+      _cachedEmployees = null;
+      _cachedAt = null;
+      _loadInFlight = null;
+      _inFlightUserId = null;
+      _cacheUserId = userId;
+    }
     final cached = _cachedEmployees;
     final cachedAt = _cachedAt;
     if (!force &&
@@ -181,23 +191,29 @@ class EmployeesStorage {
     }
 
     final active = _loadInFlight;
-    if (!force && active != null) {
+    if (!force && active != null && _inFlightUserId == userId) {
       return active.then(List<EmployeeModel>.of);
     }
 
-    final future = _loadAndCache();
+    final future = _loadAndCache(userId);
     _loadInFlight = future;
+    _inFlightUserId = userId;
     return future;
   }
 
-  Future<List<EmployeeModel>> _loadAndCache() async {
+  Future<List<EmployeeModel>> _loadAndCache(String? userId) async {
     try {
       final loaded = await _loadRemote();
-      _cachedEmployees = List<EmployeeModel>.unmodifiable(loaded);
-      _cachedAt = DateTime.now();
+      if (_cacheUserId == userId) {
+        _cachedEmployees = List<EmployeeModel>.unmodifiable(loaded);
+        _cachedAt = DateTime.now();
+      }
       return List<EmployeeModel>.of(loaded);
     } finally {
-      _loadInFlight = null;
+      if (_inFlightUserId == userId) {
+        _loadInFlight = null;
+        _inFlightUserId = null;
+      }
     }
   }
 
@@ -299,6 +315,29 @@ class EmployeesStorage {
       'PATCH',
       '/api/v1/employees/${employee.id}',
       body: _body(employee, positionId, includeId: false),
+    );
+    _invalidateCache();
+  }
+
+  Future<void> updateSchedule({
+    required String employeeId,
+    required ScheduleType scheduleType,
+    required DateTime scheduleStartDate,
+    required int shiftHours,
+    required int breakHours,
+    required List<int> customWorkdays,
+  }) async {
+    await ApiClient.instance.request(
+      'PATCH',
+      '/api/v1/employees/$employeeId',
+      body: {
+        'schedule_type': scheduleTypeToString(scheduleType),
+        'schedule_start_date':
+            scheduleStartDate.toIso8601String().split('T').first,
+        'shift_hours': shiftHours,
+        'break_hours': breakHours,
+        'custom_workdays': customWorkdays,
+      },
     );
     _invalidateCache();
   }

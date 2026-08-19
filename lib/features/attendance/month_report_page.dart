@@ -167,7 +167,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
                                 children: [
                                   Text('План: $planned'),
                                   Text('Вышел: $worked'),
-                                  Text('Прогул: $absent'),
+                                  Text('Неявка: $absent'),
                                   Text('Бол.: $sick'),
                                   Text('Отп.: $vacation'),
                                   Text('Часы: $hours'),

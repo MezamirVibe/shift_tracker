@@ -102,11 +102,15 @@ class UserPreferences {
   final AppThemeChoice theme;
   final List<DashboardWidgetPreference> desktopWidgets;
   final List<DashboardWidgetPreference> mobileWidgets;
+  final Set<String> hiddenGroupIds;
+  final Set<String> adminHiddenGroupIds;
 
   const UserPreferences({
     required this.theme,
     required this.desktopWidgets,
     required this.mobileWidgets,
+    this.hiddenGroupIds = const {},
+    this.adminHiddenGroupIds = const {},
   });
 
   factory UserPreferences.defaults({bool showTeamWidgets = false}) {
@@ -155,6 +159,8 @@ class UserPreferences {
       theme: AppThemeChoice.light,
       desktopWidgets: desktop,
       mobileWidgets: mobile,
+      hiddenGroupIds: const {},
+      adminHiddenGroupIds: const {},
     );
   }
 
@@ -162,20 +168,26 @@ class UserPreferences {
     AppThemeChoice? theme,
     List<DashboardWidgetPreference>? desktopWidgets,
     List<DashboardWidgetPreference>? mobileWidgets,
+    Set<String>? hiddenGroupIds,
+    Set<String>? adminHiddenGroupIds,
   }) {
     return UserPreferences(
       theme: theme ?? this.theme,
       desktopWidgets: desktopWidgets ?? this.desktopWidgets,
       mobileWidgets: mobileWidgets ?? this.mobileWidgets,
+      hiddenGroupIds: hiddenGroupIds ?? this.hiddenGroupIds,
+      adminHiddenGroupIds: adminHiddenGroupIds ?? this.adminHiddenGroupIds,
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'version': 1,
+        'version': 2,
         'theme': theme.storageValue,
         'desktopDashboard':
             desktopWidgets.map((item) => item.toJson()).toList(),
         'mobileDashboard': mobileWidgets.map((item) => item.toJson()).toList(),
+        'hidden_group_ids': hiddenGroupIds.toList()..sort(),
+        'admin_hidden_group_ids': adminHiddenGroupIds.toList()..sort(),
       };
 
   static UserPreferences fromJson(
@@ -198,11 +210,28 @@ class UserPreferences {
       return parsed.isEmpty ? defaultValue : parsed;
     }
 
+    Set<String> parseIds(Object? value, Set<String> defaultValue) {
+      if (value is! List) return defaultValue;
+      return value
+          .whereType<String>()
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet();
+    }
+
     return UserPreferences(
       theme: AppThemeChoiceX.parse(raw['theme']),
       desktopWidgets:
           parseList(raw['desktopDashboard'], fallback.desktopWidgets),
       mobileWidgets: parseList(raw['mobileDashboard'], fallback.mobileWidgets),
+      hiddenGroupIds: parseIds(
+        raw['hidden_group_ids'] ?? raw['hiddenGroupIds'],
+        fallback.hiddenGroupIds,
+      ),
+      adminHiddenGroupIds: parseIds(
+        raw['admin_hidden_group_ids'] ?? raw['adminHiddenGroupIds'],
+        fallback.adminHiddenGroupIds,
+      ),
     );
   }
 }

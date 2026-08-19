@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../core/api_client.dart';
 
 /// Факт по дню
@@ -38,12 +40,16 @@ class AttendanceRecord {
   final FactStatus fact;
   final String? comment;
   final int? workedMinutes;
+  final String? actualStart;
+  final String? actualEnd;
   final String? updatedAt;
 
   const AttendanceRecord({
     required this.fact,
     this.comment,
     this.workedMinutes,
+    this.actualStart,
+    this.actualEnd,
     this.updatedAt,
   });
 
@@ -52,6 +58,8 @@ class AttendanceRecord {
         if (comment != null && comment!.trim().isNotEmpty)
           'comment': comment!.trim(),
         if (workedMinutes != null) 'workedMinutes': workedMinutes,
+        if (actualStart != null) 'actualStart': actualStart,
+        if (actualEnd != null) 'actualEnd': actualEnd,
         'updatedAt': updatedAt ?? DateTime.now().toIso8601String(),
       };
 
@@ -76,6 +84,10 @@ class AttendanceRecord {
       fact: migratedFact,
       comment: comment,
       workedMinutes: workedMinutes,
+      actualStart:
+          (json['actualStart'] as String?) ?? (json['actual_start'] as String?),
+      actualEnd:
+          (json['actualEnd'] as String?) ?? (json['actual_end'] as String?),
       updatedAt: json['updatedAt'] as String?,
     );
   }
@@ -85,6 +97,9 @@ class AttendanceRecord {
 /// + служебный ключ "_meta": { closed: bool, closedAt: iso, reopenedAt?: iso }
 class AttendanceStorage {
   static const _metaKey = '_meta';
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
+
+  void _markChanged() => changes.value++;
 
   String _iso(DateTime day) => '${day.year.toString().padLeft(4, '0')}-'
       '${day.month.toString().padLeft(2, '0')}-'
@@ -184,6 +199,8 @@ class AttendanceStorage {
     required FactStatus fact,
     String? comment,
     int? workedMinutes,
+    String? actualStart,
+    String? actualEnd,
   }) async {
     await ApiClient.instance.request(
       'PUT',
@@ -192,8 +209,36 @@ class AttendanceStorage {
         'fact': factStatusToString(fact),
         'comment': comment,
         'worked_minutes': workedMinutes,
+        'actual_start': actualStart,
+        'actual_end': actualEnd,
       },
     );
+    _markChanged();
+  }
+
+  Future<void> setFacts({
+    required String dateIso,
+    required Map<String, AttendanceRecord> recordsByEmployeeId,
+  }) async {
+    if (recordsByEmployeeId.isEmpty) return;
+    await ApiClient.instance.request(
+      'PUT',
+      '/api/v1/attendance/$dateIso',
+      body: {
+        'records': [
+          for (final entry in recordsByEmployeeId.entries)
+            {
+              'employee_id': entry.key,
+              'fact': factStatusToString(entry.value.fact),
+              'comment': entry.value.comment,
+              'worked_minutes': entry.value.workedMinutes,
+              'actual_start': entry.value.actualStart,
+              'actual_end': entry.value.actualEnd,
+            },
+        ],
+      },
+    );
+    _markChanged();
   }
 
   /// Закрыть день:
@@ -209,6 +254,7 @@ class AttendanceStorage {
       '/api/v1/attendance/$dateIso/close',
       body: {'planned_employee_ids': plannedEmployeeIds},
     );
+    _markChanged();
   }
 
   Future<void> reopenDay({required String dateIso}) async {
@@ -216,5 +262,6 @@ class AttendanceStorage {
       'POST',
       '/api/v1/attendance/$dateIso/reopen',
     );
+    _markChanged();
   }
 }
