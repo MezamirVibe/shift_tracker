@@ -962,10 +962,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       final character = String.fromCharCode(rune);
       out.write(letters[character] ?? character);
     }
-    return out
-        .toString()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '.')
-        .replaceAll(RegExp(r'^\.+|\.+$'), '');
+    return out.toString().replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
 
   String _suggestLogin(EmployeeModel employee, Set<String> reserved) {
@@ -981,13 +978,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       surname,
       if (first.isNotEmpty) first.substring(0, 1),
       if (middle.isNotEmpty) middle.substring(0, 1),
-    ].where((part) => part.isNotEmpty).join('.');
-    if (base.length < 3) base = 'user.${employee.id.substring(0, 6)}';
+    ].where((part) => part.isNotEmpty).join();
+    if (base.length < 3) base = 'user${employee.id.substring(0, 6)}';
 
     if (base.length > 80) base = base.substring(0, 80);
-    var candidate = '$base.${_auth.generateReadableLoginCode()}';
+    var candidate = '$base${_auth.generateReadableLoginCode()}';
     while (reserved.contains(candidate.toLowerCase())) {
-      candidate = '$base.${_auth.generateReadableLoginCode()}';
+      candidate = '$base${_auth.generateReadableLoginCode()}';
     }
     reserved.add(candidate.toLowerCase());
     return candidate;
