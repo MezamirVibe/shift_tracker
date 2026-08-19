@@ -47,6 +47,17 @@ void main() {
     );
 
     expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(NavigationDestination), findsNWidgets(4));
+    expect(find.text('Главная'), findsOneWidget);
+    expect(find.text('График'), findsOneWidget);
+    expect(find.text('Календарь'), findsOneWidget);
+    expect(find.text('Ещё'), findsOneWidget);
     expect(find.text('Мобильное содержимое'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('Ещё'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Настройки'), findsOneWidget);
   });
 }

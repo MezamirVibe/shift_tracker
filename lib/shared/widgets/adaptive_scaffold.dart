@@ -107,6 +107,53 @@ class AdaptiveScaffold extends StatelessWidget {
     return legacy.clamp(0, resolvedItems.length - 1);
   }
 
+  bool _matchesRoute(NavItem item) {
+    final route = selectedRoute;
+    if (route == null) return false;
+    if (item.route == route) return true;
+    return item.route == '/schedule' && route.startsWith('/day/');
+  }
+
+  Future<void> _showMobileMore(
+    BuildContext context,
+    List<NavItem> items,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Text(
+                'Ещё',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            for (final item in items)
+              ListTile(
+                leading: Icon(item.icon),
+                title: Text(item.label),
+                selected: _matchesRoute(item),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  item.onTap();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final desktop = isDesktop(context);
@@ -114,6 +161,19 @@ class AdaptiveScaffold extends StatelessWidget {
     final resolvedIndex = _resolvedIndex(resolvedItems);
 
     if (!desktop) {
+      final primaryItems = resolvedItems
+          .where(
+            (item) =>
+                item.route == '/' ||
+                item.route == '/schedule' ||
+                item.route == '/calendar',
+          )
+          .toList();
+      final moreItems =
+          resolvedItems.where((item) => !primaryItems.contains(item)).toList();
+      final primaryIndex = primaryItems.indexWhere(_matchesRoute);
+      final mobileIndex = primaryIndex >= 0 ? primaryIndex : 3;
+
       return Scaffold(
         appBar: AppBar(
           title: Text(title),
@@ -122,15 +182,25 @@ class AdaptiveScaffold extends StatelessWidget {
         body: child,
         floatingActionButton: floatingActionButton,
         bottomNavigationBar: NavigationBar(
-          selectedIndex: resolvedIndex,
-          labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
-          onDestinationSelected: (idx) => resolvedItems[idx].onTap(),
+          selectedIndex: mobileIndex,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          onDestinationSelected: (idx) {
+            if (idx < primaryItems.length) {
+              primaryItems[idx].onTap();
+              return;
+            }
+            _showMobileMore(context, moreItems);
+          },
           destinations: [
-            for (final item in resolvedItems)
+            for (final item in primaryItems)
               NavigationDestination(
                 icon: Icon(item.icon),
                 label: item.label,
               ),
+            const NavigationDestination(
+              icon: Icon(Icons.more_horiz),
+              label: 'Ещё',
+            ),
           ],
         ),
       );

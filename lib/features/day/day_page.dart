@@ -728,8 +728,152 @@ class _DayPageState extends State<DayPage> {
     final saving = _savingEmployeeIds.contains(employee.id);
     final canChange = canEditNow && !_bulkSaving && !saving;
 
+    Future<void> setQuickFact(FactStatus value) async {
+      if (!canChange) return;
+      if (fact == value) {
+        await _setFact(
+          employee,
+          FactStatus.none,
+          workedMinutes: employee.paidShiftHours * 60,
+        );
+        return;
+      }
+      final defaults = _defaultTimes(employee);
+      await _setFact(
+        employee,
+        value,
+        workedMinutes:
+            value == FactStatus.worked ? employee.paidShiftHours * 60 : 0,
+        actualStart: value == FactStatus.worked
+            ? (record?.actualStart ?? _timeValue(defaults.start))
+            : null,
+        actualEnd: value == FactStatus.worked
+            ? (record?.actualEnd ?? _timeValue(defaults.end))
+            : null,
+      );
+    }
+
+    final isPhone = MediaQuery.sizeOf(context).width < 680;
+    if (isPhone) {
+      final scheme = Theme.of(context).colorScheme;
+
+      Widget quickButton({
+        required FactStatus value,
+        required String label,
+        required IconData icon,
+      }) {
+        final selected = fact == value;
+        final selectedColor = value == FactStatus.absent
+            ? scheme.errorContainer
+            : scheme.primaryContainer;
+        final selectedForeground = value == FactStatus.absent
+            ? scheme.onErrorContainer
+            : scheme.onPrimaryContainer;
+        return Expanded(
+          child: OutlinedButton.icon(
+            onPressed: canChange ? () => setQuickFact(value) : null,
+            style: OutlinedButton.styleFrom(
+              backgroundColor: selected ? selectedColor : null,
+              foregroundColor: selected ? selectedForeground : null,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            ),
+            icon: Icon(icon, size: 17),
+            label: Text(label),
+          ),
+        );
+      }
+
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
+        child: Column(
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: canChange ? () => _edit(employee) : null,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            employee.fullName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${employee.position} • ${_factLabel(fact)}'
+                            '${actualTime == null ? '' : ' • $actualTime'}'
+                            '${hasComment ? ' • $comment' : ''}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (saving)
+                  const Padding(
+                    padding: EdgeInsets.all(11),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '$hours ч',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Время и подробности',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.tune, size: 20),
+                    onPressed: canChange ? () => _edit(employee) : null,
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                quickButton(
+                  value: FactStatus.worked,
+                  label: 'Вышел',
+                  icon: Icons.check,
+                ),
+                const SizedBox(width: 8),
+                quickButton(
+                  value: FactStatus.absent,
+                  label: 'Неявка',
+                  icon: Icons.close,
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     return ListTile(
-      title: Text(employee.fullName),
+      title: Text(
+        employee.fullName,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
       subtitle: Text(
         '${employee.position} • ${_factLabel(fact)}'
         '${actualTime == null ? '' : ' • $actualTime'}'
@@ -773,29 +917,10 @@ class _DayPageState extends State<DayPage> {
               onSelectionChanged: canChange
                   ? (selection) async {
                       if (selection.isEmpty) {
-                        await _setFact(
-                          employee,
-                          FactStatus.none,
-                          workedMinutes: employee.paidShiftHours * 60,
-                        );
+                        await setQuickFact(fact);
                         return;
                       }
-                      final value = selection.first;
-                      final defaults = _defaultTimes(employee);
-                      await _setFact(
-                        employee,
-                        value,
-                        workedMinutes: value == FactStatus.worked
-                            ? employee.paidShiftHours * 60
-                            : 0,
-                        actualStart: value == FactStatus.worked
-                            ? (record?.actualStart ??
-                                _timeValue(defaults.start))
-                            : null,
-                        actualEnd: value == FactStatus.worked
-                            ? (record?.actualEnd ?? _timeValue(defaults.end))
-                            : null,
-                      );
+                      await setQuickFact(selection.first);
                     }
                   : null,
             ),
@@ -813,6 +938,7 @@ class _DayPageState extends State<DayPage> {
 
   Widget _employeesList(bool canEditNow) {
     final visible = _filteredPlanned;
+    final isPhone = MediaQuery.sizeOf(context).width < 680;
     if (!_groupByGroup) {
       return ListView.separated(
         itemCount: visible.length,
@@ -835,12 +961,21 @@ class _DayPageState extends State<DayPage> {
             key: PageStorageKey('day-group-$name'),
             initiallyExpanded: true,
             leading: const Icon(Icons.groups_2_outlined),
-            title: Text(name),
+            title: Text(
+              name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             subtitle: Text('${grouped[name]!.length} сотрудников по плану'),
             children: [
               if (canEditNow)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(56, 4, 16, 8),
+                  padding: EdgeInsets.fromLTRB(
+                    isPhone ? 12 : 56,
+                    4,
+                    16,
+                    8,
+                  ),
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: FilledButton.tonalIcon(
@@ -855,11 +990,19 @@ class _DayPageState extends State<DayPage> {
                         _allWorked(grouped[name]!)
                             ? Icons.remove_done
                             : Icons.done_all,
+                        size: 18,
                       ),
                       label: Text(
                         _allWorked(grouped[name]!)
-                            ? 'Снять отметки у всей группы'
-                            : 'Отметить всю группу вышедшей',
+                            ? 'Снять отметки группы'
+                            : 'Отметить группу',
+                      ),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                       ),
                     ),
                   ),
@@ -893,9 +1036,10 @@ class _DayPageState extends State<DayPage> {
     final visibleCount = _filteredPlanned.length;
 
     final canEditNow = _canEditAttendance && !_closed;
+    final isPhone = MediaQuery.sizeOf(context).width < 680;
 
     return AdaptiveScaffold(
-      title: 'День: $title',
+      title: isPhone ? title : 'День: $title',
       selectedRoute: '/day/${widget.dateIso}',
       actions: [
         IconButton(
@@ -903,7 +1047,7 @@ class _DayPageState extends State<DayPage> {
           icon: const Icon(Icons.refresh),
           onPressed: _load,
         ),
-        if (!_loading && !_closed)
+        if (!isPhone && !_loading && !_closed)
           FilledButton.icon(
             onPressed: (canEditNow && _planned.isNotEmpty && !_bulkSaving)
                 ? _closeDay
@@ -911,7 +1055,7 @@ class _DayPageState extends State<DayPage> {
             icon: const Icon(Icons.lock),
             label: const Text('Закрыть день'),
           ),
-        if (!_loading && _closed) ...[
+        if (!isPhone && !_loading && _closed) ...[
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 8),
             child: Chip(label: Text('День закрыт')),
@@ -924,7 +1068,7 @@ class _DayPageState extends State<DayPage> {
         ],
       ],
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(isPhone ? 8 : 12),
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : Column(
@@ -966,7 +1110,7 @@ class _DayPageState extends State<DayPage> {
                     ),
                   Card(
                     child: Padding(
-                      padding: const EdgeInsets.all(16),
+                      padding: EdgeInsets.all(isPhone ? 12 : 16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -990,6 +1134,36 @@ class _DayPageState extends State<DayPage> {
                               ),
                             ],
                           ),
+                          if (isPhone && _canEditAttendance) ...[
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: _closed
+                                  ? OutlinedButton.icon(
+                                      onPressed: _reopenDay,
+                                      icon: const Icon(
+                                        Icons.lock_open,
+                                        size: 18,
+                                      ),
+                                      label: const Text('Переоткрыть день'),
+                                      style: OutlinedButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    )
+                                  : FilledButton.tonalIcon(
+                                      onPressed: canEditNow &&
+                                              _planned.isNotEmpty &&
+                                              !_bulkSaving
+                                          ? _closeDay
+                                          : null,
+                                      icon: const Icon(Icons.lock, size: 18),
+                                      label: const Text('Закрыть день'),
+                                      style: FilledButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                            ),
+                          ],
                           const Divider(height: 24),
                           LayoutBuilder(
                             builder: (context, constraints) {
@@ -1088,23 +1262,43 @@ class _DayPageState extends State<DayPage> {
                                     _allWorked(_filteredPlanned)
                                         ? Icons.remove_done
                                         : Icons.done_all,
+                                    size: 18,
                                   ),
                                   label: Text(
                                     _allWorked(_filteredPlanned)
                                         ? (_search.isEmpty &&
                                                 _statusFilter == null
-                                            ? 'Снять отметки у всей смены'
-                                            : 'Снять отметки у найденных')
+                                            ? (isPhone
+                                                ? 'Снять отметки'
+                                                : 'Снять отметки у всей смены')
+                                            : (isPhone
+                                                ? 'Снять у найденных'
+                                                : 'Снять отметки у найденных'))
                                         : (_search.isEmpty &&
                                                 _statusFilter == null
-                                            ? 'Отметить всю смену вышедшей'
-                                            : 'Отметить найденных вышедшими'),
+                                            ? (isPhone
+                                                ? 'Отметить всех'
+                                                : 'Отметить всю смену вышедшей')
+                                            : (isPhone
+                                                ? 'Отметить найденных'
+                                                : 'Отметить найденных вышедшими')),
+                                  ),
+                                  style: FilledButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
                                   ),
                                 ),
                               FilterChip(
                                 avatar: const Icon(Icons.groups_2_outlined,
                                     size: 18),
-                                label: const Text('Разделить по группам'),
+                                label: Text(
+                                  isPhone
+                                      ? 'По группам'
+                                      : 'Разделить по группам',
+                                ),
                                 selected: _groupByGroup,
                                 onSelected: (value) =>
                                     setState(() => _groupByGroup = value),
@@ -1114,8 +1308,12 @@ class _DayPageState extends State<DayPage> {
                                 icon: const Icon(Icons.visibility_off_outlined),
                                 label: Text(
                                   _preferences.hiddenGroupIds.isEmpty
-                                      ? 'Видимость групп'
-                                      : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}',
+                                      ? (isPhone
+                                          ? 'Видимость'
+                                          : 'Видимость групп')
+                                      : (isPhone
+                                          ? 'Скрыто: ${_preferences.hiddenGroupIds.length}'
+                                          : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}'),
                                 ),
                               ),
                               Text('Показано: $visibleCount'),

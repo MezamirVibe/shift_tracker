@@ -80,6 +80,7 @@ class _CalendarPageState extends State<CalendarPage> {
   DateTime _selectedScheduleDay = dateOnly(DateTime.now());
 
   late final PageController _pageController;
+  late final DateTime _pageBaseMonth;
   Timer? _attendanceRefreshTimer;
   final int _basePage = 2400;
 
@@ -101,6 +102,7 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void initState() {
     super.initState();
+    _pageBaseMonth = _month;
     _pageController = PageController(initialPage: _basePage);
     AttendanceStorage.changes.addListener(_onAttendanceChanged);
     _loadAndRecalc();
@@ -131,7 +133,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   DateTime _monthFromPage(int page) {
     final diff = page - _basePage;
-    return DateTime(_month.year, _month.month + diff, 1);
+    return DateTime(_pageBaseMonth.year, _pageBaseMonth.month + diff, 1);
   }
 
   String _isoDate(DateTime d) {
@@ -226,24 +228,28 @@ class _CalendarPageState extends State<CalendarPage> {
     return out.toList();
   }
 
-  Future<void> _loadAndRecalc({DateTime? forMonth}) async {
+  Future<void> _loadAndRecalc({
+    DateTime? forMonth,
+    bool force = false,
+  }) async {
     final targetMonth = forMonth ?? _month;
 
     if (_employeesVisible.isEmpty) {
       setState(() => _loading = true);
     }
 
-    await _preferences.syncForCurrentUser(force: true);
+    await _preferences.syncForCurrentUser(force: force);
     final results = await Future.wait([
-      _employeesStorage.load(),
+      _employeesStorage.load(force: force),
       _attendanceStorage.loadRange(
         DateTime(targetMonth.year, targetMonth.month, 1)
             .subtract(const Duration(days: 7)),
         DateTime(targetMonth.year, targetMonth.month + 1, 0)
             .add(const Duration(days: 7)),
+        force: force,
       ),
-      _structureStorage.loadDepartments(),
-      _structureStorage.loadGroups(),
+      _structureStorage.loadDepartments(force: force),
+      _structureStorage.loadGroups(force: force),
     ]);
     final employees = results[0] as List<EmployeeModel>;
     final rawAttendance = results[1] as Map<String, dynamic>;
@@ -504,7 +510,10 @@ class _CalendarPageState extends State<CalendarPage> {
               ),
             ),
             FilledButton.tonalIcon(
-              onPressed: () => _loadAndRecalc(forMonth: _month),
+              onPressed: () => _loadAndRecalc(
+                forMonth: _month,
+                force: true,
+              ),
               icon: const Icon(Icons.refresh),
               label: const Text('Обновить'),
             ),
@@ -535,7 +544,7 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  Widget _calendarLegend() {
+  Widget _calendarLegend({bool compact = false}) {
     final itemStyle = Theme.of(context).textTheme.bodySmall;
 
     Widget line(Color color, String label) {
@@ -574,22 +583,37 @@ class _CalendarPageState extends State<CalendarPage> {
       );
     }
 
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 8,
+        children: [
+          line(context.shiftColors.success, 'Вышли все по плану'),
+          line(Theme.of(context).colorScheme.primary, 'Вышли частично'),
+          line(context.shiftColors.warning, 'Вышли сверх плана'),
+          dot(Theme.of(context).colorScheme.primary, 'Сегодня'),
+          dot(context.shiftColors.warning, 'День закрыт'),
+        ],
+      ),
+    );
+
+    if (compact) {
+      return Card(
+        margin: EdgeInsets.zero,
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+          childrenPadding: EdgeInsets.zero,
+          title: const Text('Обозначения'),
+          subtitle: const Text('В ячейке: вышли / план'),
+          children: [content],
+        ),
+      );
+    }
+
     return Card(
       margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Wrap(
-          spacing: 16,
-          runSpacing: 8,
-          children: [
-            line(context.shiftColors.success, 'Вышли все по плану'),
-            line(Theme.of(context).colorScheme.primary, 'Вышли частично'),
-            line(context.shiftColors.warning, 'Вышли сверх плана'),
-            dot(Theme.of(context).colorScheme.primary, 'Сегодня'),
-            dot(context.shiftColors.warning, 'День закрыт'),
-          ],
-        ),
-      ),
+      child: content,
     );
   }
 
@@ -696,7 +720,7 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  double _cellHeightFor(bool isPhone) => isPhone ? 58 : 104;
+  double _cellHeightFor(bool isPhone) => isPhone ? 64 : 104;
 
   AttendanceRecord? _recordFor(DateTime day, String employeeId) {
     final rawDay = _rawAttendance[_isoDate(day)];
@@ -1030,6 +1054,391 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
+  void _jumpToToday() {
+    final today = dateOnly(DateTime.now());
+    final weekStart = today.subtract(
+      Duration(days: today.weekday - DateTime.monday),
+    );
+    setState(() {
+      _weekStart = weekStart;
+      _selectedScheduleDay = today;
+    });
+    final targetMonth = DateTime(today.year, today.month, 1);
+    if (targetMonth.year != _month.year || targetMonth.month != _month.month) {
+      _loadAndRecalc(forMonth: targetMonth);
+    }
+  }
+
+  Widget _mobileStat({
+    required IconData icon,
+    required String label,
+    required int value,
+    required Color color,
+  }) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  Text(
+                    '$value',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _mobileScheduleEmployee(EmployeeModel employee) {
+    final record = _recordFor(_selectedScheduleDay, employee.id);
+    final planned = isWorkDay(
+      day: _selectedScheduleDay,
+      type: employee.scheduleType,
+      startDate: employee.scheduleStartDate,
+      customWorkdays: employee.customWorkdays,
+    );
+    final colors = context.shiftColors;
+    String status;
+    Color foreground;
+    Color background;
+    switch (record?.fact ?? FactStatus.none) {
+      case FactStatus.worked:
+        status = 'Вышел';
+        foreground = colors.success;
+        background = colors.successContainer;
+        break;
+      case FactStatus.vacation:
+        status = 'Отпуск';
+        foreground = colors.vacation;
+        background = colors.vacationContainer;
+        break;
+      case FactStatus.sick:
+        status = 'Больничный';
+        foreground = colors.sick;
+        background = colors.sickContainer;
+        break;
+      case FactStatus.absent:
+        status = 'Неявка';
+        foreground = Theme.of(context).colorScheme.error;
+        background = Theme.of(context).colorScheme.errorContainer;
+        break;
+      case FactStatus.none:
+        status = planned ? 'По плану' : 'Выходной';
+        foreground =
+            planned ? Theme.of(context).colorScheme.primary : colors.neutral;
+        background = planned
+            ? Theme.of(context)
+                .colorScheme
+                .primaryContainer
+                .withValues(alpha: 0.65)
+            : colors.neutralContainer;
+        break;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => context.push('/employee/${employee.id}'),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                child: Text(_initials(employee.fullName)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      employee.fullName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      employee.position,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                constraints: const BoxConstraints(maxWidth: 92),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              const Icon(Icons.chevron_right, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _mobileSchedule() {
+    final employees = _applyFiltersWithinVisible(_employeesVisible);
+    final days = [
+      for (var i = 0; i < 7; i++) _weekStart.add(Duration(days: i)),
+    ];
+    final selectedEmployees = employees.where((employee) {
+      final planned = isWorkDay(
+        day: _selectedScheduleDay,
+        type: employee.scheduleType,
+        startDate: employee.scheduleStartDate,
+        customWorkdays: employee.customWorkdays,
+      );
+      return planned ||
+          (_recordFor(_selectedScheduleDay, employee.id)?.fact ??
+                  FactStatus.none) !=
+              FactStatus.none;
+    }).toList();
+
+    var planned = 0;
+    var worked = 0;
+    var away = 0;
+    var missing = 0;
+    for (final employee in employees) {
+      final isPlanned = isWorkDay(
+        day: _selectedScheduleDay,
+        type: employee.scheduleType,
+        startDate: employee.scheduleStartDate,
+        customWorkdays: employee.customWorkdays,
+      );
+      final fact = _recordFor(_selectedScheduleDay, employee.id)?.fact ??
+          FactStatus.none;
+      if (isPlanned) planned++;
+      if (fact == FactStatus.worked) worked++;
+      if (isPlanned &&
+          (fact == FactStatus.absent ||
+              fact == FactStatus.sick ||
+              fact == FactStatus.vacation)) {
+        away++;
+      }
+      if (isPlanned &&
+          fact == FactStatus.none &&
+          !_selectedScheduleDay.isAfter(dateOnly(DateTime.now()))) {
+        missing++;
+      }
+    }
+
+    final end = days.last;
+    final scheme = Theme.of(context).colorScheme;
+    return RefreshIndicator(
+      onRefresh: () => _loadAndRecalc(
+        forMonth: _month,
+        force: true,
+      ),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Предыдущая неделя',
+                        onPressed: () => _moveWeek(-1),
+                        icon: const Icon(Icons.chevron_left),
+                      ),
+                      Expanded(
+                        child: Text(
+                          '${_weekStart.day.toString().padLeft(2, '0')}.${_weekStart.month.toString().padLeft(2, '0')} – '
+                          '${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Следующая неделя',
+                        onPressed: () => _moveWeek(1),
+                        icon: const Icon(Icons.chevron_right),
+                      ),
+                      IconButton(
+                        tooltip: 'Сегодня',
+                        onPressed: _jumpToToday,
+                        icon: const Icon(Icons.today_outlined),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      for (final day in days)
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: Material(
+                              color: dateOnly(day) == _selectedScheduleDay
+                                  ? scheme.primaryContainer
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(10),
+                              child: InkWell(
+                                onTap: () => setState(
+                                  () => _selectedScheduleDay = dateOnly(day),
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 7),
+                                  child: Column(
+                                    children: [
+                                      Text(
+                                        const [
+                                          'Пн',
+                                          'Вт',
+                                          'Ср',
+                                          'Чт',
+                                          'Пт',
+                                          'Сб',
+                                          'Вс',
+                                        ][day.weekday - 1],
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall,
+                                      ),
+                                      Text(
+                                        '${day.day}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelLarge,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _filtersBlock(true),
+          const SizedBox(height: 8),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = (constraints.maxWidth - 8) / 2;
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  SizedBox(
+                    width: width,
+                    child: _mobileStat(
+                      icon: Icons.badge_outlined,
+                      label: 'По плану',
+                      value: planned,
+                      color: scheme.primary,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _mobileStat(
+                      icon: Icons.how_to_reg_outlined,
+                      label: 'Вышли',
+                      value: worked,
+                      color: context.shiftColors.success,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _mobileStat(
+                      icon: Icons.beach_access_outlined,
+                      label: 'Отсутствуют',
+                      value: away,
+                      color: scheme.tertiary,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _mobileStat(
+                      icon: Icons.warning_amber_rounded,
+                      label: 'Не заполнено',
+                      value: missing,
+                      color: context.shiftColors.warning,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          FilledButton.tonalIcon(
+            onPressed: () => _openDay(_selectedScheduleDay),
+            icon: const Icon(Icons.fact_check_outlined),
+            label: const Text('Открыть смену'),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Сотрудники: ${selectedEmployees.length}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          if (selectedEmployees.isEmpty)
+            const Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Text(
+                  'На выбранный день сотрудники не запланированы.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          else
+            for (final employee in selectedEmployees)
+              _mobileScheduleEmployee(employee),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
   Widget _scheduleCell(EmployeeModel employee, DateTime day) {
     final record = _recordFor(day, employee.id);
     final planned = isWorkDay(
@@ -1147,15 +1556,15 @@ class _CalendarPageState extends State<CalendarPage> {
         padding: EdgeInsets.all(isPhone ? 8 : 16),
         child: _loading
             ? const Center(child: CircularProgressIndicator())
-            : isDesktop && !widget.fullView
-                ? _desktopSchedule()
+            : !widget.fullView
+                ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
                 : Column(
                     children: [
                       _monthHeader(),
                       const SizedBox(height: 8),
                       _filtersBlock(isPhone),
                       const SizedBox(height: 8),
-                      _calendarLegend(),
+                      _calendarLegend(compact: isPhone),
                       const SizedBox(height: 8),
                       _weekHeader(),
                       const SizedBox(height: 6),
@@ -1324,26 +1733,43 @@ class _DayCell extends StatelessWidget {
             Padding(
               padding: EdgeInsets.all(padding),
               child: compact
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text(
-                          '${day.day}',
-                          style: Theme.of(context).textTheme.labelLarge,
+                        Row(
+                          children: [
+                            Text(
+                              '${day.day}',
+                              style: Theme.of(context).textTheme.labelMedium,
+                            ),
+                            const Spacer(),
+                            if (summary.closed)
+                              Icon(
+                                Icons.lock,
+                                size: 11,
+                                color: colors.warning,
+                              ),
+                          ],
                         ),
                         const Spacer(),
-                        Text(
-                          '${summary.worked}/${summary.planned}',
-                          style:
-                              Theme.of(context).textTheme.labelMedium?.copyWith(
-                                    color: fillColor,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            summary.planned == 0 && summary.worked == 0
+                                ? '—'
+                                : '${summary.worked}/${summary.planned}',
+                            maxLines: 1,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelMedium
+                                ?.copyWith(
+                                  color: fillColor,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
                         ),
-                        if (summary.closed) ...[
-                          const SizedBox(width: 3),
-                          Icon(Icons.lock, size: 12, color: colors.warning),
-                        ],
+                        const SizedBox(height: 7),
                       ],
                     )
                   : Column(

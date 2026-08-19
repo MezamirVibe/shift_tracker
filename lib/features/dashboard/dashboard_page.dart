@@ -47,18 +47,19 @@ class _DashboardPageState extends State<DashboardPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
     setState(() {
-      _loading = true;
+      if (_employees.isEmpty) _loading = true;
       _error = null;
     });
     try {
-      await _preferences.syncForCurrentUser(force: true);
+      await _preferences.syncForCurrentUser(force: force);
       final results = await Future.wait([
-        _employeesStorage.load(),
+        _employeesStorage.load(force: force),
         _attendanceStorage.loadRange(
           DateTime(DateTime.now().year, DateTime.now().month, 1),
           DateTime.now().add(const Duration(days: 45)),
+          force: force,
         ),
       ]);
       if (!mounted) return;
@@ -180,7 +181,7 @@ class _DashboardPageState extends State<DashboardPage> {
       actions: [
         IconButton(
           tooltip: 'Обновить',
-          onPressed: _load,
+          onPressed: () => _load(force: true),
           icon: const Icon(Icons.refresh),
         ),
         FilledButton.tonalIcon(
@@ -212,7 +213,7 @@ class _DashboardPageState extends State<DashboardPage> {
         .toList();
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: () => _load(force: true),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(isMobile ? 12 : 24),
