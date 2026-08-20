@@ -113,7 +113,7 @@ class _AttendanceCacheEntry {
 /// + служебный ключ "_meta": { closed: bool, closedAt: iso, reopenedAt?: iso }
 class AttendanceStorage {
   static const _metaKey = '_meta';
-  static const _cacheLifetime = Duration(seconds: 45);
+  static const _cacheLifetime = Duration(minutes: 5);
   static final ValueNotifier<int> changes = ValueNotifier<int>(0);
   static final Map<String, _AttendanceCacheEntry> _rangeCache = {};
   static final Map<String, Future<Map<String, dynamic>>> _rangeInFlight = {};
@@ -217,11 +217,13 @@ class AttendanceStorage {
   }
 
   Future<({Map<String, AttendanceRecord> records, bool closed})> loadDay(
-    String dateIso,
-  ) async {
+    String dateIso, {
+    bool force = false,
+  }) async {
     final all = await loadRange(
       DateTime.parse(dateIso),
       DateTime.parse(dateIso),
+      force: force,
     );
     final rawDay = all[dateIso];
     if (rawDay is! Map) {

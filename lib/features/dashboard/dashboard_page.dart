@@ -58,7 +58,7 @@ class _DashboardPageState extends State<DashboardPage> {
         _employeesStorage.load(force: force),
         _attendanceStorage.loadRange(
           DateTime(DateTime.now().year, DateTime.now().month, 1),
-          DateTime.now().add(const Duration(days: 45)),
+          DateTime.now(),
           force: force,
         ),
       ]);
@@ -412,6 +412,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _quickActionsCard() {
     final auth = AuthService.instance;
+    final currentRole = auth.roleById(auth.currentUser?.roleId);
+    final canOpenEmployees = currentRole?.scopeKind != ScopeKind.self &&
+        auth.hasPerm(AppPermission.viewEmployees);
     return _DashboardCard(
       accent: Theme.of(context).colorScheme.tertiary,
       icon: Icons.bolt_outlined,
@@ -425,7 +428,7 @@ class _DashboardPageState extends State<DashboardPage> {
             icon: const Icon(Icons.calendar_month_outlined),
             label: const Text('График'),
           ),
-          if (auth.hasPerm(AppPermission.viewEmployees))
+          if (canOpenEmployees)
             OutlinedButton.icon(
               onPressed: () => context.go('/employees'),
               icon: const Icon(Icons.people_outline),

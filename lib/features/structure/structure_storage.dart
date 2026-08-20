@@ -50,7 +50,7 @@ class GroupModel {
 }
 
 class StructureStorage {
-  static const _cacheLifetime = Duration(seconds: 20);
+  static const _cacheLifetime = Duration(minutes: 5);
   static List<DepartmentModel>? _departmentsCache;
   static DateTime? _departmentsCachedAt;
   static Future<List<DepartmentModel>>? _departmentsInFlight;

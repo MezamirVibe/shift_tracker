@@ -186,7 +186,7 @@ class EmployeesStorage {
     if (!force &&
         cached != null &&
         cachedAt != null &&
-        DateTime.now().difference(cachedAt) < const Duration(seconds: 20)) {
+        DateTime.now().difference(cachedAt) < const Duration(minutes: 5)) {
       return Future.value(List<EmployeeModel>.of(cached));
     }
 

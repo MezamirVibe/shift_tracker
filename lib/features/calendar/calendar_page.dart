@@ -46,6 +46,15 @@ class _DaySummary {
   bool get hasUnexpectedOutputWhenNoPlan => planned == 0 && worked > 0;
 }
 
+enum _PersonalDayKind {
+  workShift,
+  worked,
+  vacation,
+  sick,
+  absent,
+  dayOff,
+}
+
 class CalendarPage extends StatefulWidget {
   final bool fullView;
 
@@ -74,6 +83,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Map<String, _DaySummary> _summaryByDateIso = {};
   Map<String, dynamic> _rawAttendance = {};
+  final Map<String, AttendanceRecord?> _recordCache = {};
   DateTime _weekStart = dateOnly(DateTime.now()).subtract(
     Duration(days: DateTime.now().weekday - DateTime.monday),
   );
@@ -82,6 +92,7 @@ class _CalendarPageState extends State<CalendarPage> {
   late final PageController _pageController;
   late final DateTime _pageBaseMonth;
   Timer? _attendanceRefreshTimer;
+  int _loadGeneration = 0;
   final int _basePage = 2400;
 
   static const _monthNamesRu = [
@@ -180,6 +191,36 @@ class _CalendarPageState extends State<CalendarPage> {
     return false;
   }
 
+  bool get _isPersonalView {
+    final auth = AuthService.instance;
+    return auth.roleById(auth.currentUser?.roleId)?.scopeKind == ScopeKind.self;
+  }
+
+  _PersonalDayKind _personalKindFor(DateTime day) {
+    if (_employeesVisible.isEmpty) return _PersonalDayKind.dayOff;
+    final employee = _employeesVisible.first;
+    final record = _recordFor(day, employee.id);
+    switch (record?.fact ?? FactStatus.none) {
+      case FactStatus.worked:
+        return _PersonalDayKind.worked;
+      case FactStatus.vacation:
+        return _PersonalDayKind.vacation;
+      case FactStatus.sick:
+        return _PersonalDayKind.sick;
+      case FactStatus.absent:
+        return _PersonalDayKind.absent;
+      case FactStatus.none:
+        return isWorkDay(
+          day: day,
+          type: employee.scheduleType,
+          startDate: employee.scheduleStartDate,
+          customWorkdays: employee.customWorkdays,
+        )
+            ? _PersonalDayKind.workShift
+            : _PersonalDayKind.dayOff;
+    }
+  }
+
   void _applyRoleLocksToFilters() {
     final u = AuthService.instance.currentUser;
     if (u == null) return;
@@ -232,6 +273,7 @@ class _CalendarPageState extends State<CalendarPage> {
     DateTime? forMonth,
     bool force = false,
   }) async {
+    final loadGeneration = ++_loadGeneration;
     final targetMonth = forMonth ?? _month;
 
     if (_employeesVisible.isEmpty) {
@@ -239,13 +281,18 @@ class _CalendarPageState extends State<CalendarPage> {
     }
 
     await _preferences.syncForCurrentUser(force: force);
+    if (!mounted || loadGeneration != _loadGeneration) return;
+    final rangeFrom = widget.fullView
+        ? DateTime(targetMonth.year, targetMonth.month, 1)
+        : _weekStart;
+    final rangeTo = widget.fullView
+        ? DateTime(targetMonth.year, targetMonth.month + 1, 0)
+        : _weekStart.add(const Duration(days: 6));
     final results = await Future.wait([
       _employeesStorage.load(force: force),
       _attendanceStorage.loadRange(
-        DateTime(targetMonth.year, targetMonth.month, 1)
-            .subtract(const Duration(days: 7)),
-        DateTime(targetMonth.year, targetMonth.month + 1, 0)
-            .add(const Duration(days: 7)),
+        rangeFrom,
+        rangeTo,
         force: force,
       ),
       _structureStorage.loadDepartments(force: force),
@@ -255,6 +302,7 @@ class _CalendarPageState extends State<CalendarPage> {
     final rawAttendance = results[1] as Map<String, dynamic>;
     final deps = results[2] as List<DepartmentModel>;
     final groups = results[3] as List<GroupModel>;
+    if (!mounted || loadGeneration != _loadGeneration) return;
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
 
@@ -276,14 +324,20 @@ class _CalendarPageState extends State<CalendarPage> {
 
     _applyRoleLocksToFilters();
 
-    final filtered = _applyFiltersWithinVisible(_employeesVisible);
-    final summary = _calcSummaryForMonth(_month, filtered, rawAttendance);
+    final summary = widget.fullView
+        ? _calcSummaryForMonth(
+            _month,
+            _applyFiltersWithinVisible(_employeesVisible),
+            rawAttendance,
+          )
+        : <String, _DaySummary>{};
 
     if (!mounted) return;
 
     setState(() {
       _summaryByDateIso = summary;
       _rawAttendance = rawAttendance;
+      _recordCache.clear();
       _loading = false;
     });
   }
@@ -371,6 +425,7 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   void _recalculateFromLoaded() {
+    if (!widget.fullView) return;
     final filtered = _applyFiltersWithinVisible(_employeesVisible);
     final summary = _calcSummaryForMonth(
       _month,
@@ -386,7 +441,41 @@ class _CalendarPageState extends State<CalendarPage> {
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
-  Widget _monthHeader() {
+  Widget _monthHeader({bool compact = false}) {
+    if (compact) {
+      return SizedBox(
+        height: 42,
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Предыдущий месяц',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.chevron_left),
+              onPressed: () => _pageController.previousPage(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                _titleForMonth(_month),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Следующий месяц',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () => _pageController.nextPage(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -589,9 +678,18 @@ class _CalendarPageState extends State<CalendarPage> {
         spacing: 16,
         runSpacing: 8,
         children: [
-          line(context.shiftColors.success, 'Вышли все по плану'),
-          line(Theme.of(context).colorScheme.primary, 'Вышли частично'),
-          line(context.shiftColors.warning, 'Вышли сверх плана'),
+          if (_isPersonalView) ...[
+            dot(Theme.of(context).colorScheme.primary, 'Рабочая смена'),
+            dot(context.shiftColors.success, 'Смена отработана'),
+            dot(context.shiftColors.vacation, 'Отпуск'),
+            dot(context.shiftColors.sick, 'Больничный'),
+            dot(Theme.of(context).colorScheme.error, 'Неявка'),
+            dot(context.shiftColors.neutral, 'Выходной'),
+          ] else ...[
+            line(context.shiftColors.success, 'Вышли все по плану'),
+            line(Theme.of(context).colorScheme.primary, 'Вышли частично'),
+            line(context.shiftColors.warning, 'Вышли сверх плана'),
+          ],
           dot(Theme.of(context).colorScheme.primary, 'Сегодня'),
           dot(context.shiftColors.warning, 'День закрыт'),
         ],
@@ -599,14 +697,50 @@ class _CalendarPageState extends State<CalendarPage> {
     );
 
     if (compact) {
-      return Card(
-        margin: EdgeInsets.zero,
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-          childrenPadding: EdgeInsets.zero,
-          title: const Text('Обозначения'),
-          subtitle: const Text('В ячейке: вышли / план'),
-          children: [content],
+      return Material(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => showModalBottomSheet<void>(
+            context: context,
+            useSafeArea: true,
+            showDragHandle: true,
+            builder: (sheetContext) => SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Обозначения календаря',
+                    style: Theme.of(sheetContext).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  content,
+                ],
+              ),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _isPersonalView
+                        ? 'Цвета: смена, отпуск, больничный и выходной'
+                        : 'В ячейке: вышли / план',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 18),
+              ],
+            ),
+          ),
         ),
       );
     }
@@ -723,11 +857,22 @@ class _CalendarPageState extends State<CalendarPage> {
   double _cellHeightFor(bool isPhone) => isPhone ? 64 : 104;
 
   AttendanceRecord? _recordFor(DateTime day, String employeeId) {
+    final cacheKey = '${_isoDate(day)}|$employeeId';
+    if (_recordCache.containsKey(cacheKey)) return _recordCache[cacheKey];
     final rawDay = _rawAttendance[_isoDate(day)];
-    if (rawDay is! Map) return null;
+    if (rawDay is! Map) {
+      _recordCache[cacheKey] = null;
+      return null;
+    }
     final rawRecord = rawDay[employeeId];
-    if (rawRecord is! Map) return null;
-    return AttendanceRecord.fromJson(Map<String, dynamic>.from(rawRecord));
+    if (rawRecord is! Map) {
+      _recordCache[cacheKey] = null;
+      return null;
+    }
+    final record =
+        AttendanceRecord.fromJson(Map<String, dynamic>.from(rawRecord));
+    _recordCache[cacheKey] = record;
+    return record;
   }
 
   void _moveWeek(int delta) {
@@ -738,9 +883,7 @@ class _CalendarPageState extends State<CalendarPage> {
           _weekStart.add(Duration(days: weekdayOffset.clamp(0, 6)));
     });
     final targetMonth = DateTime(_weekStart.year, _weekStart.month, 1);
-    if (targetMonth.year != _month.year || targetMonth.month != _month.month) {
-      _loadAndRecalc(forMonth: targetMonth);
-    }
+    _loadAndRecalc(forMonth: targetMonth);
   }
 
   Widget _desktopStat({
@@ -1063,10 +1206,7 @@ class _CalendarPageState extends State<CalendarPage> {
       _weekStart = weekStart;
       _selectedScheduleDay = today;
     });
-    final targetMonth = DateTime(today.year, today.month, 1);
-    if (targetMonth.year != _month.year || targetMonth.month != _month.month) {
-      _loadAndRecalc(forMonth: targetMonth);
-    }
+    _loadAndRecalc(forMonth: DateTime(today.year, today.month, 1));
   }
 
   Widget _mobileStat({
@@ -1266,175 +1406,183 @@ class _CalendarPageState extends State<CalendarPage> {
         forMonth: _month,
         force: true,
       ),
-      child: ListView(
+      child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                children: [
-                  Row(
+        itemCount: selectedEmployees.length + 1,
+        itemBuilder: (context, index) {
+          if (index > 0) {
+            return _mobileScheduleEmployee(selectedEmployees[index - 1]);
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Column(
                     children: [
-                      IconButton(
-                        tooltip: 'Предыдущая неделя',
-                        onPressed: () => _moveWeek(-1),
-                        icon: const Icon(Icons.chevron_left),
+                      Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Предыдущая неделя',
+                            onPressed: () => _moveWeek(-1),
+                            icon: const Icon(Icons.chevron_left),
+                          ),
+                          Expanded(
+                            child: Text(
+                              '${_weekStart.day.toString().padLeft(2, '0')}.${_weekStart.month.toString().padLeft(2, '0')} – '
+                              '${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Следующая неделя',
+                            onPressed: () => _moveWeek(1),
+                            icon: const Icon(Icons.chevron_right),
+                          ),
+                          IconButton(
+                            tooltip: 'Сегодня',
+                            onPressed: _jumpToToday,
+                            icon: const Icon(Icons.today_outlined),
+                          ),
+                        ],
                       ),
-                      Expanded(
-                        child: Text(
-                          '${_weekStart.day.toString().padLeft(2, '0')}.${_weekStart.month.toString().padLeft(2, '0')} – '
-                          '${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Следующая неделя',
-                        onPressed: () => _moveWeek(1),
-                        icon: const Icon(Icons.chevron_right),
-                      ),
-                      IconButton(
-                        tooltip: 'Сегодня',
-                        onPressed: _jumpToToday,
-                        icon: const Icon(Icons.today_outlined),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      for (final day in days)
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 2),
-                            child: Material(
-                              color: dateOnly(day) == _selectedScheduleDay
-                                  ? scheme.primaryContainer
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(10),
-                              child: InkWell(
-                                onTap: () => setState(
-                                  () => _selectedScheduleDay = dateOnly(day),
-                                ),
-                                borderRadius: BorderRadius.circular(10),
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 7),
-                                  child: Column(
-                                    children: [
-                                      Text(
-                                        const [
-                                          'Пн',
-                                          'Вт',
-                                          'Ср',
-                                          'Чт',
-                                          'Пт',
-                                          'Сб',
-                                          'Вс',
-                                        ][day.weekday - 1],
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall,
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          for (final day in days)
+                            Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 2),
+                                child: Material(
+                                  color: dateOnly(day) == _selectedScheduleDay
+                                      ? scheme.primaryContainer
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: InkWell(
+                                    onTap: () => setState(
+                                      () =>
+                                          _selectedScheduleDay = dateOnly(day),
+                                    ),
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 7),
+                                      child: Column(
+                                        children: [
+                                          Text(
+                                            const [
+                                              'Пн',
+                                              'Вт',
+                                              'Ср',
+                                              'Чт',
+                                              'Пт',
+                                              'Сб',
+                                              'Вс',
+                                            ][day.weekday - 1],
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall,
+                                          ),
+                                          Text(
+                                            '${day.day}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelLarge,
+                                          ),
+                                        ],
                                       ),
-                                      Text(
-                                        '${day.day}',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelLarge,
-                                      ),
-                                    ],
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
+                        ],
+                      ),
                     ],
                   ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          _filtersBlock(true),
-          const SizedBox(height: 8),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final width = (constraints.maxWidth - 8) / 2;
-              return Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  SizedBox(
-                    width: width,
-                    child: _mobileStat(
-                      icon: Icons.badge_outlined,
-                      label: 'По плану',
-                      value: planned,
-                      color: scheme.primary,
-                    ),
-                  ),
-                  SizedBox(
-                    width: width,
-                    child: _mobileStat(
-                      icon: Icons.how_to_reg_outlined,
-                      label: 'Вышли',
-                      value: worked,
-                      color: context.shiftColors.success,
-                    ),
-                  ),
-                  SizedBox(
-                    width: width,
-                    child: _mobileStat(
-                      icon: Icons.beach_access_outlined,
-                      label: 'Отсутствуют',
-                      value: away,
-                      color: scheme.tertiary,
-                    ),
-                  ),
-                  SizedBox(
-                    width: width,
-                    child: _mobileStat(
-                      icon: Icons.warning_amber_rounded,
-                      label: 'Не заполнено',
-                      value: missing,
-                      color: context.shiftColors.warning,
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 8),
-          FilledButton.tonalIcon(
-            onPressed: () => _openDay(_selectedScheduleDay),
-            icon: const Icon(Icons.fact_check_outlined),
-            label: const Text('Открыть смену'),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'Сотрудники: ${selectedEmployees.length}',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          if (selectedEmployees.isEmpty)
-            const Card(
-              margin: EdgeInsets.zero,
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: Text(
-                  'На выбранный день сотрудники не запланированы.',
-                  textAlign: TextAlign.center,
                 ),
               ),
-            )
-          else
-            for (final employee in selectedEmployees)
-              _mobileScheduleEmployee(employee),
-          const SizedBox(height: 8),
-        ],
+              const SizedBox(height: 8),
+              _filtersBlock(true),
+              const SizedBox(height: 8),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = (constraints.maxWidth - 8) / 2;
+                  return Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      SizedBox(
+                        width: width,
+                        child: _mobileStat(
+                          icon: Icons.badge_outlined,
+                          label: 'По плану',
+                          value: planned,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _mobileStat(
+                          icon: Icons.how_to_reg_outlined,
+                          label: 'Вышли',
+                          value: worked,
+                          color: context.shiftColors.success,
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _mobileStat(
+                          icon: Icons.beach_access_outlined,
+                          label: 'Отсутствуют',
+                          value: away,
+                          color: scheme.tertiary,
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _mobileStat(
+                          icon: Icons.warning_amber_rounded,
+                          label: 'Не заполнено',
+                          value: missing,
+                          color: context.shiftColors.warning,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: () => _openDay(_selectedScheduleDay),
+                icon: const Icon(Icons.fact_check_outlined),
+                label: const Text('Открыть смену'),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Сотрудники: ${selectedEmployees.length}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              if (selectedEmployees.isEmpty)
+                const Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text(
+                      'На выбранный день сотрудники не запланированы.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 8),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1560,7 +1708,7 @@ class _CalendarPageState extends State<CalendarPage> {
                 ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
                 : Column(
                     children: [
-                      _monthHeader(),
+                      _monthHeader(compact: isPhone),
                       const SizedBox(height: 8),
                       _filtersBlock(isPhone),
                       const SizedBox(height: 8),
@@ -1573,6 +1721,7 @@ class _CalendarPageState extends State<CalendarPage> {
                           controller: _pageController,
                           onPageChanged: (page) async {
                             final m = _monthFromPage(page);
+                            setState(() => _month = m);
                             await _loadAndRecalc(forMonth: m);
                           },
                           itemBuilder: (context, pageIndex) {
@@ -1622,6 +1771,9 @@ class _CalendarPageState extends State<CalendarPage> {
                                         day: day,
                                         summary: s,
                                         compact: isPhone,
+                                        personalKind: _isPersonalView
+                                            ? _personalKindFor(day)
+                                            : null,
                                         onTap: () => _openDay(day),
                                       );
                                     },
@@ -1652,12 +1804,14 @@ class _DayCell extends StatelessWidget {
   final _DaySummary summary;
   final VoidCallback onTap;
   final bool compact;
+  final _PersonalDayKind? personalKind;
 
   const _DayCell({
     required this.day,
     required this.summary,
     required this.onTap,
     required this.compact,
+    this.personalKind,
   });
 
   @override
@@ -1669,11 +1823,29 @@ class _DayCell extends StatelessWidget {
     final borderColor =
         isToday ? scheme.primary : scheme.outlineVariant.withValues(alpha: 0.7);
 
-    final fillColor = summary.hasUnexpectedOutputWhenNoPlan
+    final aggregateFillColor = summary.hasUnexpectedOutputWhenNoPlan
         ? colors.warning
         : summary.completionRatio >= 1
             ? colors.success
             : scheme.primary;
+    final personalLabel = switch (personalKind) {
+      _PersonalDayKind.workShift => 'Смена',
+      _PersonalDayKind.worked => 'Вышел',
+      _PersonalDayKind.vacation => 'Отпуск',
+      _PersonalDayKind.sick => 'Больн.',
+      _PersonalDayKind.absent => 'Неявка',
+      _PersonalDayKind.dayOff => 'Выходн.',
+      null => null,
+    };
+    final fillColor = switch (personalKind) {
+      _PersonalDayKind.workShift => scheme.primary,
+      _PersonalDayKind.worked => colors.success,
+      _PersonalDayKind.vacation => colors.vacation,
+      _PersonalDayKind.sick => colors.sick,
+      _PersonalDayKind.absent => scheme.error,
+      _PersonalDayKind.dayOff => colors.neutral,
+      null => aggregateFillColor,
+    };
 
     final padding = compact ? 5.0 : 8.0;
 
@@ -1718,7 +1890,8 @@ class _DayCell extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: FractionallySizedBox(
-                      widthFactor: summary.completionRatio,
+                      widthFactor:
+                          personalKind == null ? summary.completionRatio : 1,
                       child: Container(
                         decoration: BoxDecoration(
                           color: fillColor,
@@ -1756,9 +1929,10 @@ class _DayCell extends StatelessWidget {
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            summary.planned == 0 && summary.worked == 0
-                                ? '—'
-                                : '${summary.worked}/${summary.planned}',
+                            personalLabel ??
+                                (summary.planned == 0 && summary.worked == 0
+                                    ? '—'
+                                    : '${summary.worked}/${summary.planned}'),
                             maxLines: 1,
                             style: Theme.of(context)
                                 .textTheme

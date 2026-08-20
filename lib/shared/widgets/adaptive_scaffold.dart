@@ -44,7 +44,9 @@ class AdaptiveScaffold extends StatelessWidget {
 
   List<NavItem> _defaultItems(BuildContext context) {
     final auth = AuthService.instance;
-    final canEmployees = auth.hasPerm(AppPermission.viewEmployees);
+    final currentRole = auth.roleById(auth.currentUser?.roleId);
+    final canEmployees = currentRole?.scopeKind != ScopeKind.self &&
+        auth.hasPerm(AppPermission.viewEmployees);
     final canAdmin = auth.isCurrentUserSuperAdmin ||
         auth.hasPerm(AppPermission.manageUsers) ||
         auth.hasPerm(AppPermission.editRolePolicies);

@@ -38,7 +38,9 @@ class _DayPageState extends State<DayPage> {
   String _search = '';
   FactStatus? _statusFilter;
   bool _bulkSaving = false;
+  bool _mobileToolsExpanded = false;
   final Set<String> _savingEmployeeIds = <String>{};
+  final Set<String> _expandedGroups = <String>{};
 
   @override
   void initState() {
@@ -62,12 +64,12 @@ class _DayPageState extends State<DayPage> {
   bool get _canEditAttendance =>
       AuthService.instance.hasPerm(AppPermission.editAttendance);
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
     final results = await Future.wait([
-      _employeesStorage.load(),
-      _structureStorage.loadGroups(),
-      _attendanceStorage.loadDay(_dateIso),
-      _preferences.syncForCurrentUser(force: true),
+      _employeesStorage.load(force: force),
+      _structureStorage.loadGroups(force: force),
+      _attendanceStorage.loadDay(_dateIso, force: force),
+      _preferences.syncForCurrentUser(force: force),
     ]);
     final allEmployees = results[0] as List<EmployeeModel>;
     final groups = results[1] as List<GroupModel>;
@@ -953,67 +955,98 @@ class _DayPageState extends State<DayPage> {
       grouped.putIfAbsent(_groupName(employee.groupId), () => []).add(employee);
     }
     final names = grouped.keys.toList()..sort();
+    final forcedOpen = _search.isNotEmpty || _statusFilter != null;
+    final rows = <Object>[];
+    for (final name in names) {
+      final employees = grouped[name]!;
+      final expanded = forcedOpen || _expandedGroups.contains(name);
+      rows.add(MapEntry<String, List<EmployeeModel>>(name, employees));
+      if (expanded) {
+        if (canEditNow) rows.add(employees);
+        rows.addAll(employees);
+      }
+    }
 
-    return ListView(
-      children: [
-        for (final name in names)
-          ExpansionTile(
-            key: PageStorageKey('day-group-$name'),
-            initiallyExpanded: true,
-            leading: const Icon(Icons.groups_2_outlined),
-            title: Text(
-              name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text('${grouped[name]!.length} сотрудников по плану'),
-            children: [
-              if (canEditNow)
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    isPhone ? 12 : 56,
-                    4,
-                    16,
-                    8,
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: FilledButton.tonalIcon(
-                      onPressed: _bulkSaving
-                          ? null
-                          : () => _toggleAllWorked(
-                                grouped[name]!,
-                                markTitle: 'Вся группа вышла?',
-                                clearTitle: 'Снять отметки у всей группы?',
-                              ),
-                      icon: Icon(
-                        _allWorked(grouped[name]!)
-                            ? Icons.remove_done
-                            : Icons.done_all,
-                        size: 18,
-                      ),
-                      label: Text(
-                        _allWorked(grouped[name]!)
-                            ? 'Снять отметки группы'
-                            : 'Отметить группу',
-                      ),
-                      style: FilledButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
+    return ListView.separated(
+      itemCount: rows.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final row = rows[index];
+        if (row is MapEntry<String, List<EmployeeModel>>) {
+          final name = row.key;
+          final employees = row.value;
+          final expanded = forcedOpen || _expandedGroups.contains(name);
+          return Material(
+            key: ValueKey('day-group-$name'),
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: forcedOpen
+                  ? null
+                  : () => setState(() {
+                        if (expanded) {
+                          _expandedGroups.remove(name);
+                        } else {
+                          _expandedGroups.add(name);
+                        }
+                      }),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.groups_2_outlined, size: 21),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          Text('${employees.length} сотрудников по плану'),
+                        ],
                       ),
                     ),
-                  ),
+                    Icon(expanded ? Icons.expand_less : Icons.expand_more),
+                  ],
                 ),
-              for (var index = 0; index < grouped[name]!.length; index++) ...[
-                if (index > 0) const Divider(height: 1, indent: 56),
-                _employeeTile(grouped[name]![index], canEditNow),
-              ],
-            ],
-          ),
-      ],
+              ),
+            ),
+          );
+        }
+        if (row is List<EmployeeModel>) {
+          return Padding(
+            padding: EdgeInsets.fromLTRB(isPhone ? 12 : 44, 6, 16, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: _bulkSaving
+                    ? null
+                    : () => _toggleAllWorked(
+                          row,
+                          markTitle: 'Вся группа вышла?',
+                          clearTitle: 'Снять отметки у всей группы?',
+                        ),
+                icon: Icon(
+                  _allWorked(row) ? Icons.remove_done : Icons.done_all,
+                  size: 18,
+                ),
+                label: Text(
+                  _allWorked(row) ? 'Снять отметки группы' : 'Отметить группу',
+                ),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+              ),
+            ),
+          );
+        }
+        return _employeeTile(row as EmployeeModel, canEditNow);
+      },
     );
   }
 
@@ -1045,7 +1078,7 @@ class _DayPageState extends State<DayPage> {
         IconButton(
           tooltip: 'Обновить',
           icon: const Icon(Icons.refresh),
-          onPressed: _load,
+          onPressed: () => _load(force: true),
         ),
         if (!isPhone && !_loading && !_closed)
           FilledButton.icon(
@@ -1114,216 +1147,263 @@ class _DayPageState extends State<DayPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Wrap(
-                            spacing: 16,
-                            runSpacing: 8,
-                            children: [
-                              Text('По плану: $plannedCount'),
-                              Text('Вышли: $workedCount'),
-                              Text('Неявка: $absentCount'),
-                              Text('Больничный: $sickCount'),
-                              Text('Отпуск: $vacationCount'),
-                              Text(
-                                'Не заполнено: $unfilledCount',
-                                style: TextStyle(
-                                  color: unfilledCount > 0
-                                      ? Theme.of(context).colorScheme.error
-                                      : null,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (isPhone && _canEditAttendance) ...[
-                            const SizedBox(height: 10),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: _closed
-                                  ? OutlinedButton.icon(
-                                      onPressed: _reopenDay,
-                                      icon: const Icon(
-                                        Icons.lock_open,
-                                        size: 18,
-                                      ),
-                                      label: const Text('Переоткрыть день'),
-                                      style: OutlinedButton.styleFrom(
-                                        visualDensity: VisualDensity.compact,
-                                      ),
-                                    )
-                                  : FilledButton.tonalIcon(
-                                      onPressed: canEditNow &&
-                                              _planned.isNotEmpty &&
-                                              !_bulkSaving
-                                          ? _closeDay
-                                          : null,
-                                      icon: const Icon(Icons.lock, size: 18),
-                                      label: const Text('Закрыть день'),
-                                      style: FilledButton.styleFrom(
-                                        visualDensity: VisualDensity.compact,
+                          if (isPhone)
+                            InkWell(
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: () => setState(() {
+                                _mobileToolsExpanded = !_mobileToolsExpanded;
+                              }),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Wrap(
+                                        spacing: 12,
+                                        runSpacing: 4,
+                                        children: [
+                                          Text('План $plannedCount'),
+                                          Text('Вышли $workedCount'),
+                                          Text('Неявка $absentCount'),
+                                          Text(
+                                            'Ожидают $unfilledCount',
+                                            style: TextStyle(
+                                              color: unfilledCount > 0
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .error
+                                                  : null,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
+                                    Icon(
+                                      _mobileToolsExpanded
+                                          ? Icons.expand_less
+                                          : Icons.tune,
+                                      size: 21,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            Wrap(
+                              spacing: 16,
+                              runSpacing: 8,
+                              children: [
+                                Text('По плану: $plannedCount'),
+                                Text('Вышли: $workedCount'),
+                                Text('Неявка: $absentCount'),
+                                Text('Больничный: $sickCount'),
+                                Text('Отпуск: $vacationCount'),
+                                Text(
+                                  'Не заполнено: $unfilledCount',
+                                  style: TextStyle(
+                                    color: unfilledCount > 0
+                                        ? Theme.of(context).colorScheme.error
+                                        : null,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
-                          const Divider(height: 24),
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              final narrow = constraints.maxWidth < 760;
-                              final search = TextField(
-                                controller: _searchController,
-                                decoration: InputDecoration(
-                                  labelText: 'Найти сотрудника',
-                                  hintText: 'ФИО, должность или группа',
-                                  prefixIcon: const Icon(Icons.search),
-                                  suffixIcon: _search.isEmpty
-                                      ? null
-                                      : IconButton(
-                                          onPressed: _searchController.clear,
-                                          icon: const Icon(Icons.clear),
+                          if (!isPhone || _mobileToolsExpanded) ...[
+                            if (isPhone && _canEditAttendance) ...[
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: _closed
+                                    ? OutlinedButton.icon(
+                                        onPressed: _reopenDay,
+                                        icon: const Icon(
+                                          Icons.lock_open,
+                                          size: 18,
                                         ),
-                                  border: const OutlineInputBorder(),
-                                ),
-                              );
-                              final status =
-                                  DropdownButtonFormField<FactStatus?>(
-                                initialValue: _statusFilter,
-                                decoration: const InputDecoration(
-                                  labelText: 'Показать статус',
-                                  border: OutlineInputBorder(),
-                                ),
-                                items: const [
-                                  DropdownMenuItem<FactStatus?>(
-                                    value: null,
-                                    child: Text('Все статусы'),
+                                        label: const Text('Переоткрыть день'),
+                                        style: OutlinedButton.styleFrom(
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                      )
+                                    : FilledButton.tonalIcon(
+                                        onPressed: canEditNow &&
+                                                _planned.isNotEmpty &&
+                                                !_bulkSaving
+                                            ? _closeDay
+                                            : null,
+                                        icon: const Icon(Icons.lock, size: 18),
+                                        label: const Text('Закрыть день'),
+                                        style: FilledButton.styleFrom(
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                      ),
+                              ),
+                            ],
+                            const Divider(height: 24),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final narrow = constraints.maxWidth < 760;
+                                final search = TextField(
+                                  controller: _searchController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Найти сотрудника',
+                                    hintText: 'ФИО, должность или группа',
+                                    prefixIcon: const Icon(Icons.search),
+                                    suffixIcon: _search.isEmpty
+                                        ? null
+                                        : IconButton(
+                                            onPressed: _searchController.clear,
+                                            icon: const Icon(Icons.clear),
+                                          ),
+                                    border: const OutlineInputBorder(),
                                   ),
-                                  DropdownMenuItem<FactStatus?>(
-                                    value: FactStatus.none,
-                                    child: Text('Не заполнено'),
+                                );
+                                final status =
+                                    DropdownButtonFormField<FactStatus?>(
+                                  initialValue: _statusFilter,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Показать статус',
+                                    border: OutlineInputBorder(),
                                   ),
-                                  DropdownMenuItem<FactStatus?>(
-                                    value: FactStatus.worked,
-                                    child: Text('Вышел'),
-                                  ),
-                                  DropdownMenuItem<FactStatus?>(
-                                    value: FactStatus.absent,
-                                    child: Text('Неявка'),
-                                  ),
-                                  DropdownMenuItem<FactStatus?>(
-                                    value: FactStatus.sick,
-                                    child: Text('Больничный'),
-                                  ),
-                                  DropdownMenuItem<FactStatus?>(
-                                    value: FactStatus.vacation,
-                                    child: Text('Отпуск'),
-                                  ),
-                                ],
-                                onChanged: (value) =>
-                                    setState(() => _statusFilter = value),
-                              );
-                              if (narrow) {
-                                return Column(
+                                  items: const [
+                                    DropdownMenuItem<FactStatus?>(
+                                      value: null,
+                                      child: Text('Все статусы'),
+                                    ),
+                                    DropdownMenuItem<FactStatus?>(
+                                      value: FactStatus.none,
+                                      child: Text('Не заполнено'),
+                                    ),
+                                    DropdownMenuItem<FactStatus?>(
+                                      value: FactStatus.worked,
+                                      child: Text('Вышел'),
+                                    ),
+                                    DropdownMenuItem<FactStatus?>(
+                                      value: FactStatus.absent,
+                                      child: Text('Неявка'),
+                                    ),
+                                    DropdownMenuItem<FactStatus?>(
+                                      value: FactStatus.sick,
+                                      child: Text('Больничный'),
+                                    ),
+                                    DropdownMenuItem<FactStatus?>(
+                                      value: FactStatus.vacation,
+                                      child: Text('Отпуск'),
+                                    ),
+                                  ],
+                                  onChanged: (value) =>
+                                      setState(() => _statusFilter = value),
+                                );
+                                if (narrow) {
+                                  return Column(
+                                    children: [
+                                      search,
+                                      const SizedBox(height: 10),
+                                      status,
+                                    ],
+                                  );
+                                }
+                                return Row(
                                   children: [
-                                    search,
-                                    const SizedBox(height: 10),
-                                    status,
+                                    Expanded(child: search),
+                                    const SizedBox(width: 10),
+                                    SizedBox(width: 240, child: status),
                                   ],
                                 );
-                              }
-                              return Row(
-                                children: [
-                                  Expanded(child: search),
-                                  const SizedBox(width: 10),
-                                  SizedBox(width: 240, child: status),
-                                ],
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              if (canEditNow)
-                                FilledButton.icon(
-                                  onPressed: _bulkSaving
-                                      ? null
-                                      : () => _toggleAllWorked(
-                                            _filteredPlanned,
-                                            markTitle: _search.isEmpty &&
-                                                    _statusFilter == null
-                                                ? 'Вся смена вышла?'
-                                                : 'Отметить найденных?',
-                                            clearTitle: _search.isEmpty &&
-                                                    _statusFilter == null
-                                                ? 'Снять отметки у всей смены?'
-                                                : 'Снять отметки у найденных?',
-                                          ),
-                                  icon: Icon(
-                                    _allWorked(_filteredPlanned)
-                                        ? Icons.remove_done
-                                        : Icons.done_all,
-                                    size: 18,
-                                  ),
-                                  label: Text(
-                                    _allWorked(_filteredPlanned)
-                                        ? (_search.isEmpty &&
-                                                _statusFilter == null
-                                            ? (isPhone
-                                                ? 'Снять отметки'
-                                                : 'Снять отметки у всей смены')
-                                            : (isPhone
-                                                ? 'Снять у найденных'
-                                                : 'Снять отметки у найденных'))
-                                        : (_search.isEmpty &&
-                                                _statusFilter == null
-                                            ? (isPhone
-                                                ? 'Отметить всех'
-                                                : 'Отметить всю смену вышедшей')
-                                            : (isPhone
-                                                ? 'Отметить найденных'
-                                                : 'Отметить найденных вышедшими')),
-                                  ),
-                                  style: FilledButton.styleFrom(
-                                    visualDensity: VisualDensity.compact,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 8,
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                if (canEditNow)
+                                  FilledButton.icon(
+                                    onPressed: _bulkSaving
+                                        ? null
+                                        : () => _toggleAllWorked(
+                                              _filteredPlanned,
+                                              markTitle: _search.isEmpty &&
+                                                      _statusFilter == null
+                                                  ? 'Вся смена вышла?'
+                                                  : 'Отметить найденных?',
+                                              clearTitle: _search.isEmpty &&
+                                                      _statusFilter == null
+                                                  ? 'Снять отметки у всей смены?'
+                                                  : 'Снять отметки у найденных?',
+                                            ),
+                                    icon: Icon(
+                                      _allWorked(_filteredPlanned)
+                                          ? Icons.remove_done
+                                          : Icons.done_all,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      _allWorked(_filteredPlanned)
+                                          ? (_search.isEmpty &&
+                                                  _statusFilter == null
+                                              ? (isPhone
+                                                  ? 'Снять отметки'
+                                                  : 'Снять отметки у всей смены')
+                                              : (isPhone
+                                                  ? 'Снять у найденных'
+                                                  : 'Снять отметки у найденных'))
+                                          : (_search.isEmpty &&
+                                                  _statusFilter == null
+                                              ? (isPhone
+                                                  ? 'Отметить всех'
+                                                  : 'Отметить всю смену вышедшей')
+                                              : (isPhone
+                                                  ? 'Отметить найденных'
+                                                  : 'Отметить найденных вышедшими')),
+                                    ),
+                                    style: FilledButton.styleFrom(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 8,
+                                      ),
                                     ),
                                   ),
+                                FilterChip(
+                                  avatar: const Icon(Icons.groups_2_outlined,
+                                      size: 18),
+                                  label: Text(
+                                    isPhone
+                                        ? 'По группам'
+                                        : 'Разделить по группам',
+                                  ),
+                                  selected: _groupByGroup,
+                                  onSelected: (value) =>
+                                      setState(() => _groupByGroup = value),
                                 ),
-                              FilterChip(
-                                avatar: const Icon(Icons.groups_2_outlined,
-                                    size: 18),
-                                label: Text(
-                                  isPhone
-                                      ? 'По группам'
-                                      : 'Разделить по группам',
+                                OutlinedButton.icon(
+                                  onPressed: _manageGroupVisibility,
+                                  icon:
+                                      const Icon(Icons.visibility_off_outlined),
+                                  label: Text(
+                                    _preferences.hiddenGroupIds.isEmpty
+                                        ? (isPhone
+                                            ? 'Видимость'
+                                            : 'Видимость групп')
+                                        : (isPhone
+                                            ? 'Скрыто: ${_preferences.hiddenGroupIds.length}'
+                                            : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}'),
+                                  ),
                                 ),
-                                selected: _groupByGroup,
-                                onSelected: (value) =>
-                                    setState(() => _groupByGroup = value),
-                              ),
-                              OutlinedButton.icon(
-                                onPressed: _manageGroupVisibility,
-                                icon: const Icon(Icons.visibility_off_outlined),
-                                label: Text(
-                                  _preferences.hiddenGroupIds.isEmpty
-                                      ? (isPhone
-                                          ? 'Видимость'
-                                          : 'Видимость групп')
-                                      : (isPhone
-                                          ? 'Скрыто: ${_preferences.hiddenGroupIds.length}'
-                                          : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}'),
-                                ),
-                              ),
-                              Text('Показано: $visibleCount'),
+                                Text('Показано: $visibleCount'),
+                              ],
+                            ),
+                            if (_bulkSaving) ...[
+                              const SizedBox(height: 12),
+                              const LinearProgressIndicator(),
+                              const SizedBox(height: 4),
+                              const Text('Сохраняем массовую отметку…'),
                             ],
-                          ),
-                          if (_bulkSaving) ...[
-                            const SizedBox(height: 12),
-                            const LinearProgressIndicator(),
-                            const SizedBox(height: 4),
-                            const Text('Сохраняем массовую отметку…'),
                           ],
                         ],
                       ),
