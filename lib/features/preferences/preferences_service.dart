@@ -8,6 +8,7 @@ import '../../app/theme.dart';
 import '../../core/api_client.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
+import '../auth/auth_storage.dart';
 import 'user_preferences.dart';
 
 class PreferencesService extends ChangeNotifier {
@@ -40,6 +41,9 @@ class PreferencesService extends ChangeNotifier {
   String? get lastError => _lastError;
 
   String? _loadedUserId;
+  Future<void>? _syncInFlight;
+  String? _syncInFlightUserId;
+  int _syncGeneration = 0;
 
   bool get _showTeamWidgets {
     final auth = AuthService.instance;
@@ -75,17 +79,41 @@ class PreferencesService extends ChangeNotifier {
     return source.where((item) => allowed.contains(item.type)).toList();
   }
 
-  Future<void> syncForCurrentUser({bool force = false}) async {
+  Future<void> syncForCurrentUser({bool force = false}) {
     final user = AuthService.instance.currentUser;
     if (user == null) {
+      _syncGeneration++;
       _loadedUserId = null;
+      _syncInFlight = null;
+      _syncInFlightUserId = null;
       _preferences = UserPreferences.defaults();
       _loading = false;
       notifyListeners();
-      return;
+      return Future<void>.value();
     }
-    if (!force && _loadedUserId == user.id) return;
 
+    final active = _syncInFlight;
+    if (active != null && _syncInFlightUserId == user.id) return active;
+    if (!force && _loadedUserId == user.id) return Future<void>.value();
+
+    final generation = ++_syncGeneration;
+    final request = _syncForUser(user, generation);
+    _syncInFlight = request;
+    _syncInFlightUserId = user.id;
+    return request.whenComplete(() {
+      if (identical(_syncInFlight, request)) {
+        _syncInFlight = null;
+        _syncInFlightUserId = null;
+      }
+    });
+  }
+
+  bool _ownsSync(UserAccount user, int generation) =>
+      generation == _syncGeneration &&
+      _loadedUserId == user.id &&
+      AuthService.instance.currentUser?.id == user.id;
+
+  Future<void> _syncForUser(UserAccount user, int generation) async {
     _loadedUserId = user.id;
     _loading = true;
     _lastError = null;
@@ -93,6 +121,7 @@ class PreferencesService extends ChangeNotifier {
     final cacheKey = _cacheKey(user.id);
     try {
       final cached = await _storage.read(key: cacheKey);
+      if (!_ownsSync(user, generation)) return;
       if (cached != null && cached.isNotEmpty) {
         _preferences = UserPreferences.fromJson(
           jsonDecode(cached),
@@ -111,16 +140,18 @@ class PreferencesService extends ChangeNotifier {
         'GET',
         '/api/v1/preferences',
       ) as Map<String, dynamic>;
+      if (!_ownsSync(user, generation)) return;
       final settings = response['settings'];
       if (settings is Map && settings.isNotEmpty) {
         _preferences = UserPreferences.fromJson(
           settings,
           fallback: _defaults,
         );
-        await _writeCache();
+        await _writeCacheFor(user.id, _preferences);
       } else {
         _preferences = _defaults;
-        await _writeCache();
+        await _writeCacheFor(user.id, _preferences);
+        if (!_ownsSync(user, generation)) return;
         await ApiClient.instance.request(
           'PUT',
           '/api/v1/preferences',
@@ -128,12 +159,18 @@ class PreferencesService extends ChangeNotifier {
         );
       }
     } on ApiException catch (error) {
-      if (error.statusCode != 404) _lastError = error.message;
+      if (_ownsSync(user, generation) && error.statusCode != 404) {
+        _lastError = error.message;
+      }
     } catch (_) {
-      _lastError = 'Не удалось загрузить настройки с сервера';
+      if (_ownsSync(user, generation)) {
+        _lastError = 'Не удалось загрузить настройки с сервера';
+      }
     } finally {
-      _loading = false;
-      notifyListeners();
+      if (_ownsSync(user, generation)) {
+        _loading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -216,9 +253,16 @@ class PreferencesService extends ChangeNotifier {
   Future<void> _writeCache() async {
     final userId = _loadedUserId;
     if (userId == null) return;
+    await _writeCacheFor(userId, _preferences);
+  }
+
+  Future<void> _writeCacheFor(
+    String userId,
+    UserPreferences preferences,
+  ) async {
     await _storage.write(
       key: _cacheKey(userId),
-      value: jsonEncode(_preferences.toJson()),
+      value: jsonEncode(preferences.toJson()),
     );
   }
 

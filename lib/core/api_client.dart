@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+dynamic _decodeJsonOffMainIsolate(String raw) => jsonDecode(raw);
 
 class ApiException implements Exception {
   final int statusCode;
@@ -43,26 +46,23 @@ class ApiClient {
 
   Future<void> _saveSession() async {
     if (!hasSession || !_persistSession) {
-      await _storage.delete(key: _accessTokenKey);
-      await _storage.delete(key: _refreshTokenKey);
-      await _storage.delete(key: _currentUserKey);
+      await Future.wait([
+        _storage.delete(key: _accessTokenKey),
+        _storage.delete(key: _refreshTokenKey),
+        _storage.delete(key: _currentUserKey),
+      ]);
       return;
     }
-    await _storage.write(
-      key: _accessTokenKey,
-      value: _accessToken,
-    );
-    await _storage.write(
-      key: _refreshTokenKey,
-      value: _refreshToken,
-    );
     final user = _currentUser;
-    if (user != null) {
-      await _storage.write(
-        key: _currentUserKey,
-        value: jsonEncode(user),
-      );
-    }
+    await Future.wait([
+      _storage.write(key: _accessTokenKey, value: _accessToken),
+      _storage.write(key: _refreshTokenKey, value: _refreshToken),
+      if (user != null)
+        _storage.write(
+          key: _currentUserKey,
+          value: jsonEncode(user),
+        ),
+    ]);
   }
 
   Future<bool> bootstrapRequired() async {
@@ -76,9 +76,13 @@ class ApiClient {
 
   Future<({String login, bool remember})> loadLoginPreference() async {
     try {
-      final rememberRaw = await _storage.read(key: _rememberLoginKey);
+      final stored = await Future.wait([
+        _storage.read(key: _rememberLoginKey),
+        _storage.read(key: _savedLoginKey),
+      ]);
+      final rememberRaw = stored[0];
       final remember = rememberRaw != 'false';
-      final login = await _storage.read(key: _savedLoginKey) ?? '';
+      final login = stored[1] ?? '';
       return (login: login, remember: remember);
     } catch (_) {
       return (login: '', remember: true);
@@ -116,9 +120,14 @@ class ApiClient {
         await clearSession();
         return null;
       }
-      _accessToken = await _storage.read(key: _accessTokenKey);
-      _refreshToken = await _storage.read(key: _refreshTokenKey);
-      final cachedRaw = await _storage.read(key: _currentUserKey);
+      final stored = await Future.wait([
+        _storage.read(key: _accessTokenKey),
+        _storage.read(key: _refreshTokenKey),
+        _storage.read(key: _currentUserKey),
+      ]);
+      _accessToken = stored[0];
+      _refreshToken = stored[1];
+      final cachedRaw = stored[2];
       if (cachedRaw != null && cachedRaw.trim().isNotEmpty) {
         final decoded = jsonDecode(cachedRaw);
         if (decoded is Map) {
@@ -246,6 +255,9 @@ class ApiClient {
       throw ApiException(response.statusCode, message);
     }
     if (raw.trim().isEmpty) return null;
+    if (raw.length >= 64 * 1024) {
+      return compute(_decodeJsonOffMainIsolate, raw);
+    }
     return jsonDecode(raw);
   }
 }

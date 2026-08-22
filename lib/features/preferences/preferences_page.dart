@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_service.dart';
 import '../dashboard/dashboard_customizer.dart';
+import '../onboarding/onboarding_page.dart';
 import 'preferences_service.dart';
 
 class PreferencesPage extends StatefulWidget {
@@ -226,6 +227,60 @@ class _PreferencesPageState extends State<PreferencesPage> {
                               label: const Text('Настроить для телефона'),
                             ),
                           ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Text('Обучение и помощь',
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 6),
+                Text(
+                  'Повторите знакомство с приложением и основными действиями для вашей роли.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CircleAvatar(
+                          backgroundColor:
+                              Theme.of(context).colorScheme.primaryContainer,
+                          child: Icon(
+                            Icons.school_outlined,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Как пользоваться приложением',
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 5),
+                              const Text(
+                                'Объясним навигацию, график, календарь и доступные вам действия.',
+                              ),
+                              const SizedBox(height: 14),
+                              FilledButton.tonalIcon(
+                                onPressed: () => OnboardingPage.show(
+                                  context,
+                                  replay: true,
+                                ),
+                                icon: const Icon(Icons.replay),
+                                label: const Text('Пройти обучение заново'),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),

@@ -185,7 +185,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   Future<void> _edit() async {
     final draft = await showDialog<EmployeeDraft>(
       context: context,
-      builder: (context) => EmployeeEditorDialog(
+      builder: (dialogContext) => EmployeeEditorDialog(
         initial: EmployeeDraft(
           fullName: _fullName,
           position: _position,
@@ -201,6 +201,12 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
         ),
         title: 'Редактировать сотрудника',
         confirmText: 'Сохранить',
+        onDeactivate: () {
+          Navigator.of(dialogContext).pop();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _fire();
+          });
+        },
       ),
     );
 
@@ -395,21 +401,13 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
               ],
             ),
             const SizedBox(height: 14),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                FilledButton.icon(
-                  onPressed: _edit,
-                  icon: const Icon(Icons.edit_outlined),
-                  label: const Text('Редактировать'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _fire,
-                  icon: const Icon(Icons.person_off_outlined),
-                  label: const Text('Уволить'),
-                ),
-              ],
+            SizedBox(
+              width: isPhone ? double.infinity : null,
+              child: FilledButton.icon(
+                onPressed: _edit,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Редактировать'),
+              ),
             ),
           ],
         ),
@@ -460,13 +458,22 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
         title: const Text('Карточка сотрудника'),
         bottom: TabBar(
           controller: _tabController,
-          isScrollable: true,
-          tabs: const [
-            Tab(text: 'График'),
-            Tab(text: 'Структура'),
-            Tab(text: 'Зарплата'),
-            Tab(text: 'Доступ'),
-            Tab(text: 'История'),
+          isScrollable: !isPhone,
+          tabAlignment: isPhone ? TabAlignment.fill : TabAlignment.start,
+          labelPadding: isPhone
+              ? EdgeInsets.zero
+              : const EdgeInsets.symmetric(horizontal: 16),
+          labelStyle: isPhone
+              ? Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  )
+              : null,
+          tabs: [
+            const Tab(text: 'График'),
+            Tab(text: isPhone ? 'Отдел' : 'Структура'),
+            Tab(text: isPhone ? 'Оплата' : 'Зарплата'),
+            const Tab(text: 'Доступ'),
+            const Tab(text: 'История'),
           ],
         ),
       ),
@@ -914,13 +921,13 @@ class _ScheduleTab extends StatelessWidget {
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   child: Padding(
                     padding: const EdgeInsets.all(12),
-                    child: Row(
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      alignment: WrapAlignment.spaceBetween,
                       children: [
-                        Expanded(
-                          child: Text(
-                            'Дата старта: ${_formatDate(startDate)}',
-                          ),
-                        ),
+                        Text('Дата старта: ${_formatDate(startDate)}'),
                         FilledButton.tonal(
                           onPressed: () async {
                             final picked = await showDatePicker(

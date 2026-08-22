@@ -84,20 +84,20 @@ class _EmployeesPageState extends State<EmployeesPage> {
     return null;
   }
 
-  Future<void> _loadAll() async {
+  Future<void> _loadAll({bool force = false}) async {
     if (mounted) {
       setState(() => _loading = true);
     }
 
-    await _preferences.syncForCurrentUser(force: true);
     final results = await Future.wait([
-      _storage.load(),
-      _structureStorage.loadDepartments(),
-      _structureStorage.loadGroups(),
+      _preferences.syncForCurrentUser(force: force),
+      _storage.load(force: force),
+      _structureStorage.loadDepartments(force: force),
+      _structureStorage.loadGroups(force: force),
     ]);
-    final employees = results[0] as List<EmployeeModel>;
-    final deps = results[1] as List<DepartmentModel>;
-    final groups = results[2] as List<GroupModel>;
+    final employees = results[1] as List<EmployeeModel>;
+    final deps = results[2] as List<DepartmentModel>;
+    final groups = results[3] as List<GroupModel>;
 
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
@@ -539,7 +539,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                       ),
                     ),
                     FilledButton.tonalIcon(
-                      onPressed: _loadAll,
+                      onPressed: () => _loadAll(force: true),
                       icon: const Icon(Icons.refresh),
                       label: const Text('Обновить'),
                     ),

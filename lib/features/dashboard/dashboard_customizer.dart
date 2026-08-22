@@ -21,8 +21,9 @@ class DashboardCustomizer extends StatefulWidget {
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
+        showDragHandle: true,
         builder: (_) => FractionallySizedBox(
-          heightFactor: 0.92,
+          heightFactor: 0.96,
           child: DashboardCustomizer(initialMobile: mobile),
         ),
       );
@@ -82,8 +83,15 @@ class _DashboardCustomizerState extends State<DashboardCustomizer> {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 600;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+      padding: EdgeInsets.fromLTRB(
+        isPhone ? 16 : 20,
+        isPhone ? 4 : 18,
+        isPhone ? 16 : 20,
+        isPhone ? 8 : 16,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -129,6 +137,7 @@ class _DashboardCustomizerState extends State<DashboardCustomizer> {
           const SizedBox(height: 16),
           Expanded(
             child: ReorderableListView.builder(
+              padding: const EdgeInsets.only(bottom: 8),
               buildDefaultDragHandles: false,
               itemCount: _items.length,
               onReorder: (oldIndex, newIndex) {
@@ -212,32 +221,63 @@ class _DashboardCustomizerState extends State<DashboardCustomizer> {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              TextButton.icon(
-                onPressed: () async {
-                  await _service.resetLayout(mobile: _mobile);
-                  if (!mounted) return;
-                  setState(_reload);
-                },
+          if (isPhone) ...[
+            SizedBox(
+              width: double.infinity,
+              child: TextButton.icon(
+                onPressed: _reset,
                 icon: const Icon(Icons.restart_alt),
-                label: const Text('По умолчанию'),
+                label: const Text('Вернуть настройки по умолчанию'),
               ),
-              const Spacer(),
-              OutlinedButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Отмена'),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.icon(
-                onPressed: _save,
-                icon: const Icon(Icons.check),
-                label: const Text('Сохранить'),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Отмена'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _save,
+                    icon: const Icon(Icons.check),
+                    label: const Text('Сохранить'),
+                  ),
+                ),
+              ],
+            ),
+          ] else
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _reset,
+                  icon: const Icon(Icons.restart_alt),
+                  label: const Text('По умолчанию'),
+                ),
+                const Spacer(),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Отмена'),
+                ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  onPressed: _save,
+                  icon: const Icon(Icons.check),
+                  label: const Text('Сохранить'),
+                ),
+              ],
+            ),
         ],
       ),
     );
+  }
+
+  Future<void> _reset() async {
+    await _service.resetLayout(mobile: _mobile);
+    if (!mounted) return;
+    setState(_reload);
   }
 }

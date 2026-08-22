@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -9,6 +11,8 @@ import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
+import '../onboarding/onboarding_page.dart';
+import '../onboarding/onboarding_service.dart';
 import '../preferences/preferences_service.dart';
 import '../preferences/user_preferences.dart';
 import 'dashboard_customizer.dart';
@@ -29,12 +33,14 @@ class _DashboardPageState extends State<DashboardPage> {
   String? _error;
   List<EmployeeModel> _employees = const [];
   Map<String, dynamic> _attendance = const {};
+  bool _onboardingCheckStarted = false;
 
   @override
   void initState() {
     super.initState();
     _preferences.addListener(_onPreferencesChanged);
-    _load();
+    unawaited(_load());
+    _scheduleOnboardingCheck();
   }
 
   @override
@@ -47,14 +53,25 @@ class _DashboardPageState extends State<DashboardPage> {
     if (mounted) setState(() {});
   }
 
+  void _scheduleOnboardingCheck() {
+    if (_onboardingCheckStarted) return;
+    _onboardingCheckStarted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final shouldShow =
+          await OnboardingService.instance.shouldShowForCurrentUser();
+      if (!mounted || !shouldShow) return;
+      await OnboardingPage.show(context);
+    });
+  }
+
   Future<void> _load({bool force = false}) async {
     setState(() {
       if (_employees.isEmpty) _loading = true;
       _error = null;
     });
     try {
-      await _preferences.syncForCurrentUser(force: force);
       final results = await Future.wait([
+        _preferences.syncForCurrentUser(force: force),
         _employeesStorage.load(force: force),
         _attendanceStorage.loadRange(
           DateTime(DateTime.now().year, DateTime.now().month, 1),
@@ -63,7 +80,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       ]);
       if (!mounted) return;
-      final allEmployees = results[0] as List<EmployeeModel>;
+      final allEmployees = results[1] as List<EmployeeModel>;
       setState(() {
         _employees = AuthService.instance
             .filterEmployeesByScope(allEmployees)
@@ -71,7 +88,7 @@ class _DashboardPageState extends State<DashboardPage> {
               (employee) => _preferences.isGroupVisible(employee.groupId),
             )
             .toList();
-        _attendance = results[1] as Map<String, dynamic>;
+        _attendance = results[2] as Map<String, dynamic>;
         _loading = false;
       });
     } catch (_) {

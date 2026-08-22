@@ -503,32 +503,6 @@ class AuthService extends ChangeNotifier {
     } on ApiException {
       return false;
     }
-
-    // Legacy local-storage fallback kept for data migration builds.
-    // ignore: dead_code
-    final p = _storage.createPasswordHash(password);
-
-    final user = UserAccount(
-      id: newUuidV4(),
-      login: normalizedLogin,
-      roleId: role.id,
-      lastName: normalizedLastName,
-      firstName: normalizedFirstName,
-      middleName: normalizedMiddleName,
-      saltB64: p.saltB64,
-      hashB64: p.hashB64,
-      iterations: p.iterations,
-      departmentId: dep,
-      groupId: grp,
-      employeeId: linkedEmployeeId ?? emp,
-      failedLoginAttempts: 0,
-      lockUntilIso: null,
-    );
-
-    _users = [..._users, user];
-    await _storage.saveUsers(_users);
-    notifyListeners();
-    return true;
   }
 
   Future<({EmployeeModel employee, UserAccount user, String password})?>
@@ -639,32 +613,6 @@ class AuthService extends ChangeNotifier {
     } on ApiException {
       return null;
     }
-
-    // ignore: dead_code
-    final p = _storage.createPasswordHash(password);
-
-    final user = UserAccount(
-      id: newUuidV4(),
-      login: normalizedLogin,
-      roleId: role.id,
-      lastName: lastName,
-      firstName: firstName,
-      middleName: middleName,
-      saltB64: p.saltB64,
-      hashB64: p.hashB64,
-      iterations: p.iterations,
-      departmentId: boundDepartmentId,
-      groupId: boundGroupId,
-      employeeId: employee.id,
-      failedLoginAttempts: 0,
-      lockUntilIso: null,
-    );
-
-    _users = [..._users, user];
-    await _storage.saveUsers(_users);
-    notifyListeners();
-
-    return (employee: employee, user: user, password: password);
   }
 
   Future<String?> resetPassword(String userId) async {
@@ -687,28 +635,6 @@ class AuthService extends ChangeNotifier {
     } on ApiException {
       return null;
     }
-
-    // ignore: dead_code
-    final newPassword = generateReadablePassword();
-    final p = _storage.createPasswordHash(newPassword);
-
-    final updated = target.copyWith(
-      saltB64: p.saltB64,
-      hashB64: p.hashB64,
-      iterations: p.iterations,
-      failedLoginAttempts: 0,
-      clearLockUntil: true,
-    );
-
-    _replaceUser(updated);
-    await _storage.saveUsers(_users);
-
-    if (_currentUser?.id == updated.id) {
-      _currentUser = updated;
-    }
-
-    notifyListeners();
-    return newPassword;
   }
 
   Future<bool> updateUserAccess({
@@ -1089,9 +1015,5 @@ class AuthService extends ChangeNotifier {
     code.write(_random.nextInt(10));
     code.write(_random.nextInt(10));
     return code.toString();
-  }
-
-  void _replaceUser(UserAccount updated) {
-    _users = _users.map((u) => u.id == updated.id ? updated : u).toList();
   }
 }

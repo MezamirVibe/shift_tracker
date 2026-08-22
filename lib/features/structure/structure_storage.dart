@@ -79,7 +79,7 @@ class StructureStorage {
     if (!force && _departmentsCache != null && _isFresh(_departmentsCachedAt)) {
       return List<DepartmentModel>.of(_departmentsCache!);
     }
-    if (!force && _departmentsInFlight != null) {
+    if (_departmentsInFlight != null) {
       return List<DepartmentModel>.of(await _departmentsInFlight!);
     }
 
@@ -88,7 +88,7 @@ class StructureStorage {
     _departmentsInFlight = request;
     try {
       final items = await request;
-      if (_cacheUserId == owner) {
+      if (_cacheUserId == owner && identical(_departmentsInFlight, request)) {
         _departmentsCache = List<DepartmentModel>.of(items);
         _departmentsCachedAt = DateTime.now();
       }
@@ -136,7 +136,7 @@ class StructureStorage {
     if (!force && _groupsCache != null && _isFresh(_groupsCachedAt)) {
       return List<GroupModel>.of(_groupsCache!);
     }
-    if (!force && _groupsInFlight != null) {
+    if (_groupsInFlight != null) {
       return List<GroupModel>.of(await _groupsInFlight!);
     }
 
@@ -145,7 +145,7 @@ class StructureStorage {
     _groupsInFlight = request;
     try {
       final items = await request;
-      if (_cacheUserId == owner) {
+      if (_cacheUserId == owner && identical(_groupsInFlight, request)) {
         _groupsCache = List<GroupModel>.of(items);
         _groupsCachedAt = DateTime.now();
       }

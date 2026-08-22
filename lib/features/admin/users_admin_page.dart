@@ -1424,29 +1424,47 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Доступ сотрудников',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Выдайте логин и временный пароль уже заведённым сотрудникам.',
-                          ),
-                        ],
-                      ),
-                    ),
-                    Chip(
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 520;
+                    final description = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Доступ сотрудников',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Выдайте логин и временный пароль уже заведённым сотрудникам.',
+                        ),
+                      ],
+                    );
+                    final count = Chip(
                       label: Text(
                         'Без логина: ${_employeesWithoutAccounts.length}',
                       ),
-                    ),
-                  ],
+                    );
+
+                    if (compact) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          description,
+                          const SizedBox(height: 8),
+                          count,
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(child: description),
+                        const SizedBox(width: 12),
+                        count,
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 12),
                 Wrap(

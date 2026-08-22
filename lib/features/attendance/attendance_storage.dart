@@ -164,7 +164,7 @@ class AttendanceStorage {
     }
 
     final active = _rangeInFlight[key];
-    if (!force && active != null) {
+    if (active != null) {
       return active.then(Map<String, dynamic>.from);
     }
 
@@ -207,7 +207,8 @@ class AttendanceStorage {
     );
   }
 
-  /// Публично: читаем весь raw, чтобы календарь мог быстро посчитать месяц (без 31 чтения файла)
+  /// Служебный полный диапазон. Не используйте для чтения одного дня:
+  /// на сервере это одиннадцать лет данных.
   Future<Map<String, dynamic>> loadAllRaw() async {
     final year = DateTime.now().year;
     return loadRange(
@@ -252,30 +253,14 @@ class AttendanceStorage {
   }
 
   Future<bool> isDayClosed(String dateIso) async {
-    final all = await loadAllRaw();
-    final day = all[dateIso];
-    if (day is Map<String, dynamic>) {
-      return _isClosedFromDayMap(day);
-    }
-    return false;
+    final day = await loadDay(dateIso);
+    return day.closed;
   }
 
   /// Записи факта по дню (без _meta)
   Future<Map<String, AttendanceRecord>> loadDayRecords(String dateIso) async {
-    final all = await loadAllRaw();
-    final day = all[dateIso];
-    if (day is! Map<String, dynamic>) return {};
-
-    final out = <String, AttendanceRecord>{};
-    for (final entry in day.entries) {
-      if (entry.key == _metaKey) continue;
-      final employeeId = entry.key;
-      final rec = entry.value;
-      if (rec is Map<String, dynamic>) {
-        out[employeeId] = AttendanceRecord.fromJson(rec);
-      }
-    }
-    return out;
+    final day = await loadDay(dateIso);
+    return day.records;
   }
 
   Future<void> setFact({

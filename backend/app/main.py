@@ -1299,16 +1299,25 @@ async def set_attendance_bulk(
     if attendance_day.is_closed:
         raise api_error(status.HTTP_409_CONFLICT, "День закрыт")
 
-    await ensure_employees_in_scope(
-        session,
-        user,
-        {item.employee_id for item in body.records},
-    )
+    employee_ids = {item.employee_id for item in body.records}
+    await ensure_employees_in_scope(session, user, employee_ids)
+    existing_records = {
+        item.employee_id: item
+        for item in (
+            await session.scalars(
+                select(AttendanceRecord).where(
+                    AttendanceRecord.day == day,
+                    AttendanceRecord.employee_id.in_(employee_ids),
+                )
+            )
+        ).all()
+    }
     for item in body.records:
-        record = await session.get(AttendanceRecord, (day, item.employee_id))
+        record = existing_records.get(item.employee_id)
         if record is None:
             record = AttendanceRecord(day=day, employee_id=item.employee_id)
             session.add(record)
+            existing_records[item.employee_id] = record
         record.fact = item.fact
         record.comment = item.comment.strip() if item.comment else None
         record.worked_minutes = item.worked_minutes
@@ -1344,12 +1353,29 @@ async def close_attendance_day(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     planned_ids = set(body.planned_employee_ids)
     await ensure_employees_in_scope(session, user, planned_ids)
+    existing_records = {
+        item.employee_id: item
+        for item in (
+            await session.scalars(
+                select(AttendanceRecord).where(
+                    AttendanceRecord.day == day,
+                    AttendanceRecord.employee_id.in_(planned_ids),
+                )
+            )
+        ).all()
+    }
     for employee_id in planned_ids:
-        record = await session.get(AttendanceRecord, (day, employee_id))
+        record = existing_records.get(employee_id)
         if record is None:
-            record = AttendanceRecord(day=day, employee_id=employee_id)
+            record = AttendanceRecord(
+                day=day,
+                employee_id=employee_id,
+                fact=FactStatus.absent,
+                worked_minutes=0,
+                updated_by_id=user.id,
+            )
             session.add(record)
-        if record.fact.value == "none":
+        elif record.fact == FactStatus.none:
             record.fact = FactStatus.absent
             record.worked_minutes = 0
             record.actual_start = None

@@ -34,6 +34,30 @@ void main() {
     expect(find.text('Ближайшая смена'), findsOneWidget);
   });
 
+  testWidgets('dashboard customizer keeps actions inside a narrow phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark(),
+        home: const Scaffold(
+          body: DashboardCustomizer(initialMobile: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Отмена'), findsOneWidget);
+    expect(find.text('Сохранить'), findsOneWidget);
+    expect(find.text('Вернуть настройки по умолчанию'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('settings page changes the explicit theme choice',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 900);

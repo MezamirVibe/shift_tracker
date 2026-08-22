@@ -1,5 +1,6 @@
 import '../../core/api_client.dart';
 import '../../core/id.dart';
+import '../positions/positions_storage.dart';
 
 /// Тип графика (пока минимум)
 enum ScheduleType {
@@ -191,42 +192,36 @@ class EmployeesStorage {
     }
 
     final active = _loadInFlight;
-    if (!force && active != null && _inFlightUserId == userId) {
+    if (active != null && _inFlightUserId == userId) {
       return active.then(List<EmployeeModel>.of);
     }
 
-    final future = _loadAndCache(userId);
-    _loadInFlight = future;
+    final request = _loadRemote();
+    _loadInFlight = request;
     _inFlightUserId = userId;
-    return future;
-  }
-
-  Future<List<EmployeeModel>> _loadAndCache(String? userId) async {
-    try {
-      final loaded = await _loadRemote();
-      if (_cacheUserId == userId) {
+    return request.then((loaded) {
+      if (_cacheUserId == userId && identical(_loadInFlight, request)) {
         _cachedEmployees = List<EmployeeModel>.unmodifiable(loaded);
         _cachedAt = DateTime.now();
       }
       return List<EmployeeModel>.of(loaded);
-    } finally {
-      if (_inFlightUserId == userId) {
+    }).whenComplete(() {
+      if (identical(_loadInFlight, request)) {
         _loadInFlight = null;
         _inFlightUserId = null;
       }
-    }
+    });
   }
 
   Future<List<EmployeeModel>> _loadRemote() async {
     final api = ApiClient.instance;
     final results = await Future.wait([
       api.request('GET', '/api/v1/employees'),
-      api.request('GET', '/api/v1/positions'),
+      PositionsStorage().loadPositions(),
     ]);
     final positions = <String, String>{};
-    for (final item in (results[1] as List).whereType<Map>()) {
-      final json = Map<String, dynamic>.from(item);
-      positions[json['id'] as String] = json['name'] as String;
+    for (final item in results[1] as List<PositionModel>) {
+      positions[item.id] = item.name;
     }
     return (results[0] as List).whereType<Map>().map((item) {
       final json = Map<String, dynamic>.from(item);
@@ -258,13 +253,10 @@ class EmployeesStorage {
     final positionName = employee.position.trim();
     if (positionName.isEmpty) return null;
 
-    final positionData =
-        await ApiClient.instance.request('GET', '/api/v1/positions') as List;
-    for (final item in positionData.whereType<Map>()) {
-      final json = Map<String, dynamic>.from(item);
-      if ((json['name'] as String).trim().toLowerCase() ==
-          positionName.toLowerCase()) {
-        return json['id'] as String;
+    final positions = await PositionsStorage().loadPositions();
+    for (final item in positions) {
+      if (item.name.trim().toLowerCase() == positionName.toLowerCase()) {
+        return item.id;
       }
     }
 
@@ -274,6 +266,7 @@ class EmployeesStorage {
       '/api/v1/positions',
       body: {'id': positionId, 'name': positionName},
     );
+    PositionsStorage().invalidateCache();
     return positionId;
   }
 
@@ -359,12 +352,10 @@ class EmployeesStorage {
     final api = ApiClient.instance;
     final existing = {for (final item in await load()) item.id: item};
     final wanted = {for (final item in employees) item.id: item};
-    final positionData = await api.request('GET', '/api/v1/positions') as List;
+    final positionData = await PositionsStorage().loadPositions();
     final positionsByName = <String, String>{};
-    for (final item in positionData.whereType<Map>()) {
-      final json = Map<String, dynamic>.from(item);
-      positionsByName[(json['name'] as String).trim().toLowerCase()] =
-          json['id'] as String;
+    for (final item in positionData) {
+      positionsByName[item.name.trim().toLowerCase()] = item.id;
     }
 
     for (final employee in employees) {
@@ -379,6 +370,7 @@ class EmployeesStorage {
             '/api/v1/positions',
             body: {'id': positionId, 'name': positionName},
           );
+          PositionsStorage().invalidateCache();
           positionsByName[positionName.toLowerCase()] = positionId;
         }
       }

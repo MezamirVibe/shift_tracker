@@ -80,6 +80,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   String? _selectedDepartmentId;
   String? _selectedGroupId;
+  bool _mobileFiltersExpanded = false;
 
   Map<String, _DaySummary> _summaryByDateIso = {};
   Map<String, dynamic> _rawAttendance = {};
@@ -280,8 +281,6 @@ class _CalendarPageState extends State<CalendarPage> {
       setState(() => _loading = true);
     }
 
-    await _preferences.syncForCurrentUser(force: force);
-    if (!mounted || loadGeneration != _loadGeneration) return;
     final rangeFrom = widget.fullView
         ? DateTime(targetMonth.year, targetMonth.month, 1)
         : _weekStart;
@@ -289,6 +288,7 @@ class _CalendarPageState extends State<CalendarPage> {
         ? DateTime(targetMonth.year, targetMonth.month + 1, 0)
         : _weekStart.add(const Duration(days: 6));
     final results = await Future.wait([
+      _preferences.syncForCurrentUser(force: force),
       _employeesStorage.load(force: force),
       _attendanceStorage.loadRange(
         rangeFrom,
@@ -298,10 +298,10 @@ class _CalendarPageState extends State<CalendarPage> {
       _structureStorage.loadDepartments(force: force),
       _structureStorage.loadGroups(force: force),
     ]);
-    final employees = results[0] as List<EmployeeModel>;
-    final rawAttendance = results[1] as Map<String, dynamic>;
-    final deps = results[2] as List<DepartmentModel>;
-    final groups = results[3] as List<GroupModel>;
+    final employees = results[1] as List<EmployeeModel>;
+    final rawAttendance = results[2] as Map<String, dynamic>;
+    final deps = results[3] as List<DepartmentModel>;
+    final groups = results[4] as List<GroupModel>;
     if (!mounted || loadGeneration != _loadGeneration) return;
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
@@ -599,10 +599,15 @@ class _CalendarPageState extends State<CalendarPage> {
               ),
             ),
             FilledButton.tonalIcon(
-              onPressed: () => _loadAndRecalc(
-                forMonth: _month,
-                force: true,
-              ),
+              onPressed: () async {
+                if (isPhone && _mobileFiltersExpanded) {
+                  setState(() => _mobileFiltersExpanded = false);
+                }
+                await _loadAndRecalc(
+                  forMonth: _month,
+                  force: true,
+                );
+              },
               icon: const Icon(Icons.refresh),
               label: const Text('Обновить'),
             ),
@@ -625,6 +630,12 @@ class _CalendarPageState extends State<CalendarPage> {
       margin: EdgeInsets.zero,
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        initiallyExpanded: _mobileFiltersExpanded,
+        maintainState: false,
+        onExpansionChanged: (expanded) {
+          if (_mobileFiltersExpanded == expanded) return;
+          setState(() => _mobileFiltersExpanded = expanded);
+        },
         title: const Text('Фильтры'),
         subtitle: Text('Сотрудников в доступе: ${_employeesVisible.length}'),
         childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -854,7 +865,7 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  double _cellHeightFor(bool isPhone) => isPhone ? 64 : 104;
+  double _cellHeightFor(bool isPhone) => isPhone ? 58 : 104;
 
   AttendanceRecord? _recordFor(DateTime day, String employeeId) {
     final cacheKey = '${_isoDate(day)}|$employeeId';
@@ -1784,14 +1795,6 @@ class _CalendarPageState extends State<CalendarPage> {
                           },
                         ),
                       ),
-                      if (isPhone)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Text(
-                            'Свайпни по календарю, чтобы сменить месяц',
-                            style: Theme.of(context).textTheme.labelSmall,
-                          ),
-                        ),
                     ],
                   ),
       ),

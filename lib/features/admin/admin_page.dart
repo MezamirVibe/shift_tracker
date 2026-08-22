@@ -14,8 +14,9 @@ class AdminPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = AuthService.instance;
+    final isPhone = MediaQuery.sizeOf(context).width < 600;
 
-    final tabs = _buildTabs(auth);
+    final tabs = _buildTabs(auth, compact: isPhone);
     final views = _buildViews(auth);
 
     final int safeLength = tabs.isEmpty ? 1 : tabs.length;
@@ -66,7 +67,16 @@ class AdminPage extends StatelessWidget {
             Material(
               color: Theme.of(context).colorScheme.surface,
               child: TabBar(
-                isScrollable: true,
+                isScrollable: !isPhone,
+                tabAlignment: isPhone ? TabAlignment.fill : TabAlignment.start,
+                labelPadding: isPhone
+                    ? EdgeInsets.zero
+                    : const EdgeInsets.symmetric(horizontal: 16),
+                labelStyle: isPhone
+                    ? Theme.of(context).textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        )
+                    : null,
                 tabs: safeTabs,
               ),
             ),
@@ -81,11 +91,11 @@ class AdminPage extends StatelessWidget {
     );
   }
 
-  List<Tab> _buildTabs(AuthService auth) {
+  List<Tab> _buildTabs(AuthService auth, {required bool compact}) {
     final tabs = <Tab>[];
 
     if (_canManageUsers(auth)) {
-      tabs.add(const Tab(text: 'Пользователи'));
+      tabs.add(Tab(text: compact ? 'Доступ' : 'Пользователи'));
     }
 
     if (_canManageStructure(auth)) {
@@ -94,7 +104,7 @@ class AdminPage extends StatelessWidget {
     }
 
     if (_canEditRolePolicies(auth)) {
-      tabs.add(const Tab(text: 'Роли и права'));
+      tabs.add(Tab(text: compact ? 'Роли' : 'Роли и права'));
     }
 
     return tabs;

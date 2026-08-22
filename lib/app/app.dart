@@ -18,38 +18,42 @@ class ShiftTrackerApp extends StatefulWidget {
 class _ShiftTrackerAppState extends State<ShiftTrackerApp> {
   late final GoRouter _router = AppRouter.makeRouter();
   final _preferences = PreferencesService.instance;
+  late AppThemeChoice _theme = _preferences.theme;
 
   @override
   void initState() {
     super.initState();
     AuthService.instance.addListener(_handleAuthChanged);
+    _preferences.addListener(_handlePreferencesChanged);
   }
 
   void _handleAuthChanged() {
     unawaited(_preferences.syncForCurrentUser());
   }
 
+  void _handlePreferencesChanged() {
+    final nextTheme = _preferences.theme;
+    if (nextTheme == _theme || !mounted) return;
+    setState(() => _theme = nextTheme);
+  }
+
   @override
   void dispose() {
     AuthService.instance.removeListener(_handleAuthChanged);
+    _preferences.removeListener(_handlePreferencesChanged);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _preferences,
-      builder: (context, _) {
-        final theme = AppTheme.forChoice(_preferences.theme);
-        return MaterialApp.router(
-          title: 'Shift Tracker',
-          debugShowCheckedModeBanner: false,
-          theme: theme,
-          darkTheme: theme,
-          themeMode: ThemeMode.light,
-          routerConfig: _router,
-        );
-      },
+    final theme = AppTheme.forChoice(_theme);
+    return MaterialApp.router(
+      title: 'Shift Tracker',
+      debugShowCheckedModeBanner: false,
+      theme: theme,
+      darkTheme: theme,
+      themeMode: ThemeMode.light,
+      routerConfig: _router,
     );
   }
 }

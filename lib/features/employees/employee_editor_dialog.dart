@@ -48,6 +48,7 @@ class EmployeeEditorDialog extends StatefulWidget {
   final String title;
   final String confirmText;
   final bool showAccessFields;
+  final VoidCallback? onDeactivate;
 
   const EmployeeEditorDialog({
     super.key,
@@ -55,6 +56,7 @@ class EmployeeEditorDialog extends StatefulWidget {
     this.title = 'Добавить сотрудника',
     this.confirmText = 'Добавить',
     this.showAccessFields = false,
+    this.onDeactivate,
   });
 
   @override
@@ -398,36 +400,56 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                   child: LinearProgressIndicator(),
                 )
               else ...[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _positionName,
-                        decoration: const InputDecoration(
-                          labelText: 'Должность',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: _positions
-                            .map(
-                              (p) => DropdownMenuItem<String>(
-                                value: p.name,
-                                child: Text(p.name),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          setState(() => _positionName = value);
-                        },
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final field = DropdownButtonFormField<String>(
+                      initialValue: _positionName,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Должность',
+                        border: OutlineInputBorder(),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton.tonalIcon(
+                      items: _positions
+                          .map(
+                            (p) => DropdownMenuItem<String>(
+                              value: p.name,
+                              child: Text(
+                                p.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setState(() => _positionName = value);
+                      },
+                    );
+                    final addButton = FilledButton.tonalIcon(
                       onPressed: _showAddPositionDialog,
                       icon: const Icon(Icons.add),
-                      label: const Text('Добавить'),
-                    ),
-                  ],
+                      label: const Text('Добавить должность'),
+                    );
+
+                    if (constraints.maxWidth < 460) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          field,
+                          const SizedBox(height: 8),
+                          addButton,
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: field),
+                        const SizedBox(width: 8),
+                        addButton,
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 6),
                 Align(
@@ -692,6 +714,22 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ],
+              if (widget.onDeactivate != null) ...[
+                const SizedBox(height: 20),
+                const Divider(),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: widget.onDeactivate,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.error,
+                    ),
+                    icon: const Icon(Icons.person_off_outlined),
+                    label: const Text('Уволить сотрудника'),
                   ),
                 ),
               ],
