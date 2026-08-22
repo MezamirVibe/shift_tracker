@@ -80,8 +80,18 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: Image.asset(
+                        'assets/branding/chereda_app_icon.png',
+                        width: 72,
+                        height: 72,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Text(
-                      'Учёт смен',
+                      'Череда — график смен',
+                      textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 12),

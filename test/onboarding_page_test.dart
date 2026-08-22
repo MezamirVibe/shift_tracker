@@ -43,11 +43,15 @@ void main() {
       theme: AppTheme.light(),
     );
 
-    expect(find.text('Добро пожаловать в Shift Tracker'), findsOneWidget);
+    expect(find.text('Обучение сотрудника'), findsWidgets);
+    expect(find.textContaining('собственные рабочие данные'), findsOneWidget);
     await goNext(tester);
-    expect(find.text('Четыре основных раздела'), findsOneWidget);
+    expect(find.text('Ваши основные разделы'), findsOneWidget);
     await goNext(tester);
-    expect(find.text('Как посмотреть смену'), findsOneWidget);
+    expect(find.text('Ближайшая смена и неделя'), findsOneWidget);
+    await goNext(tester);
+    expect(find.text('Что означают события'), findsOneWidget);
+    expect(find.textContaining('Отпуск'), findsWidgets);
     await goNext(tester);
     expect(find.text('Весь месяц в календаре'), findsOneWidget);
     await goNext(tester);
@@ -66,11 +70,21 @@ void main() {
       theme: AppTheme.dark(),
     );
 
-    expect(find.text('Добро пожаловать в Shift Tracker'), findsOneWidget);
+    expect(find.text('Обучение руководителя'), findsWidgets);
     await goNext(tester);
-    expect(find.text('Где находятся разделы'), findsOneWidget);
+    expect(find.text('Рабочие разделы руководителя'), findsOneWidget);
+    await goNext(tester);
+    expect(find.text('Найдите нужную смену'), findsOneWidget);
+    expect(find.textContaining('Должность оставит'), findsOneWidget);
     await goNext(tester);
     expect(find.text('Отметка выхода сотрудников'), findsOneWidget);
+    await goNext(tester);
+    expect(
+      find.text('Опоздание, ранний уход и переработка'),
+      findsOneWidget,
+    );
+    await goNext(tester);
+    expect(find.text('Проверьте и закройте день'), findsOneWidget);
     await goNext(tester);
     expect(find.text('Контроль месяца'), findsOneWidget);
     await goNext(tester);

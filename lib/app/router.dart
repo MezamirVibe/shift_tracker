@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../features/auth/auth_models.dart';
 import '../features/auth/auth_service.dart';
 import '../features/auth/bootstrap_admin_page.dart';
 import '../features/auth/login_page.dart';
@@ -53,6 +54,12 @@ class AppRouter {
 
         if (isAuthRoute) {
           return dashboardPath;
+        }
+
+        final currentRole = auth.roleById(auth.currentUser?.roleId);
+        if (loc.startsWith('$dayPath/') &&
+            currentRole?.scopeKind == ScopeKind.self) {
+          return calendar;
         }
 
         // ВАЖНО:

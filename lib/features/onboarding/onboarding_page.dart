@@ -10,7 +10,10 @@ enum _OnboardingVisual {
   welcome,
   navigation,
   schedule,
+  events,
   attendance,
+  deviations,
+  closingDay,
   calendar,
   admin,
   help
@@ -85,7 +88,10 @@ class _OnboardingPageState extends State<OnboardingPage> {
     final auth = AuthService.instance;
     final user = auth.currentUser;
     final role = auth.roleById(user?.roleId);
-    final selfOnly = role?.scopeKind == ScopeKind.self;
+    // На новом устройстве справочник ролей может ещё загружаться в фоне.
+    // Встроенного рабочего всё равно сразу направляем в личное обучение.
+    final selfOnly = role?.scopeKind == ScopeKind.self ||
+        user?.roleId == BuiltInRoleIds.worker;
     final canManage = auth.hasPerm(AppPermission.editAttendance) ||
         auth.hasPerm(AppPermission.editEmployees) ||
         auth.hasPerm(AppPermission.manageUsers);
@@ -97,40 +103,53 @@ class _OnboardingPageState extends State<OnboardingPage> {
   List<_OnboardingStep> get _employeeSteps => const [
         _OnboardingStep(
           icon: Icons.waving_hand_outlined,
-          title: 'Добро пожаловать в Shift Tracker',
+          title: 'Обучение сотрудника',
           description:
-              'Здесь находится ваш рабочий график. Покажем только то, что понадобится сотруднику каждый день.',
+              'Покажем, как быстро узнать свою следующую смену и разобраться в событиях личного графика.',
           points: [
             'Обучение займёт меньше минуты',
-            'Просмотр данных ничего не изменяет',
-            'Его всегда можно повторить в настройках',
+            'Вы видите только собственные рабочие данные',
+            'Просмотр графика ничего в нём не изменяет',
           ],
           visual: _OnboardingVisual.welcome,
         ),
         _OnboardingStep(
           icon: Icons.touch_app_outlined,
-          title: 'Четыре основных раздела',
+          title: 'Ваши основные разделы',
           description:
               'Внизу экрана расположено главное меню. Активный раздел всегда выделен синим.',
           points: [
             'Главная — ближайшая смена и полезные карточки',
             'График — ваши смены на неделю',
             'Календарь — весь месяц целиком',
-            'Ещё — настройки и повторное обучение',
+            'Ещё — настройки приложения и это обучение',
           ],
           visual: _OnboardingVisual.navigation,
         ),
         _OnboardingStep(
           icon: Icons.calendar_view_week_outlined,
-          title: 'Как посмотреть смену',
+          title: 'Ближайшая смена и неделя',
           description:
-              'Откройте «График» и нажмите на нужный день. Там будут дата, длительность и состояние смены.',
+              'На главной видна ближайшая смена. В «Графике» выберите день, чтобы проверить план на всю неделю.',
           points: [
-            'Рабочая смена выделена синим',
-            'Выходной показан серым',
+            'В карточке смены указаны дата и продолжительность',
+            'Синим показана запланированная рабочая смена',
             'На соседнюю неделю можно перейти стрелками',
           ],
           visual: _OnboardingVisual.schedule,
+        ),
+        _OnboardingStep(
+          icon: Icons.event_available_outlined,
+          title: 'Что означают события',
+          description:
+              'Цвет и подпись показывают не только рабочие и выходные дни, но и подтверждённые отсутствия.',
+          points: [
+            '«Вышел на смену» — руководитель подтвердил фактический выход',
+            '«Отпуск» и «Больничный» — подтверждённое отсутствие',
+            '«Выходной» — смена на этот день не запланирована',
+            'Полная расшифровка всегда есть под календарём',
+          ],
+          visual: _OnboardingVisual.events,
         ),
         _OnboardingStep(
           icon: Icons.calendar_month_outlined,
@@ -138,7 +157,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
           description:
               'Календарь помогает быстро отличать рабочие дни, выходные и подтверждённые отсутствия.',
           points: [
-            'Нажмите «Обозначения», чтобы вспомнить цвета',
+            'Раскройте «Обозначения», чтобы вспомнить цвета',
             'Нажмите на день, чтобы открыть подробности',
             'Месяцы переключаются стрелками или свайпом',
           ],
@@ -148,10 +167,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
           icon: Icons.school_outlined,
           title: 'Всё готово',
           description:
-              'Начните с главной страницы. Если что-то забудется, откройте «Ещё» → «Настройки» → «Обучение и помощь».',
+              'Начните с главной страницы. Если что-то забудется, откройте «Ещё» → «Настройки» → «Обучение сотрудника».',
           points: [
             'Подсказки можно пройти повторно',
             'Тему и главный экран можно настроить под себя',
+            'Повторно вводить пароль при обычной работе не требуется',
           ],
           visual: _OnboardingVisual.help,
         ),
@@ -160,28 +180,41 @@ class _OnboardingPageState extends State<OnboardingPage> {
   List<_OnboardingStep> get _managerSteps => const [
         _OnboardingStep(
           icon: Icons.waving_hand_outlined,
-          title: 'Добро пожаловать в Shift Tracker',
+          title: 'Обучение руководителя',
           description:
-              'Приложение помогает контролировать смены, отмечать выход сотрудников и управлять рабочей структурой.',
+              'Пройдём реальный рабочий цикл: выбрать смену, отметить сотрудников, уточнить время и закрыть день.',
           points: [
-            'Обучение займёт около минуты',
-            'Покажем безопасный порядок действий',
+            'Обучение займёт около двух минут',
+            'Каждый шаг соответствует экрану приложения',
             'Обучение можно повторить в любой момент',
           ],
           visual: _OnboardingVisual.welcome,
         ),
         _OnboardingStep(
           icon: Icons.touch_app_outlined,
-          title: 'Где находятся разделы',
+          title: 'Рабочие разделы руководителя',
           description:
               'На телефоне основные разделы находятся снизу, остальные — в меню «Ещё». На компьютере всё меню расположено слева.',
           points: [
-            'Главная — общая картина на сегодня',
+            'Главная — ближайшие смены и быстрый обзор',
             'График — план и фактические выходы',
             'Календарь — показатели по дням месяца',
             'Ещё — сотрудники, управление и настройки',
           ],
           visual: _OnboardingVisual.navigation,
+        ),
+        _OnboardingStep(
+          icon: Icons.filter_alt_outlined,
+          title: 'Найдите нужную смену',
+          description:
+              'В «Графике» нажмите «Сегодня» или выберите дату. Большой список удобно сократить фильтрами.',
+          points: [
+            'Подразделение и группа ограничивают участок работы',
+            'Должность оставит, например, только сварщиков или специалистов ОТК',
+            'Поиск находит сотрудника по фамилии',
+            'Скрытые группы можно вернуть в настройках видимости',
+          ],
+          visual: _OnboardingVisual.schedule,
         ),
         _OnboardingStep(
           icon: Icons.fact_check_outlined,
@@ -191,10 +224,35 @@ class _OnboardingPageState extends State<OnboardingPage> {
           points: [
             '«Вышел» подтверждает фактический выход',
             '«Неявка» означает, что сотрудник не вышел',
-            'Время можно изменить через значок настроек строки',
-            'Перед закрытием дня проверьте «Не заполнено»',
+            'Повторное нажатие выбранного статуса заблокировано',
+            'Группу или всю смену можно отметить одним действием',
           ],
           visual: _OnboardingVisual.attendance,
+        ),
+        _OnboardingStep(
+          icon: Icons.more_time_outlined,
+          title: 'Опоздание, ранний уход и переработка',
+          description:
+              'Нажмите значок настроек в строке сотрудника и укажите фактическое начало и окончание работы.',
+          points: [
+            'Плановое время уже показано для сравнения',
+            'Опоздание и ранний уход считаются автоматически',
+            'Работа после планового окончания попадёт в переработку',
+            'Комментарий объяснит ручную корректировку',
+          ],
+          visual: _OnboardingVisual.deviations,
+        ),
+        _OnboardingStep(
+          icon: Icons.lock_clock_outlined,
+          title: 'Проверьте и закройте день',
+          description:
+              'До закрытия убедитесь, что показатель «Не заполнено» равен нулю. После закрытия итоги сразу обновятся во всех экранах.',
+          points: [
+            'Сначала проверьте отсутствующих и неполные смены',
+            'Закрытие фиксирует итог дня для дальнейшего табеля',
+            'Повторное открытие доступно только пользователю с правом',
+          ],
+          visual: _OnboardingVisual.closingDay,
         ),
         _OnboardingStep(
           icon: Icons.calendar_month_outlined,
@@ -205,7 +263,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
             'Зелёный — все вышли по плану',
             'Синий — вышла только часть сотрудников',
             'Оранжевый — выход сверх плана',
-            'Фильтры ограничивают календарь подразделением или группой',
+            'Фильтры ограничивают календарь подразделением, группой или должностью',
           ],
           visual: _OnboardingVisual.calendar,
         ),
@@ -225,11 +283,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
           icon: Icons.school_outlined,
           title: 'Можно начинать работу',
           description:
-              'Сначала откройте «График» и проверьте сегодняшний день. Повторное обучение находится в настройках.',
+              'Откройте «График» → «Сегодня» и пройдите рабочий цикл. Повторное обучение находится в настройках.',
           points: [
-            'Незакрытый день можно продолжить заполнять',
-            'Опасные действия требуют подтверждения',
-            'При сомнении сначала используйте фильтр по группе',
+            'Сначала примените фильтр своего участка',
+            'Затем внесите факт и уточните отклонения времени',
+            'Закрывайте день только после итоговой проверки',
           ],
           visual: _OnboardingVisual.help,
         ),
@@ -274,7 +332,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: widget.replay,
-        title: Text(widget.replay ? 'Обучение' : 'Знакомство с приложением'),
+        title: Text(
+          _audience == OnboardingAudience.employee
+              ? 'Обучение сотрудника'
+              : 'Обучение руководителя',
+        ),
         actions: [
           TextButton(
             onPressed: _finishing ? null : _finish,
@@ -493,7 +555,10 @@ class _StepIllustration extends StatelessWidget {
         _OnboardingVisual.welcome => _WelcomePreview(audience: audience),
         _OnboardingVisual.navigation => const _NavigationPreview(),
         _OnboardingVisual.schedule => const _SchedulePreview(),
+        _OnboardingVisual.events => const _EventsPreview(),
         _OnboardingVisual.attendance => const _AttendancePreview(),
+        _OnboardingVisual.deviations => const _DeviationsPreview(),
+        _OnboardingVisual.closingDay => const _ClosingDayPreview(),
         _OnboardingVisual.calendar => const _CalendarPreview(),
         _OnboardingVisual.admin => const _AdminPreview(),
         _OnboardingVisual.help => const _HelpPreview(),
@@ -602,6 +667,45 @@ class _SchedulePreview extends StatelessWidget {
   }
 }
 
+class _EventsPreview extends StatelessWidget {
+  const _EventsPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final items = <(Color, IconData, String)>[
+      (scheme.primary, Icons.work_outline, 'Рабочая смена'),
+      (Colors.green, Icons.check_circle_outline, 'Вышел на смену'),
+      (Colors.teal, Icons.beach_access_outlined, 'Отпуск'),
+      (Colors.deepPurple, Icons.medical_services_outlined, 'Больничный'),
+      (scheme.outline, Icons.weekend_outlined, 'Выходной'),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final item in items)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: item.$1.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: item.$1.withValues(alpha: 0.35)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(item.$2, size: 18, color: item.$1),
+                const SizedBox(width: 7),
+                Text(item.$3),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _AttendancePreview extends StatelessWidget {
   const _AttendancePreview();
 
@@ -635,6 +739,117 @@ class _AttendancePreview extends StatelessWidget {
               label: const Text('Закрыть день'),
             ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+class _DeviationsPreview extends StatelessWidget {
+  const _DeviationsPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          'План: 08:00–17:00',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _TimePreview(
+                label: 'Начало',
+                value: '08:20',
+                color: scheme.error,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: _TimePreview(
+                label: 'Окончание',
+                value: '18:00',
+                color: Colors.orange,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            Chip(label: Text('Опоздание 20 мин')),
+            Chip(label: Text('Переработка 60 мин')),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TimePreview extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _TimePreview({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
+          const SizedBox(height: 4),
+          Text(value, style: Theme.of(context).textTheme.titleMedium),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClosingDayPreview extends StatelessWidget {
+  const _ClosingDayPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Row(
+          children: [
+            _MetricPreview(label: 'По плану', value: '12'),
+            _MetricPreview(label: 'Вышли', value: '11'),
+            _MetricPreview(label: 'Неявка', value: '1'),
+            _MetricPreview(label: 'Не заполнено', value: '0'),
+          ],
+        ),
+        const SizedBox(height: 18),
+        FilledButton.icon(
+          onPressed: null,
+          icon: const Icon(Icons.lock_outline),
+          label: const Text('Закрыть день'),
+          style: FilledButton.styleFrom(
+            disabledBackgroundColor: scheme.primaryContainer,
+            disabledForegroundColor: scheme.onPrimaryContainer,
+          ),
         ),
       ],
     );

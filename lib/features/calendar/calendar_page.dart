@@ -80,6 +80,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   String? _selectedDepartmentId;
   String? _selectedGroupId;
+  String? _selectedPosition;
   bool _mobileFiltersExpanded = false;
 
   Map<String, _DaySummary> _summaryByDateIso = {};
@@ -252,6 +253,12 @@ class _CalendarPageState extends State<CalendarPage> {
       if (u.role == UserRole.worker) {
         _selectedDepartmentId = null;
         _selectedGroupId = null;
+        _selectedPosition = null;
+      }
+
+      if (_selectedPosition != null &&
+          !_availablePositions.contains(_selectedPosition)) {
+        _selectedPosition = null;
       }
     });
   }
@@ -266,6 +273,9 @@ class _CalendarPageState extends State<CalendarPage> {
 
     final groupId = _selectedGroupId;
     if (groupId != null) out = out.where((e) => e.groupId == groupId);
+
+    final position = _selectedPosition;
+    if (position != null) out = out.where((e) => e.position == position);
 
     return out.toList();
   }
@@ -441,6 +451,26 @@ class _CalendarPageState extends State<CalendarPage> {
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
+  List<String> get _availablePositions {
+    Iterable<EmployeeModel> employees = _employeesVisible;
+    final departmentId = _selectedDepartmentId;
+    if (departmentId != null) {
+      employees =
+          employees.where((employee) => employee.departmentId == departmentId);
+    }
+    final groupId = _selectedGroupId;
+    if (groupId != null) {
+      employees = employees.where((employee) => employee.groupId == groupId);
+    }
+    final result = employees
+        .map((employee) => employee.position.trim())
+        .where((position) => position.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return result;
+  }
+
   Widget _monthHeader({bool compact = false}) {
     if (compact) {
       return SizedBox(
@@ -515,10 +545,7 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   Widget _filtersBlock(bool isPhone) {
-    final u = AuthService.instance.currentUser;
-    final hideFilters = (u != null && u.role == UserRole.worker);
-
-    if (hideFilters) {
+    if (_isPersonalView) {
       return const SizedBox.shrink();
     }
 
@@ -562,6 +589,7 @@ class _CalendarPageState extends State<CalendarPage> {
                         setState(() {
                           _selectedDepartmentId = v;
                           _selectedGroupId = null;
+                          _selectedPosition = null;
                         });
                         _recalculateFromLoaded();
                       },
@@ -593,9 +621,42 @@ class _CalendarPageState extends State<CalendarPage> {
                     : (_selectedDepartmentId == null)
                         ? null
                         : (v) {
-                            setState(() => _selectedGroupId = v);
+                            setState(() {
+                              _selectedGroupId = v;
+                              _selectedPosition = null;
+                            });
                             _recalculateFromLoaded();
                           },
+              ),
+            ),
+            SizedBox(
+              width: fieldWidth,
+              child: DropdownButtonFormField<String?>(
+                initialValue: _selectedPosition,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Должность',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('Все должности'),
+                  ),
+                  for (final position in _availablePositions)
+                    DropdownMenuItem<String?>(
+                      value: position,
+                      child: Text(
+                        position,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  setState(() => _selectedPosition = value);
+                  _recalculateFromLoaded();
+                },
               ),
             ),
             FilledButton.tonalIcon(
@@ -1004,54 +1065,58 @@ class _CalendarPageState extends State<CalendarPage> {
             ),
             const Spacer(),
             OutlinedButton.icon(
-              onPressed: () => _openDay(DateTime.now()),
+              onPressed: _isPersonalView
+                  ? _jumpToToday
+                  : () => _openDay(DateTime.now()),
               icon: const Icon(Icons.today_outlined),
               label: const Text('Сегодня'),
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        _filtersBlock(false),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            'Показатели за $selectedLabel',
-            style: Theme.of(context).textTheme.titleMedium,
+        if (!_isPersonalView) ...[
+          const SizedBox(height: 12),
+          _filtersBlock(false),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Показатели за $selectedLabel',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            _desktopStat(
-              icon: Icons.badge_outlined,
-              label: 'План на смену',
-              value: '$planned',
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(width: 10),
-            _desktopStat(
-              icon: Icons.how_to_reg_outlined,
-              label: 'Фактически вышли',
-              value: '$worked',
-              color: Colors.green,
-            ),
-            const SizedBox(width: 10),
-            _desktopStat(
-              icon: Icons.beach_access_outlined,
-              label: 'Отсутствуют',
-              value: '$away',
-              color: Theme.of(context).colorScheme.tertiary,
-            ),
-            const SizedBox(width: 10),
-            _desktopStat(
-              icon: Icons.warning_amber_rounded,
-              label: 'Не заполнено',
-              value: '$missing',
-              color: Colors.orange,
-            ),
-          ],
-        ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              _desktopStat(
+                icon: Icons.badge_outlined,
+                label: 'План на смену',
+                value: '$planned',
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 10),
+              _desktopStat(
+                icon: Icons.how_to_reg_outlined,
+                label: 'Фактически вышли',
+                value: '$worked',
+                color: Colors.green,
+              ),
+              const SizedBox(width: 10),
+              _desktopStat(
+                icon: Icons.beach_access_outlined,
+                label: 'Отсутствуют',
+                value: '$away',
+                color: Theme.of(context).colorScheme.tertiary,
+              ),
+              const SizedBox(width: 10),
+              _desktopStat(
+                icon: Icons.warning_amber_rounded,
+                label: 'Не заполнено',
+                value: '$missing',
+                color: Colors.orange,
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
         Expanded(
           child: Card(
@@ -1063,12 +1128,14 @@ class _CalendarPageState extends State<CalendarPage> {
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   child: Row(
                     children: [
-                      const SizedBox(
+                      SizedBox(
                         width: 220,
                         child: Padding(
-                          padding: EdgeInsets.only(left: 16),
-                          child: Text('Сотрудник',
-                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          padding: const EdgeInsets.only(left: 16),
+                          child: Text(
+                              _isPersonalView ? 'Мой график' : 'Сотрудник',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
                         ),
                       ),
                       for (final day in days)
@@ -1291,7 +1358,9 @@ class _CalendarPageState extends State<CalendarPage> {
         background = Theme.of(context).colorScheme.errorContainer;
         break;
       case FactStatus.none:
-        status = planned ? 'По плану' : 'Выходной';
+        status = planned
+            ? (_isPersonalView ? 'Рабочая смена' : 'По плану')
+            : 'Выходной';
         foreground =
             planned ? Theme.of(context).colorScheme.primary : colors.neutral;
         background = planned
@@ -1517,75 +1586,81 @@ class _CalendarPageState extends State<CalendarPage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              _filtersBlock(true),
-              const SizedBox(height: 8),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = (constraints.maxWidth - 8) / 2;
-                  return Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      SizedBox(
-                        width: width,
-                        child: _mobileStat(
-                          icon: Icons.badge_outlined,
-                          label: 'По плану',
-                          value: planned,
-                          color: scheme.primary,
+              if (!_isPersonalView) ...[
+                const SizedBox(height: 8),
+                _filtersBlock(true),
+                const SizedBox(height: 8),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = (constraints.maxWidth - 8) / 2;
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        SizedBox(
+                          width: width,
+                          child: _mobileStat(
+                            icon: Icons.badge_outlined,
+                            label: 'По плану',
+                            value: planned,
+                            color: scheme.primary,
+                          ),
                         ),
-                      ),
-                      SizedBox(
-                        width: width,
-                        child: _mobileStat(
-                          icon: Icons.how_to_reg_outlined,
-                          label: 'Вышли',
-                          value: worked,
-                          color: context.shiftColors.success,
+                        SizedBox(
+                          width: width,
+                          child: _mobileStat(
+                            icon: Icons.how_to_reg_outlined,
+                            label: 'Вышли',
+                            value: worked,
+                            color: context.shiftColors.success,
+                          ),
                         ),
-                      ),
-                      SizedBox(
-                        width: width,
-                        child: _mobileStat(
-                          icon: Icons.beach_access_outlined,
-                          label: 'Отсутствуют',
-                          value: away,
-                          color: scheme.tertiary,
+                        SizedBox(
+                          width: width,
+                          child: _mobileStat(
+                            icon: Icons.beach_access_outlined,
+                            label: 'Отсутствуют',
+                            value: away,
+                            color: scheme.tertiary,
+                          ),
                         ),
-                      ),
-                      SizedBox(
-                        width: width,
-                        child: _mobileStat(
-                          icon: Icons.warning_amber_rounded,
-                          label: 'Не заполнено',
-                          value: missing,
-                          color: context.shiftColors.warning,
+                        SizedBox(
+                          width: width,
+                          child: _mobileStat(
+                            icon: Icons.warning_amber_rounded,
+                            label: 'Не заполнено',
+                            value: missing,
+                            color: context.shiftColors.warning,
+                          ),
                         ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              FilledButton.tonalIcon(
-                onPressed: () => _openDay(_selectedScheduleDay),
-                icon: const Icon(Icons.fact_check_outlined),
-                label: const Text('Открыть смену'),
-              ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: () => _openDay(_selectedScheduleDay),
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('Открыть смену'),
+                ),
+              ],
               const SizedBox(height: 14),
               Text(
-                'Сотрудники: ${selectedEmployees.length}',
+                _isPersonalView
+                    ? 'Моя смена'
+                    : 'Сотрудники: ${selectedEmployees.length}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
               if (selectedEmployees.isEmpty)
-                const Card(
+                Card(
                   margin: EdgeInsets.zero,
                   child: Padding(
-                    padding: EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(20),
                     child: Text(
-                      'На выбранный день сотрудники не запланированы.',
+                      _isPersonalView
+                          ? 'На выбранный день у вас нет смены.'
+                          : 'На выбранный день сотрудники не запланированы.',
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -1949,53 +2024,102 @@ class _DayCell extends StatelessWidget {
                         const SizedBox(height: 7),
                       ],
                     )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                  : personalKind != null
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              '${day.day}',
-                              style: Theme.of(context).textTheme.titleMedium,
+                            Row(
+                              children: [
+                                Text(
+                                  '${day.day}',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                ),
+                                const Spacer(),
+                                if (summary.closed)
+                                  Icon(
+                                    Icons.lock,
+                                    size: 14,
+                                    color: colors.warning,
+                                  ),
+                              ],
                             ),
                             const Spacer(),
-                            if (summary.closed)
-                              Icon(
-                                Icons.lock,
-                                size: 14,
-                                color: colors.warning,
-                              ),
-                          ],
-                        ),
-                        const Spacer(),
-                        Row(
-                          children: [
-                            Icon(Icons.groups_2_outlined,
-                                size: 17, color: fillColor),
-                            const SizedBox(width: 5),
-                            Text(
-                              '${summary.worked} / ${summary.planned}',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(
-                                    color: fillColor,
-                                    fontWeight: FontWeight.w700,
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.event_available_outlined,
+                                  size: 17,
+                                  color: fillColor,
+                                ),
+                                const SizedBox(width: 5),
+                                Expanded(
+                                  child: Text(
+                                    personalLabel!,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(
+                                          color: fillColor,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                   ),
+                                ),
+                              ],
                             ),
+                            const SizedBox(height: 7),
+                          ],
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  '${day.day}',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                ),
+                                const Spacer(),
+                                if (summary.closed)
+                                  Icon(
+                                    Icons.lock,
+                                    size: 14,
+                                    color: colors.warning,
+                                  ),
+                              ],
+                            ),
+                            const Spacer(),
+                            Row(
+                              children: [
+                                Icon(Icons.groups_2_outlined,
+                                    size: 17, color: fillColor),
+                                const SizedBox(width: 5),
+                                Text(
+                                  '${summary.worked} / ${summary.planned}',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        color: fillColor,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              summary.away > 0
+                                  ? 'вышли / план · отсутствуют ${summary.away}'
+                                  : 'вышли / план',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelSmall,
+                            ),
+                            const SizedBox(height: 7),
                           ],
                         ),
-                        Text(
-                          summary.away > 0
-                              ? 'вышли / план · отсутствуют ${summary.away}'
-                              : 'вышли / план',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                        const SizedBox(height: 7),
-                      ],
-                    ),
             ),
           ],
         ),

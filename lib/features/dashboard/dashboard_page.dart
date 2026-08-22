@@ -201,14 +201,6 @@ class _DashboardPageState extends State<DashboardPage> {
           onPressed: () => _load(force: true),
           icon: const Icon(Icons.refresh),
         ),
-        FilledButton.tonalIcon(
-          onPressed: () => DashboardCustomizer.show(
-            context,
-            mobile: isMobile,
-          ),
-          icon: const Icon(Icons.dashboard_customize_outlined),
-          label: Text(isMobile ? 'Настроить' : 'Настроить экран'),
-        ),
       ],
       child: _loading
           ? const Center(child: CircularProgressIndicator())

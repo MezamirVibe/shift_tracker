@@ -7,16 +7,18 @@ class OnboardingService {
 
   static final OnboardingService instance = OnboardingService._();
 
-  static const int currentVersion = 1;
+  // Версия повышается при существенном изменении рабочих сценариев, чтобы
+  // действующие пользователи тоже увидели актуальное обучение.
+  static const int currentVersion = 2;
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
   Future<bool> shouldShowForCurrentUser() async {
-    final userId = AuthService.instance.currentUser?.id;
-    if (userId == null || userId.isEmpty) return false;
+    final user = AuthService.instance.currentUser;
+    if (user == null || user.id.isEmpty) return false;
 
     try {
-      final stored = await _storage.read(key: _key(userId));
+      final stored = await _storage.read(key: _key(user.id, user.roleId));
       return int.tryParse(stored ?? '') != currentVersion;
     } catch (_) {
       return true;
@@ -24,20 +26,21 @@ class OnboardingService {
   }
 
   Future<void> completeForCurrentUser() async {
-    final userId = AuthService.instance.currentUser?.id;
-    if (userId == null || userId.isEmpty) return;
+    final user = AuthService.instance.currentUser;
+    if (user == null || user.id.isEmpty) return;
 
     await _storage.write(
-      key: _key(userId),
+      key: _key(user.id, user.roleId),
       value: currentVersion.toString(),
     );
   }
 
   Future<void> resetForCurrentUser() async {
-    final userId = AuthService.instance.currentUser?.id;
-    if (userId == null || userId.isEmpty) return;
-    await _storage.delete(key: _key(userId));
+    final user = AuthService.instance.currentUser;
+    if (user == null || user.id.isEmpty) return;
+    await _storage.delete(key: _key(user.id, user.roleId));
   }
 
-  String _key(String userId) => 'shift_tracker_onboarding_v$userId';
+  String _key(String userId, String roleId) =>
+      'shift_tracker_onboarding_${userId}_$roleId';
 }

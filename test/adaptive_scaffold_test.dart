@@ -21,7 +21,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Shift Tracker'), findsOneWidget);
+    expect(find.text('Череда'), findsOneWidget);
     expect(find.text('Главная'), findsOneWidget);
     expect(find.text('График'), findsOneWidget);
     expect(find.text('Календарь'), findsOneWidget);
@@ -51,13 +51,68 @@ void main() {
     expect(find.text('Главная'), findsOneWidget);
     expect(find.text('График'), findsOneWidget);
     expect(find.text('Календарь'), findsOneWidget);
-    expect(find.text('Ещё'), findsOneWidget);
+    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('Ещё'), findsNothing);
     expect(find.text('Мобильное содержимое'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('keeps settings visible and puts admin sections under more',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final items = [
+      NavItem(label: 'Главная', icon: Icons.home, route: '/', onTap: () {}),
+      NavItem(
+        label: 'График',
+        icon: Icons.calendar_view_week,
+        route: '/schedule',
+        onTap: () {},
+      ),
+      NavItem(
+        label: 'Календарь',
+        icon: Icons.calendar_month,
+        route: '/calendar',
+        onTap: () {},
+      ),
+      NavItem(
+        label: 'Сотрудники',
+        icon: Icons.people,
+        route: '/employees',
+        onTap: () {},
+      ),
+      NavItem(
+        label: 'Настройки',
+        icon: Icons.settings,
+        route: '/settings',
+        onTap: () {},
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: AdaptiveScaffold(
+          title: 'Проверка',
+          selectedRoute: '/',
+          items: items,
+          child: const SizedBox.shrink(),
+        ),
+      ),
+    );
+
+    expect(find.byType(NavigationDestination), findsNWidgets(5));
+    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('Ещё'), findsOneWidget);
 
     await tester.tap(find.text('Ещё'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Сотрудники'), findsOneWidget);
     expect(find.text('Настройки'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

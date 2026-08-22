@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/theme.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../attendance/attendance_storage.dart';
 import '../auth/auth_models.dart';
@@ -8,6 +9,7 @@ import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
 import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
+import 'attendance_deviation.dart';
 
 class DayPage extends StatefulWidget {
   final String dateIso;
@@ -37,6 +39,7 @@ class _DayPageState extends State<DayPage> {
   bool _groupByGroup = true;
   String _search = '';
   FactStatus? _statusFilter;
+  String? _positionFilter;
   bool _bulkSaving = false;
   bool _mobileToolsExpanded = false;
   final Set<String> _savingEmployeeIds = <String>{};
@@ -180,6 +183,102 @@ class _DayPageState extends State<DayPage> {
     return (endMinutes - startMinutes - breakMinutes).clamp(0, 24 * 60);
   }
 
+  AttendanceDeviation _timeDeviations(
+    EmployeeModel employee,
+    TimeOfDay actualStart,
+    TimeOfDay actualEnd,
+  ) {
+    final planned = _defaultTimes(employee);
+    final plannedStart = planned.start.hour * 60 + planned.start.minute;
+    final plannedEnd = planned.end.hour * 60 + planned.end.minute;
+
+    return calculateAttendanceDeviation(
+      plannedStartMinutes: plannedStart,
+      plannedEndMinutes: plannedEnd,
+      actualStartMinutes: actualStart.hour * 60 + actualStart.minute,
+      actualEndMinutes: actualEnd.hour * 60 + actualEnd.minute,
+    );
+  }
+
+  String? _deviationLabel(
+    EmployeeModel employee,
+    AttendanceRecord? record,
+  ) {
+    if (record?.fact != FactStatus.worked ||
+        record?.actualStart == null ||
+        record?.actualEnd == null) {
+      return null;
+    }
+    final defaults = _defaultTimes(employee);
+    final deviations = _timeDeviations(
+      employee,
+      _parseTime(record!.actualStart, defaults.start),
+      _parseTime(record.actualEnd, defaults.end),
+    );
+    final parts = <String>[
+      if (deviations.lateMinutes > 0) 'Опоздание ${deviations.lateMinutes} мин',
+      if (deviations.earlyLeaveMinutes > 0)
+        'Ранний уход ${deviations.earlyLeaveMinutes} мин',
+      if (deviations.overtimeMinutes > 0)
+        'Переработка ${deviations.overtimeMinutes} мин',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
+  Widget _deviationSummary(
+    EmployeeModel employee,
+    TimeOfDay actualStart,
+    TimeOfDay actualEnd,
+  ) {
+    final deviations = _timeDeviations(employee, actualStart, actualEnd);
+    final scheme = Theme.of(context).colorScheme;
+
+    Widget item(String label, IconData icon, Color color) => Chip(
+          avatar: Icon(icon, size: 17, color: color),
+          label: Text(label),
+          side: BorderSide(color: color.withValues(alpha: 0.45)),
+        );
+
+    if (!deviations.hasDeviations) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: item(
+          'Без отклонений от графика',
+          Icons.check_circle_outline,
+          context.shiftColors.success,
+        ),
+      );
+    }
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (deviations.lateMinutes > 0)
+            item(
+              'Опоздание: ${deviations.lateMinutes} мин',
+              Icons.schedule,
+              context.shiftColors.warning,
+            ),
+          if (deviations.earlyLeaveMinutes > 0)
+            item(
+              'Ранний уход: ${deviations.earlyLeaveMinutes} мин',
+              Icons.logout,
+              scheme.error,
+            ),
+          if (deviations.overtimeMinutes > 0)
+            item(
+              'Переработка: ${deviations.overtimeMinutes} мин',
+              Icons.more_time,
+              context.shiftColors.success,
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _setFact(
     EmployeeModel e,
     FactStatus fact, {
@@ -188,6 +287,7 @@ class _DayPageState extends State<DayPage> {
     String? actualStart,
     String? actualEnd,
   }) async {
+    if (_savingEmployeeIds.contains(e.id) || _bulkSaving || _closed) return;
     final previous = _recordsById[e.id];
     final next = AttendanceRecord(
       fact: fact,
@@ -380,6 +480,14 @@ class _DayPageState extends State<DayPage> {
                     ),
                     if (fact == FactStatus.worked) ...[
                       const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'План: ${_timeValue(defaults.start)}–${_timeValue(defaults.end)}. '
+                          'Укажите фактическое начало и окончание — опоздание, ранний уход и переработка рассчитаются автоматически.',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
@@ -428,6 +536,8 @@ class _DayPageState extends State<DayPage> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 8),
+                      _deviationSummary(e, actualStart, actualEnd),
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -707,6 +817,9 @@ class _DayPageState extends State<DayPage> {
       if (_statusFilter != null && _factOf(employee) != _statusFilter) {
         return false;
       }
+      if (_positionFilter != null && employee.position != _positionFilter) {
+        return false;
+      }
       if (_search.isEmpty) return true;
       final haystack = '${employee.fullName} ${employee.position} '
               '${_groupName(employee.groupId)} ${_factLabel(_factOf(employee))}'
@@ -714,6 +827,19 @@ class _DayPageState extends State<DayPage> {
       return haystack.contains(_search);
     }).toList();
   }
+
+  List<String> get _availablePositions {
+    final result = _planned
+        .map((employee) => employee.position.trim())
+        .where((position) => position.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return result;
+  }
+
+  bool get _hasActiveFilters =>
+      _search.isNotEmpty || _statusFilter != null || _positionFilter != null;
 
   Widget _employeeTile(EmployeeModel employee, bool canEditNow) {
     final fact = _factOf(employee);
@@ -727,19 +853,13 @@ class _DayPageState extends State<DayPage> {
         : null;
     final comment = record?.comment?.trim();
     final hasComment = comment != null && comment.isNotEmpty;
+    final deviation = _deviationLabel(employee, record);
     final saving = _savingEmployeeIds.contains(employee.id);
     final canChange = canEditNow && !_bulkSaving && !saving;
 
     Future<void> setQuickFact(FactStatus value) async {
       if (!canChange) return;
-      if (fact == value) {
-        await _setFact(
-          employee,
-          FactStatus.none,
-          workedMinutes: employee.paidShiftHours * 60,
-        );
-        return;
-      }
+      if (fact == value) return;
       final defaults = _defaultTimes(employee);
       await _setFact(
         employee,
@@ -773,7 +893,8 @@ class _DayPageState extends State<DayPage> {
             : scheme.onPrimaryContainer;
         return Expanded(
           child: OutlinedButton.icon(
-            onPressed: canChange ? () => setQuickFact(value) : null,
+            onPressed:
+                canChange && !selected ? () => setQuickFact(value) : null,
             style: OutlinedButton.styleFrom(
               backgroundColor: selected ? selectedColor : null,
               foregroundColor: selected ? selectedForeground : null,
@@ -812,6 +933,7 @@ class _DayPageState extends State<DayPage> {
                           Text(
                             '${employee.position} • ${_factLabel(fact)}'
                             '${actualTime == null ? '' : ' • $actualTime'}'
+                            '${deviation == null ? '' : ' • $deviation'}'
                             '${hasComment ? ' • $comment' : ''}',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -840,11 +962,16 @@ class _DayPageState extends State<DayPage> {
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Время и подробности',
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.tune, size: 20),
-                    onPressed: canChange ? () => _edit(employee) : null,
+                  Tooltip(
+                    message: 'Время, опоздание и переработка',
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      icon: const Icon(Icons.tune, size: 20),
+                      label: const Text('Время'),
+                      onPressed: canChange ? () => _edit(employee) : null,
+                    ),
                   ),
                 ],
               ],
@@ -879,6 +1006,7 @@ class _DayPageState extends State<DayPage> {
       subtitle: Text(
         '${employee.position} • ${_factLabel(fact)}'
         '${actualTime == null ? '' : ' • $actualTime'}'
+        '${deviation == null ? '' : ' • $deviation'}'
         '${hasComment ? ' • $comment' : ''}',
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
@@ -899,16 +1027,18 @@ class _DayPageState extends State<DayPage> {
             )
           else
             SegmentedButton<FactStatus>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                   value: FactStatus.worked,
-                  label: Text('Вышел'),
-                  icon: Icon(Icons.check),
+                  label: const Text('Вышел'),
+                  icon: const Icon(Icons.check),
+                  enabled: fact != FactStatus.worked,
                 ),
                 ButtonSegment(
                   value: FactStatus.absent,
-                  label: Text('Неявка'),
-                  icon: Icon(Icons.close),
+                  label: const Text('Неявка'),
+                  icon: const Icon(Icons.close),
+                  enabled: fact != FactStatus.absent,
                 ),
               ],
               selected: {
@@ -919,7 +1049,6 @@ class _DayPageState extends State<DayPage> {
               onSelectionChanged: canChange
                   ? (selection) async {
                       if (selection.isEmpty) {
-                        await setQuickFact(fact);
                         return;
                       }
                       await setQuickFact(selection.first);
@@ -927,10 +1056,13 @@ class _DayPageState extends State<DayPage> {
                   : null,
             ),
           const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Подробно',
-            icon: const Icon(Icons.tune),
-            onPressed: canChange ? () => _edit(employee) : null,
+          Tooltip(
+            message: 'Фактическое время, опоздание и переработка',
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.schedule, size: 18),
+              label: const Text('Время и отклонения'),
+              onPressed: canChange ? () => _edit(employee) : null,
+            ),
           ),
         ],
       ),
@@ -955,7 +1087,7 @@ class _DayPageState extends State<DayPage> {
       grouped.putIfAbsent(_groupName(employee.groupId), () => []).add(employee);
     }
     final names = grouped.keys.toList()..sort();
-    final forcedOpen = _search.isNotEmpty || _statusFilter != null;
+    final forcedOpen = _hasActiveFilters;
     final rows = <Object>[];
     for (final name in names) {
       final employees = grouped[name]!;
@@ -1297,12 +1429,40 @@ class _DayPageState extends State<DayPage> {
                                   onChanged: (value) =>
                                       setState(() => _statusFilter = value),
                                 );
+                                final position =
+                                    DropdownButtonFormField<String?>(
+                                  initialValue: _positionFilter,
+                                  isExpanded: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Должность',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  items: [
+                                    const DropdownMenuItem<String?>(
+                                      value: null,
+                                      child: Text('Все должности'),
+                                    ),
+                                    for (final value in _availablePositions)
+                                      DropdownMenuItem<String?>(
+                                        value: value,
+                                        child: Text(
+                                          value,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                  ],
+                                  onChanged: (value) =>
+                                      setState(() => _positionFilter = value),
+                                );
                                 if (narrow) {
                                   return Column(
                                     children: [
                                       search,
                                       const SizedBox(height: 10),
                                       status,
+                                      const SizedBox(height: 10),
+                                      position,
                                     ],
                                   );
                                 }
@@ -1310,7 +1470,9 @@ class _DayPageState extends State<DayPage> {
                                   children: [
                                     Expanded(child: search),
                                     const SizedBox(width: 10),
-                                    SizedBox(width: 240, child: status),
+                                    SizedBox(width: 220, child: status),
+                                    const SizedBox(width: 10),
+                                    SizedBox(width: 260, child: position),
                                   ],
                                 );
                               },
@@ -1327,12 +1489,10 @@ class _DayPageState extends State<DayPage> {
                                         ? null
                                         : () => _toggleAllWorked(
                                               _filteredPlanned,
-                                              markTitle: _search.isEmpty &&
-                                                      _statusFilter == null
+                                              markTitle: !_hasActiveFilters
                                                   ? 'Вся смена вышла?'
                                                   : 'Отметить найденных?',
-                                              clearTitle: _search.isEmpty &&
-                                                      _statusFilter == null
+                                              clearTitle: !_hasActiveFilters
                                                   ? 'Снять отметки у всей смены?'
                                                   : 'Снять отметки у найденных?',
                                             ),
@@ -1344,16 +1504,14 @@ class _DayPageState extends State<DayPage> {
                                     ),
                                     label: Text(
                                       _allWorked(_filteredPlanned)
-                                          ? (_search.isEmpty &&
-                                                  _statusFilter == null
+                                          ? (!_hasActiveFilters
                                               ? (isPhone
                                                   ? 'Снять отметки'
                                                   : 'Снять отметки у всей смены')
                                               : (isPhone
                                                   ? 'Снять у найденных'
                                                   : 'Снять отметки у найденных'))
-                                          : (_search.isEmpty &&
-                                                  _statusFilter == null
+                                          : (!_hasActiveFilters
                                               ? (isPhone
                                                   ? 'Отметить всех'
                                                   : 'Отметить всю смену вышедшей')

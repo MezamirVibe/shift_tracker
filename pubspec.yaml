@@ -1,5 +1,5 @@
 name: shift_tracker
-description: A new Flutter project.
+description: Череда — приложение для планирования и учёта рабочих смен.
 publish_to: "none"
 version: 1.0.2+4
 
@@ -22,3 +22,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/chereda_app_icon.png

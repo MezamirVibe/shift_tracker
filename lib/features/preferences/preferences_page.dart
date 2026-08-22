@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
+import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../dashboard/dashboard_customizer.dart';
 import '../onboarding/onboarding_page.dart';
@@ -146,8 +147,16 @@ class _PreferencesPageState extends State<PreferencesPage> {
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < 760;
-    final user = AuthService.instance.currentUser;
-    final role = AuthService.instance.roleById(user?.roleId);
+    final auth = AuthService.instance;
+    final user = auth.currentUser;
+    final role = auth.roleById(user?.roleId);
+    final isEmployeeTraining = (role?.scopeKind == ScopeKind.self ||
+            user?.roleId == BuiltInRoleIds.worker) &&
+        !auth.hasPerm(AppPermission.editAttendance) &&
+        !auth.hasPerm(AppPermission.editEmployees) &&
+        !auth.hasPerm(AppPermission.manageUsers);
+    final trainingTitle =
+        isEmployeeTraining ? 'Обучение сотрудника' : 'Обучение руководителя';
 
     return AdaptiveScaffold(
       title: 'Настройки',
@@ -263,12 +272,14 @@ class _PreferencesPageState extends State<PreferencesPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Как пользоваться приложением',
+                                trainingTitle,
                                 style: Theme.of(context).textTheme.titleMedium,
                               ),
                               const SizedBox(height: 5),
-                              const Text(
-                                'Объясним навигацию, график, календарь и доступные вам действия.',
+                              Text(
+                                isEmployeeTraining
+                                    ? 'Как читать личный график, различать смены, выходные и отсутствия.'
+                                    : 'Как найти смену, отметить факт, учесть отклонения и закрыть день.',
                               ),
                               const SizedBox(height: 14),
                               FilledButton.tonalIcon(

@@ -1,4 +1,4 @@
-# shift_tracker
+# Череда — график смен
 
 A new Flutter project.
 

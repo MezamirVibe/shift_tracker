@@ -36,7 +36,9 @@ class EmployeeAccountCredentials {
 }
 
 class AuthService extends ChangeNotifier {
-  AuthService._();
+  AuthService._() {
+    ApiClient.instance.onSessionInvalidated = _handleSessionInvalidated;
+  }
   static final AuthService instance = AuthService._();
 
   final AuthStorage _storage = AuthStorage();
@@ -58,6 +60,12 @@ class AuthService extends ChangeNotifier {
   bool get isLoggedIn => _currentUser != null;
   bool _serverHasUsers = true;
   bool get hasUsers => _serverHasUsers;
+
+  void _handleSessionInvalidated() {
+    if (_currentUser == null) return;
+    _currentUser = null;
+    notifyListeners();
+  }
 
   Future<void> init() async {
     final api = ApiClient.instance;

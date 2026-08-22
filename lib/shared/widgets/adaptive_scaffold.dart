@@ -168,13 +168,19 @@ class AdaptiveScaffold extends StatelessWidget {
             (item) =>
                 item.route == '/' ||
                 item.route == '/schedule' ||
-                item.route == '/calendar',
+                item.route == '/calendar' ||
+                item.route == '/settings',
           )
           .toList();
       final moreItems =
           resolvedItems.where((item) => !primaryItems.contains(item)).toList();
       final primaryIndex = primaryItems.indexWhere(_matchesRoute);
-      final mobileIndex = primaryIndex >= 0 ? primaryIndex : 3;
+      final moreSelected = moreItems.any(_matchesRoute);
+      final mobileIndex = primaryIndex >= 0
+          ? primaryIndex
+          : moreSelected && moreItems.isNotEmpty
+              ? primaryItems.length
+              : 0;
 
       return Scaffold(
         appBar: AppBar(
@@ -191,7 +197,9 @@ class AdaptiveScaffold extends StatelessWidget {
               primaryItems[idx].onTap();
               return;
             }
-            _showMobileMore(context, moreItems);
+            if (moreItems.isNotEmpty) {
+              _showMobileMore(context, moreItems);
+            }
           },
           destinations: [
             for (final item in primaryItems)
@@ -199,10 +207,11 @@ class AdaptiveScaffold extends StatelessWidget {
                 icon: Icon(item.icon),
                 label: item.label,
               ),
-            const NavigationDestination(
-              icon: Icon(Icons.more_horiz),
-              label: 'Ещё',
-            ),
+            if (moreItems.isNotEmpty)
+              const NavigationDestination(
+                icon: Icon(Icons.more_horiz),
+                label: 'Ещё',
+              ),
           ],
         ),
       );
@@ -230,13 +239,13 @@ class AdaptiveScaffold extends StatelessWidget {
                         Container(
                           width: 38,
                           height: 38,
+                          clipBehavior: Clip.antiAlias,
                           decoration: BoxDecoration(
-                            color: scheme.primary,
                             borderRadius: BorderRadius.circular(11),
                           ),
-                          child: Icon(
-                            Icons.calendar_view_week_rounded,
-                            color: scheme.onPrimary,
+                          child: Image.asset(
+                            'assets/branding/chereda_app_icon.png',
+                            fit: BoxFit.cover,
                           ),
                         ),
                         const SizedBox(width: 11),
@@ -245,11 +254,11 @@ class AdaptiveScaffold extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Shift Tracker',
+                                'Череда',
                                 style: Theme.of(context).textTheme.titleMedium,
                               ),
                               Text(
-                                'Рабочие смены',
+                                'График смен',
                                 style: Theme.of(context)
                                     .textTheme
                                     .labelSmall
