@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/theme.dart';
+import '../../shared/formatters/work_duration_formatter.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../attendance/attendance_storage.dart';
 import '../auth/auth_models.dart';
@@ -16,6 +17,18 @@ import '../onboarding/onboarding_service.dart';
 import '../preferences/preferences_service.dart';
 import '../preferences/user_preferences.dart';
 import 'dashboard_customizer.dart';
+
+class _WorkedDayEntry {
+  final DateTime day;
+  final AttendanceRecord record;
+  final int minutes;
+
+  const _WorkedDayEntry({
+    required this.day,
+    required this.record,
+    required this.minutes,
+  });
+}
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -150,6 +163,95 @@ class _DashboardPageState extends State<DashboardPage> {
       }
     }
     return total;
+  }
+
+  List<_WorkedDayEntry> get _workedDaysThisMonth {
+    final employee = _currentEmployee;
+    if (employee == null) return const [];
+    final now = DateTime.now();
+    final result = <_WorkedDayEntry>[];
+    for (var day = 1; day <= now.day; day++) {
+      final date = DateTime(now.year, now.month, day);
+      final record = _record(date, employee.id);
+      if (record?.fact != FactStatus.worked) continue;
+      result.add(
+        _WorkedDayEntry(
+          day: date,
+          record: record!,
+          minutes: record.workedMinutes ?? employee.paidShiftHours * 60,
+        ),
+      );
+    }
+    return result.reversed.toList();
+  }
+
+  Future<void> _showWorkedHoursBreakdown() async {
+    final entries = _workedDaysThisMonth;
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.78,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Отработанное время по дням',
+                style: Theme.of(sheetContext).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Итого: ${formatWorkDuration(_workedMinutesThisMonth)}',
+                style: Theme.of(sheetContext).textTheme.bodyLarge,
+              ),
+              const SizedBox(height: 14),
+              Expanded(
+                child: entries.isEmpty
+                    ? const Center(
+                        child: Text('В этом месяце ещё нет отмеченных смен.'),
+                      )
+                    : ListView.separated(
+                        itemCount: entries.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final entry = entries[index];
+                          final actualTime = entry.record.actualStart != null &&
+                                  entry.record.actualEnd != null
+                              ? '${entry.record.actualStart}–'
+                                  '${entry.record.actualEnd}'
+                              : 'Фактическое время не указано';
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.event_available_outlined),
+                            title: Text(
+                              DateFormat('d MMMM, EEEE', 'ru_RU')
+                                  .format(entry.day),
+                            ),
+                            subtitle: Text(actualTime),
+                            trailing: Text(
+                              formatWorkDuration(entry.minutes),
+                              style:
+                                  Theme.of(sheetContext).textTheme.titleMedium,
+                            ),
+                            onTap: () {
+                              Navigator.of(sheetContext).pop();
+                              context.go(
+                                '/calendar?date=${_iso(entry.day)}',
+                              );
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   int get _teamWorkingToday {
@@ -337,9 +439,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
                 const SizedBox(height: 14),
                 FilledButton.icon(
-                  onPressed: () => context.go('/schedule'),
+                  onPressed: () => context.go('/schedule?date=${_iso(next)}'),
                   icon: const Icon(Icons.arrow_forward),
-                  label: const Text('Открыть график'),
+                  label: const Text('Открыть неделю'),
                 ),
               ],
             ),
@@ -376,12 +478,12 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _hoursCard() {
-    final hours = _workedMinutesThisMonth / 60;
     return _MetricCard(
       icon: Icons.schedule_outlined,
       label: 'Отработано в этом месяце',
-      value: '${hours.toStringAsFixed(hours % 1 == 0 ? 0 : 1)} ч',
+      value: formatWorkDuration(_workedMinutesThisMonth),
       color: Theme.of(context).colorScheme.primary,
+      action: _showWorkedHoursBreakdown,
     );
   }
 
@@ -435,7 +537,7 @@ class _DashboardPageState extends State<DashboardPage> {
           OutlinedButton.icon(
             onPressed: () => context.go('/schedule'),
             icon: const Icon(Icons.calendar_month_outlined),
-            label: const Text('График'),
+            label: const Text('Неделя'),
           ),
           if (canOpenEmployees)
             OutlinedButton.icon(

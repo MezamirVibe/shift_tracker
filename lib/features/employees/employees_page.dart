@@ -879,6 +879,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
         !_isSuperAdmin &&
         _employeesVisible.isEmpty &&
         currentRole != null;
+    final showBindingWarning =
+        noBinding && currentRole.scopeKind != ScopeKind.all;
 
     return AdaptiveScaffold(
       title: 'Сотрудники',
@@ -904,62 +906,92 @@ class _EmployeesPageState extends State<EmployeesPage> {
               )
             : _loading
                 ? const Center(child: CircularProgressIndicator())
-                : Column(
-                    children: [
-                      _heroCard(isPhone),
-                      const SizedBox(height: 12),
-                      _scopeHint(),
-                      if (noBinding &&
-                          currentRole.scopeKind != ScopeKind.all) ...[
-                        const SizedBox(height: 12),
-                        const Card(
-                          margin: EdgeInsets.zero,
-                          child: Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Row(
-                              children: [
-                                Icon(Icons.warning_amber),
-                                SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    'Для вашей роли не настроена привязка (сотрудник, группа или подразделение). Из-за этого список сейчас пуст.',
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      _filtersCard(),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        child: list.isEmpty
-                            ? _emptyState(noBinding)
-                            : isDesktop
-                                ? Row(
+                : isDesktop
+                    ? Column(
+                        children: [
+                          _heroCard(false),
+                          const SizedBox(height: 12),
+                          _scopeHint(),
+                          if (showBindingWarning) ...[
+                            const SizedBox(height: 12),
+                            const _MissingScopeWarning(),
+                          ],
+                          const SizedBox(height: 12),
+                          _filtersCard(),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: list.isEmpty
+                                ? _emptyState(noBinding)
+                                : Row(
                                     children: [
                                       Expanded(
-                                          flex: 7,
-                                          child: _desktopList(list, canEdit)),
+                                        flex: 7,
+                                        child: _desktopList(list, canEdit),
+                                      ),
                                       const SizedBox(width: 12),
                                       SizedBox(
-                                          width: 360,
-                                          child: _employeePreview(canEdit)),
+                                        width: 360,
+                                        child: _employeePreview(canEdit),
+                                      ),
                                     ],
-                                  )
-                                : ListView.separated(
-                                    itemCount: list.length,
-                                    separatorBuilder: (_, __) =>
-                                        const SizedBox(height: 10),
-                                    itemBuilder: (context, index) {
-                                      return _employeeTile(
-                                          list[index], canEdit);
-                                    },
                                   ),
+                          ),
+                        ],
+                      )
+                    : ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          _heroCard(isPhone),
+                          const SizedBox(height: 12),
+                          _scopeHint(),
+                          if (showBindingWarning) ...[
+                            const SizedBox(height: 12),
+                            const _MissingScopeWarning(),
+                          ],
+                          const SizedBox(height: 12),
+                          _filtersCard(),
+                          const SizedBox(height: 12),
+                          if (list.isEmpty)
+                            SizedBox(
+                              height: 240,
+                              child: _emptyState(noBinding),
+                            )
+                          else
+                            for (var index = 0;
+                                index < list.length;
+                                index++) ...[
+                              _employeeTile(list[index], canEdit),
+                              if (index != list.length - 1)
+                                const SizedBox(height: 10),
+                            ],
+                          const SizedBox(height: 12),
+                        ],
                       ),
-                    ],
-                  ),
+      ),
+    );
+  }
+}
+
+class _MissingScopeWarning extends StatelessWidget {
+  const _MissingScopeWarning();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Для вашей роли не настроена привязка (сотрудник, группа или подразделение). Из-за этого список сейчас пуст.',
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../shared/formatters/work_duration_formatter.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../attendance/attendance_storage.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
+import '../day/attendance_deviation.dart';
 import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
 
@@ -57,8 +59,13 @@ enum _PersonalDayKind {
 
 class CalendarPage extends StatefulWidget {
   final bool fullView;
+  final DateTime? initialDate;
 
-  const CalendarPage({super.key, this.fullView = false});
+  const CalendarPage({
+    super.key,
+    this.fullView = false,
+    this.initialDate,
+  });
 
   @override
   State<CalendarPage> createState() => _CalendarPageState();
@@ -115,6 +122,12 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void initState() {
     super.initState();
+    final initialDay = dateOnly(widget.initialDate ?? DateTime.now());
+    _month = DateTime(initialDay.year, initialDay.month, 1);
+    _selectedScheduleDay = initialDay;
+    _weekStart = initialDay.subtract(
+      Duration(days: initialDay.weekday - DateTime.monday),
+    );
     _pageBaseMonth = _month;
     _pageController = PageController(initialPage: _basePage);
     AttendanceStorage.changes.addListener(_onAttendanceChanged);
@@ -139,6 +152,10 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   Future<void> _openDay(DateTime day) async {
+    if (_isPersonalView) {
+      await _showPersonalDayDetails(dateOnly(day));
+      return;
+    }
     await context.push('/day/${_isoDate(dateOnly(day))}');
     if (!mounted) return;
     await _loadAndRecalc(forMonth: _month);
@@ -221,6 +238,183 @@ class _CalendarPageState extends State<CalendarPage> {
             ? _PersonalDayKind.workShift
             : _PersonalDayKind.dayOff;
     }
+  }
+
+  String _clockFromMinutes(int minutes) {
+    final normalized = minutes % (24 * 60);
+    final hour = normalized ~/ 60;
+    final minute = normalized % 60;
+    return '${hour.toString().padLeft(2, '0')}:'
+        '${minute.toString().padLeft(2, '0')}';
+  }
+
+  int? _clockToMinutes(String? value) {
+    final parts = value?.split(':');
+    if (parts == null || parts.length != 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null || hour > 23 || minute > 59) {
+      return null;
+    }
+    return hour * 60 + minute;
+  }
+
+  String _personalFactLabel(FactStatus fact, bool planned) {
+    return switch (fact) {
+      FactStatus.worked => 'Смена отработана',
+      FactStatus.vacation => 'Отпуск',
+      FactStatus.sick => 'Больничный',
+      FactStatus.absent => 'Неявка',
+      FactStatus.none => planned ? 'Рабочая смена по плану' : 'Выходной',
+    };
+  }
+
+  Future<void> _showPersonalDayDetails(DateTime day) async {
+    if (_employeesVisible.isEmpty) return;
+    final employee = _employeesVisible.first;
+    final record = _recordFor(day, employee.id);
+    final fact = record?.fact ?? FactStatus.none;
+    final planned = isWorkDay(
+      day: day,
+      type: employee.scheduleType,
+      startDate: employee.scheduleStartDate,
+      customWorkdays: employee.customWorkdays,
+    );
+    const plannedStart = 8 * 60;
+    final plannedEnd = plannedStart + employee.shiftHours * 60;
+    final actualStart = _clockToMinutes(record?.actualStart);
+    final actualEnd = _clockToMinutes(record?.actualEnd);
+    final workedMinutes = fact == FactStatus.worked
+        ? (record?.workedMinutes ?? employee.paidShiftHours * 60)
+        : 0;
+    AttendanceDeviation? deviation;
+    if (fact == FactStatus.worked && actualStart != null && actualEnd != null) {
+      deviation = calculateAttendanceDeviation(
+        plannedStartMinutes: plannedStart,
+        plannedEndMinutes: plannedEnd,
+        actualStartMinutes: actualStart,
+        actualEndMinutes: actualEnd,
+      );
+    }
+    final deviationParts = <String>[
+      if ((deviation?.lateMinutes ?? 0) > 0)
+        'Опоздание ${formatWorkDuration(deviation!.lateMinutes)}',
+      if ((deviation?.earlyLeaveMinutes ?? 0) > 0)
+        'Ранний уход ${formatWorkDuration(deviation!.earlyLeaveMinutes)}',
+      if ((deviation?.overtimeMinutes ?? 0) > 0)
+        'Переработка ${formatWorkDuration(deviation!.overtimeMinutes)}',
+    ];
+    final dateLabel = '${day.day.toString().padLeft(2, '0')}.'
+        '${day.month.toString().padLeft(2, '0')}.${day.year}';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final scheme = Theme.of(sheetContext).colorScheme;
+
+        Widget detail(String label, String value, {IconData? icon}) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 20, color: scheme.primary),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    value,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                dateLabel,
+                style: Theme.of(sheetContext).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _personalFactLabel(fact, planned),
+                style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                      color: fact == FactStatus.absent
+                          ? scheme.error
+                          : scheme.primary,
+                    ),
+              ),
+              const SizedBox(height: 14),
+              if (planned) ...[
+                detail(
+                  'План',
+                  '${_clockFromMinutes(plannedStart)}–'
+                      '${_clockFromMinutes(plannedEnd)}',
+                  icon: Icons.event_outlined,
+                ),
+                detail(
+                  'По плану оплачивается',
+                  formatWorkDuration(employee.paidShiftHours * 60),
+                ),
+                if (employee.breakHours > 0)
+                  detail(
+                    'Перерыв',
+                    formatWorkDuration(employee.breakHours * 60),
+                  ),
+              ],
+              if (fact == FactStatus.worked) ...[
+                detail(
+                  'Фактическое время',
+                  record?.actualStart != null && record?.actualEnd != null
+                      ? '${record!.actualStart}–${record.actualEnd}'
+                      : 'Время не указано',
+                  icon: Icons.schedule_outlined,
+                ),
+                detail(
+                  'Оплачено за день',
+                  formatWorkDuration(workedMinutes),
+                  icon: Icons.payments_outlined,
+                ),
+                if (deviationParts.isNotEmpty)
+                  detail('Отклонения', deviationParts.join(' · ')),
+                if (deviation != null && !deviation.hasDeviations)
+                  detail('Отклонения', 'Нет'),
+              ],
+              if (record?.comment?.trim().isNotEmpty == true)
+                detail('Комментарий', record!.comment!.trim()),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  context.go('/schedule?date=${_isoDate(day)}');
+                },
+                icon: const Icon(Icons.view_week_outlined),
+                label: const Text('Открыть неделю'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _applyRoleLocksToFilters() {
@@ -1064,6 +1258,14 @@ class _CalendarPageState extends State<CalendarPage> {
               icon: const Icon(Icons.chevron_right),
             ),
             const Spacer(),
+            if (!_isPersonalView) ...[
+              OutlinedButton.icon(
+                onPressed: () => context.go('/employees'),
+                icon: const Icon(Icons.edit_calendar_outlined),
+                label: const Text('Настроить графики'),
+              ),
+              const SizedBox(width: 10),
+            ],
             OutlinedButton.icon(
               onPressed: _isPersonalView
                   ? _jumpToToday
@@ -1334,26 +1536,37 @@ class _CalendarPageState extends State<CalendarPage> {
     );
     final colors = context.shiftColors;
     String status;
+    String details = employee.position;
     Color foreground;
     Color background;
     switch (record?.fact ?? FactStatus.none) {
       case FactStatus.worked:
         status = 'Вышел';
+        final workedMinutes =
+            record?.workedMinutes ?? employee.paidShiftHours * 60;
+        final factTime =
+            record?.actualStart != null && record?.actualEnd != null
+                ? '${record!.actualStart}–${record.actualEnd} · '
+                : '';
+        details = '$factTime${formatWorkDuration(workedMinutes)} отработано';
         foreground = colors.success;
         background = colors.successContainer;
         break;
       case FactStatus.vacation:
         status = 'Отпуск';
+        details = 'Подтверждённое отсутствие';
         foreground = colors.vacation;
         background = colors.vacationContainer;
         break;
       case FactStatus.sick:
         status = 'Больничный';
+        details = 'Подтверждённое отсутствие';
         foreground = colors.sick;
         background = colors.sickContainer;
         break;
       case FactStatus.absent:
         status = 'Неявка';
+        details = 'Сотрудник не вышел';
         foreground = Theme.of(context).colorScheme.error;
         background = Theme.of(context).colorScheme.errorContainer;
         break;
@@ -1369,6 +1582,12 @@ class _CalendarPageState extends State<CalendarPage> {
                 .primaryContainer
                 .withValues(alpha: 0.65)
             : colors.neutralContainer;
+        if (_isPersonalView) {
+          details = planned
+              ? 'План: 08:00–${_clockFromMinutes(8 * 60 + employee.shiftHours * 60)} · '
+                  '${formatWorkDuration(employee.paidShiftHours * 60)} оплачивается'
+              : 'Смена не запланирована';
+        }
         break;
     }
 
@@ -1376,7 +1595,9 @@ class _CalendarPageState extends State<CalendarPage> {
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => context.push('/employee/${employee.id}'),
+        onTap: _isPersonalView
+            ? () => _showPersonalDayDetails(_selectedScheduleDay)
+            : () => context.push('/employee/${employee.id}'),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -1398,8 +1619,8 @@ class _CalendarPageState extends State<CalendarPage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      employee.position,
-                      maxLines: 1,
+                      details,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -1641,7 +1862,13 @@ class _CalendarPageState extends State<CalendarPage> {
                 FilledButton.tonalIcon(
                   onPressed: () => _openDay(_selectedScheduleDay),
                   icon: const Icon(Icons.fact_check_outlined),
-                  label: const Text('Открыть смену'),
+                  label: const Text('Отметить сотрудников'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => context.go('/employees'),
+                  icon: const Icon(Icons.edit_calendar_outlined),
+                  label: const Text('Настроить графики сотрудников'),
                 ),
               ],
               const SizedBox(height: 14),
@@ -1689,7 +1916,9 @@ class _CalendarPageState extends State<CalendarPage> {
     switch (record?.fact ?? FactStatus.none) {
       case FactStatus.worked:
         code = 'Вышел на смену';
-        subtitle = '${employee.paidShiftHours} ч отработано';
+        subtitle = formatWorkDuration(
+          record?.workedMinutes ?? employee.paidShiftHours * 60,
+        );
         foreground = colors.success;
         background = colors.successContainer;
         break;
@@ -1771,7 +2000,7 @@ class _CalendarPageState extends State<CalendarPage> {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1100;
 
     return AdaptiveScaffold(
-      title: widget.fullView ? 'Полный календарь' : 'График смен',
+      title: widget.fullView ? 'Календарь месяца' : 'График на неделю',
       selectedRoute: widget.fullView ? '/calendar' : '/schedule',
       actions: [
         IconButton(
@@ -1782,7 +2011,9 @@ class _CalendarPageState extends State<CalendarPage> {
                 : Icons.calendar_month_outlined,
           ),
           onPressed: () => context.go(
-            widget.fullView ? '/schedule' : '/calendar',
+            widget.fullView
+                ? '/schedule?date=${_isoDate(_selectedScheduleDay)}'
+                : '/calendar?date=${_isoDate(_selectedScheduleDay)}',
           ),
         ),
       ],

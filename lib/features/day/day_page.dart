@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
+import '../../shared/formatters/work_duration_formatter.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../attendance/attendance_storage.dart';
 import '../auth/auth_models.dart';
@@ -439,6 +440,10 @@ class _DayPageState extends State<DayPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocalState) => AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 24,
+            ),
             title: Text(e.fullName),
             content: SizedBox(
               width: 560,
@@ -488,53 +493,72 @@ class _DayPageState extends State<DayPage> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          Widget timeButton({
+                            required bool start,
+                            required TimeOfDay value,
+                          }) {
+                            return OutlinedButton.icon(
                               onPressed: canEditNow
                                   ? () async {
                                       final selected = await showTimePicker(
                                         context: context,
-                                        initialTime: actualStart,
-                                        helpText: 'Время начала работы',
+                                        initialTime: value,
+                                        helpText: start
+                                            ? 'Время начала работы'
+                                            : 'Время окончания работы',
                                       );
-                                      if (selected != null) {
-                                        setLocalState(
-                                          () => actualStart = selected,
-                                        );
-                                      }
+                                      if (selected == null) return;
+                                      setLocalState(() {
+                                        if (start) {
+                                          actualStart = selected;
+                                        } else {
+                                          actualEnd = selected;
+                                        }
+                                      });
                                     }
                                   : null,
-                              icon: const Icon(Icons.login),
-                              label: Text(
-                                'Начало: ${_timeValue(actualStart)}',
+                              icon: Icon(
+                                start ? Icons.login : Icons.logout,
                               ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: canEditNow
-                                  ? () async {
-                                      final selected = await showTimePicker(
-                                        context: context,
-                                        initialTime: actualEnd,
-                                        helpText: 'Время окончания работы',
-                                      );
-                                      if (selected != null) {
-                                        setLocalState(
-                                            () => actualEnd = selected);
-                                      }
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.logout),
                               label: Text(
-                                'Окончание: ${_timeValue(actualEnd)}',
+                                '${start ? 'Начало' : 'Окончание'}: '
+                                '${_timeValue(value)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                          ),
-                        ],
+                            );
+                          }
+
+                          if (constraints.maxWidth < 420) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                timeButton(start: true, value: actualStart),
+                                const SizedBox(height: 8),
+                                timeButton(start: false, value: actualEnd),
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: timeButton(
+                                  start: true,
+                                  value: actualStart,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: timeButton(
+                                  start: false,
+                                  value: actualEnd,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                       const SizedBox(height: 8),
                       _deviationSummary(e, actualStart, actualEnd),
@@ -542,7 +566,7 @@ class _DayPageState extends State<DayPage> {
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'Оплачиваемое время: ${_workedMinutesBetween(actualStart, actualEnd, e, deductBreak: deductBreak)} мин '
+                          'Оплачиваемое время: ${formatWorkDuration(_workedMinutesBetween(actualStart, actualEnd, e, deductBreak: deductBreak))} '
                           '(перерыв: ${deductBreak ? e.breakHours * 60 : 0} мин)',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
@@ -844,7 +868,7 @@ class _DayPageState extends State<DayPage> {
   Widget _employeeTile(EmployeeModel employee, bool canEditNow) {
     final fact = _factOf(employee);
     final minutes = _minutesFor(employee, fact);
-    final hours = (minutes / 60).toStringAsFixed(minutes % 60 == 0 ? 0 : 1);
+    final duration = formatWorkDuration(minutes);
     final record = _recordOf(employee);
     final actualTime = fact == FactStatus.worked &&
             record?.actualStart != null &&
@@ -958,7 +982,7 @@ class _DayPageState extends State<DayPage> {
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      '$hours ч',
+                      duration,
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                   ),
@@ -1014,7 +1038,7 @@ class _DayPageState extends State<DayPage> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$hours ч'),
+          Text(duration),
           const SizedBox(width: 12),
           if (saving)
             const Padding(

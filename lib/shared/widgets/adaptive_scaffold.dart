@@ -58,13 +58,13 @@ class AdaptiveScaffold extends StatelessWidget {
         onTap: () => context.go('/'),
       ),
       NavItem(
-        label: 'График',
-        icon: Icons.calendar_month_outlined,
+        label: 'Неделя',
+        icon: Icons.calendar_view_week_outlined,
         route: '/schedule',
         onTap: () => context.go('/schedule'),
       ),
       NavItem(
-        label: 'Календарь',
+        label: 'Месяц',
         icon: Icons.calendar_month_outlined,
         route: '/calendar',
         onTap: () => context.go('/calendar'),

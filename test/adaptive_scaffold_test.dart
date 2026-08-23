@@ -23,8 +23,8 @@ void main() {
 
     expect(find.text('Череда'), findsOneWidget);
     expect(find.text('Главная'), findsOneWidget);
-    expect(find.text('График'), findsOneWidget);
-    expect(find.text('Календарь'), findsOneWidget);
+    expect(find.text('Неделя'), findsOneWidget);
+    expect(find.text('Месяц'), findsOneWidget);
     expect(find.text('Настройки'), findsOneWidget);
     expect(find.text('Содержимое'), findsOneWidget);
   });
@@ -49,11 +49,38 @@ void main() {
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.byType(NavigationDestination), findsNWidgets(4));
     expect(find.text('Главная'), findsOneWidget);
-    expect(find.text('График'), findsOneWidget);
-    expect(find.text('Календарь'), findsOneWidget);
+    expect(find.text('Неделя'), findsOneWidget);
+    expect(find.text('Месяц'), findsOneWidget);
     expect(find.text('Настройки'), findsOneWidget);
     expect(find.text('Ещё'), findsNothing);
     expect(find.text('Мобильное содержимое'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('short navigation labels fit a narrow phone with large text',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.35;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(
+      tester.platformDispatcher.clearTextScaleFactorTestValue,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: const AdaptiveScaffold(
+          title: 'Проверка',
+          selectedRoute: '/schedule',
+          child: Center(child: Text('Узкий экран')),
+        ),
+      ),
+    );
+
+    expect(find.text('Неделя'), findsOneWidget);
+    expect(find.text('Месяц'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

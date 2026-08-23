@@ -59,7 +59,8 @@ class AppRouter {
         final currentRole = auth.roleById(auth.currentUser?.roleId);
         if (loc.startsWith('$dayPath/') &&
             currentRole?.scopeKind == ScopeKind.self) {
-          return calendar;
+          final selectedDate = state.uri.pathSegments.last;
+          return '$calendar?date=$selectedDate';
         }
 
         // ВАЖНО:
@@ -90,11 +91,20 @@ class AppRouter {
         ),
         GoRoute(
           path: calendar,
-          builder: (_, __) => const cal.CalendarPage(),
+          builder: (_, state) => cal.CalendarPage(
+            initialDate: DateTime.tryParse(
+              state.uri.queryParameters['date'] ?? '',
+            ),
+          ),
         ),
         GoRoute(
           path: fullCalendar,
-          builder: (_, __) => const cal.CalendarPage(fullView: true),
+          builder: (_, state) => cal.CalendarPage(
+            fullView: true,
+            initialDate: DateTime.tryParse(
+              state.uri.queryParameters['date'] ?? '',
+            ),
+          ),
         ),
         GoRoute(
           path: settings,
