@@ -1,5 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+
+import '../features/auth/auth_service.dart';
+import '../features/preferences/preferences_service.dart';
 import 'router.dart';
 import 'theme.dart';
 
@@ -11,53 +16,44 @@ class ShiftTrackerApp extends StatefulWidget {
 }
 
 class _ShiftTrackerAppState extends State<ShiftTrackerApp> {
-  ThemeMode _themeMode = ThemeMode.system;
   late final GoRouter _router = AppRouter.makeRouter();
+  final _preferences = PreferencesService.instance;
+  late AppThemeChoice _theme = _preferences.theme;
 
-  void _toggleTheme() {
-    setState(() {
-      _themeMode = switch (_themeMode) {
-        ThemeMode.system => ThemeMode.dark,
-        ThemeMode.dark => ThemeMode.light,
-        ThemeMode.light => ThemeMode.system,
-      };
-    });
+  @override
+  void initState() {
+    super.initState();
+    AuthService.instance.addListener(_handleAuthChanged);
+    _preferences.addListener(_handlePreferencesChanged);
+  }
+
+  void _handleAuthChanged() {
+    unawaited(_preferences.syncForCurrentUser());
+  }
+
+  void _handlePreferencesChanged() {
+    final nextTheme = _preferences.theme;
+    if (nextTheme == _theme || !mounted) return;
+    setState(() => _theme = nextTheme);
+  }
+
+  @override
+  void dispose() {
+    AuthService.instance.removeListener(_handleAuthChanged);
+    _preferences.removeListener(_handlePreferencesChanged);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = AppTheme.forChoice(_theme);
     return MaterialApp.router(
-      title: 'Учёт смен',
+      title: 'Череда — график смен',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
-      themeMode: _themeMode,
+      theme: theme,
+      darkTheme: theme,
+      themeMode: ThemeMode.light,
       routerConfig: _router,
-      builder: (context, child) {
-        return _AppShell(
-          onToggleTheme: _toggleTheme,
-          child: child ?? const SizedBox.shrink(),
-        );
-      },
     );
   }
 }
-
-class _AppShell extends InheritedWidget {
-  final VoidCallback onToggleTheme;
-
-  const _AppShell({
-    required this.onToggleTheme,
-    required super.child,
-  });
-
-  static _AppShell of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_AppShell>()!;
-
-  @override
-  bool updateShouldNotify(_AppShell oldWidget) =>
-      onToggleTheme != oldWidget.onToggleTheme;
-}
-
-VoidCallback themeToggleOf(BuildContext context) =>
-    _AppShell.of(context).onToggleTheme;

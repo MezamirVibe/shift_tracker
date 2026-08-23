@@ -32,7 +32,49 @@ class PositionModel {
 }
 
 class PositionsStorage {
-  Future<List<PositionModel>> loadPositions() async {
+  static const _cacheLifetime = Duration(minutes: 5);
+  static List<PositionModel>? _cache;
+  static DateTime? _cachedAt;
+  static Future<List<PositionModel>>? _inFlight;
+  static String? _cacheUserId;
+
+  void _ensureCacheOwner() {
+    final userId = ApiClient.instance.currentUser?['id'] as String?;
+    if (_cacheUserId == userId) return;
+    _cacheUserId = userId;
+    invalidateCache();
+    _inFlight = null;
+  }
+
+  bool get _cacheIsFresh =>
+      _cachedAt != null &&
+      DateTime.now().difference(_cachedAt!) < _cacheLifetime;
+
+  Future<List<PositionModel>> loadPositions({bool force = false}) async {
+    _ensureCacheOwner();
+    if (!force && _cache != null && _cacheIsFresh) {
+      return List<PositionModel>.of(_cache!);
+    }
+    if (_inFlight != null) {
+      return List<PositionModel>.of(await _inFlight!);
+    }
+
+    final owner = _cacheUserId;
+    final request = _loadRemote();
+    _inFlight = request;
+    try {
+      final items = await request;
+      if (_cacheUserId == owner && identical(_inFlight, request)) {
+        _cache = List<PositionModel>.unmodifiable(items);
+        _cachedAt = DateTime.now();
+      }
+      return List<PositionModel>.of(items);
+    } finally {
+      if (identical(_inFlight, request)) _inFlight = null;
+    }
+  }
+
+  Future<List<PositionModel>> _loadRemote() async {
     final data =
         await ApiClient.instance.request('GET', '/api/v1/positions') as List;
     final items = data.whereType<Map>().map((item) {
@@ -59,5 +101,11 @@ class PositionsStorage {
     for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
       await ApiClient.instance.request('DELETE', '/api/v1/positions/$id');
     }
+    invalidateCache();
+  }
+
+  void invalidateCache() {
+    _cache = null;
+    _cachedAt = null;
   }
 }

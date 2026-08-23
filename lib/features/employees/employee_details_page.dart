@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -44,6 +46,17 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   DateTime _startDate = DateTime.now();
   int _shiftHours = 12;
   int _breakHours = 1;
+  List<int> _customWorkdays = const [1, 2, 3, 4, 5];
+
+  Timer? _scheduleSaveTimer;
+  Future<void> _scheduleSaveQueue = Future<void>.value();
+  ({
+    ScheduleType type,
+    DateTime start,
+    int shiftHours,
+    int breakHours,
+    List<int> customWorkdays,
+  })? _pendingSchedule;
 
   UserAccount? _linkedUser;
 
@@ -75,6 +88,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       _startDate = e.scheduleStartDate;
       _shiftHours = e.shiftHours;
       _breakHours = e.breakHours;
+      _customWorkdays = e.customWorkdays;
       _linkedUser = AuthService.instance.userByEmployeeId(widget.id);
       _loading = false;
     });
@@ -86,12 +100,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   }
 
   Future<void> _saveEmployee(EmployeeModel updated) async {
-    final all = await _storage.load();
-    final updatedAll = all.map((x) => x.id == widget.id ? updated : x).toList();
-    await _storage.save(updatedAll);
-
     if (!mounted) return;
-
     setState(() {
       _fullName = updated.fullName;
       _position = updated.position;
@@ -103,14 +112,80 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       _startDate = updated.scheduleStartDate;
       _shiftHours = updated.shiftHours;
       _breakHours = updated.breakHours;
+      _customWorkdays = updated.customWorkdays;
       _linkedUser = AuthService.instance.userByEmployeeId(widget.id);
+    });
+
+    try {
+      await _storage.update(updated);
+    } catch (error) {
+      if (!mounted) return;
+      await _loadEmployee();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить: $error')),
+      );
+    }
+  }
+
+  void _changeSchedule(
+    ScheduleType type,
+    DateTime start,
+    int shiftHours,
+    int breakHours,
+    List<int> customWorkdays,
+  ) {
+    final normalizedDays = [...customWorkdays]..sort();
+    setState(() {
+      _scheduleType = type;
+      _startDate = start;
+      _shiftHours = shiftHours;
+      _breakHours = breakHours;
+      _customWorkdays = normalizedDays;
+    });
+
+    _pendingSchedule = (
+      type: type,
+      start: start,
+      shiftHours: shiftHours,
+      breakHours: breakHours,
+      customWorkdays: normalizedDays,
+    );
+    _scheduleSaveTimer?.cancel();
+    _scheduleSaveTimer = Timer(
+      const Duration(milliseconds: 350),
+      _flushScheduleSave,
+    );
+  }
+
+  void _flushScheduleSave() {
+    _scheduleSaveTimer?.cancel();
+    _scheduleSaveTimer = null;
+    final pending = _pendingSchedule;
+    if (pending == null) return;
+    _pendingSchedule = null;
+
+    _scheduleSaveQueue = _scheduleSaveQueue.then((_) async {
+      await _storage.updateSchedule(
+        employeeId: widget.id,
+        scheduleType: pending.type,
+        scheduleStartDate: pending.start,
+        shiftHours: pending.shiftHours,
+        breakHours: pending.breakHours,
+        customWorkdays: pending.customWorkdays,
+      );
+    }).catchError((Object error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить график: $error')),
+      );
     });
   }
 
   Future<void> _edit() async {
     final draft = await showDialog<EmployeeDraft>(
       context: context,
-      builder: (context) => EmployeeEditorDialog(
+      builder: (dialogContext) => EmployeeEditorDialog(
         initial: EmployeeDraft(
           fullName: _fullName,
           position: _position,
@@ -122,9 +197,16 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
           scheduleStartDate: _startDate,
           shiftHours: _shiftHours,
           breakHours: _breakHours,
+          customWorkdays: _customWorkdays,
         ),
         title: 'Редактировать сотрудника',
         confirmText: 'Сохранить',
+        onDeactivate: () {
+          Navigator.of(dialogContext).pop();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _fire();
+          });
+        },
       ),
     );
 
@@ -145,6 +227,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       scheduleStartDate: draft.scheduleStartDate,
       shiftHours: draft.shiftHours,
       breakHours: draft.breakHours,
+      customWorkdays: draft.customWorkdays,
       clearDepartment: draft.departmentId == null,
       clearGroup: draft.groupId == null,
     );
@@ -173,11 +256,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
 
     if (ok != true) return;
 
-    final all = await _storage.load();
-    final updated = all.where((x) => x.id != widget.id).toList();
-    await _storage.save(updated);
+    await _storage.deactivate(widget.id);
 
-    if (!context.mounted) return;
+    if (!mounted) return;
     context.pop(<String, dynamic>{'deleted': true});
   }
 
@@ -197,7 +278,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
 
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Пароль сброшен'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -222,15 +303,15 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
                   text: 'Логин: ${user.login}\nНовый пароль: $newPassword',
                 ),
               );
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
                 const SnackBar(content: Text('Данные скопированы')),
               );
             },
             child: const Text('Скопировать'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Закрыть'),
           ),
         ],
@@ -257,6 +338,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   }
 
   void _popWithUpdated() {
+    _flushScheduleSave();
     context.pop(<String, dynamic>{
       'id': widget.id,
       'fullName': _fullName,
@@ -267,15 +349,10 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       'scheduleStartDate': _startDate.toIso8601String(),
       'shiftHours': _shiftHours,
       'breakHours': _breakHours,
+      'customWorkdays': _customWorkdays,
       'departmentId': _departmentId,
       'groupId': _groupId,
     });
-  }
-
-  String _formatDate(DateTime d) {
-    return '${d.day.toString().padLeft(2, '0')}.'
-        '${d.month.toString().padLeft(2, '0')}.'
-        '${d.year}';
   }
 
   String _scheduleLabel(ScheduleType type) {
@@ -284,6 +361,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
         return '2/2';
       case ScheduleType.fiveTwo:
         return '5/2';
+      case ScheduleType.custom:
+        return 'Произвольный';
     }
   }
 
@@ -322,21 +401,13 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
               ],
             ),
             const SizedBox(height: 14),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                FilledButton.icon(
-                  onPressed: _edit,
-                  icon: const Icon(Icons.edit_outlined),
-                  label: const Text('Редактировать'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _fire,
-                  icon: const Icon(Icons.person_off_outlined),
-                  label: const Text('Уволить'),
-                ),
-              ],
+            SizedBox(
+              width: isPhone ? double.infinity : null,
+              child: FilledButton.icon(
+                onPressed: _edit,
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Редактировать'),
+              ),
             ),
           ],
         ),
@@ -346,6 +417,10 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
 
   @override
   void dispose() {
+    _scheduleSaveTimer?.cancel();
+    if (_pendingSchedule != null) {
+      _flushScheduleSave();
+    }
     _tabController.dispose();
     super.dispose();
   }
@@ -383,13 +458,22 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
         title: const Text('Карточка сотрудника'),
         bottom: TabBar(
           controller: _tabController,
-          isScrollable: true,
-          tabs: const [
-            Tab(text: 'График'),
-            Tab(text: 'Структура'),
-            Tab(text: 'Зарплата'),
-            Tab(text: 'Доступ'),
-            Tab(text: 'История'),
+          isScrollable: !isPhone,
+          tabAlignment: isPhone ? TabAlignment.fill : TabAlignment.start,
+          labelPadding: isPhone
+              ? EdgeInsets.zero
+              : const EdgeInsets.symmetric(horizontal: 16),
+          labelStyle: isPhone
+              ? Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  )
+              : null,
+          tabs: [
+            const Tab(text: 'График'),
+            Tab(text: isPhone ? 'Отдел' : 'Структура'),
+            Tab(text: isPhone ? 'Оплата' : 'Зарплата'),
+            const Tab(text: 'Доступ'),
+            const Tab(text: 'История'),
           ],
         ),
       ),
@@ -409,19 +493,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
                   startDate: _startDate,
                   shiftHours: _shiftHours,
                   breakHours: _breakHours,
-                  onChanged: (nextType, nextStart, nextShiftHours,
-                      nextBreakHours) async {
-                    final current = await _getFreshEmployee();
-                    if (!mounted || current == null) return;
-
-                    final updated = current.copyWith(
-                      scheduleType: nextType,
-                      scheduleStartDate: nextStart,
-                      shiftHours: nextShiftHours,
-                      breakHours: nextBreakHours,
-                    );
-                    await _saveEmployee(updated);
-                  },
+                  customWorkdays: _customWorkdays,
+                  onChanged: _changeSchedule,
                 ),
                 _StructureTab(
                   departmentId: _departmentId,
@@ -713,12 +786,14 @@ class _ScheduleTab extends StatelessWidget {
   final DateTime startDate;
   final int shiftHours;
   final int breakHours;
+  final List<int> customWorkdays;
 
-  final Future<void> Function(
+  final void Function(
     ScheduleType scheduleType,
     DateTime startDate,
     int shiftHours,
     int breakHours,
+    List<int> customWorkdays,
   ) onChanged;
 
   const _ScheduleTab({
@@ -726,6 +801,7 @@ class _ScheduleTab extends StatelessWidget {
     required this.startDate,
     required this.shiftHours,
     required this.breakHours,
+    required this.customWorkdays,
     required this.onChanged,
   });
 
@@ -735,6 +811,8 @@ class _ScheduleTab extends StatelessWidget {
         return '2/2';
       case ScheduleType.fiveTwo:
         return '5/2';
+      case ScheduleType.custom:
+        return 'Произвольный';
     }
   }
 
@@ -781,25 +859,75 @@ class _ScheduleTab extends StatelessWidget {
                       value: ScheduleType.fiveTwo,
                       child: Text('5/2'),
                     ),
+                    DropdownMenuItem(
+                      value: ScheduleType.custom,
+                      child: Text('Произвольный'),
+                    ),
                   ],
-                  onChanged: (v) async {
+                  onChanged: (v) {
                     if (v == null) return;
-                    await onChanged(v, startDate, shiftHours, breakHours);
+                    onChanged(
+                      v,
+                      startDate,
+                      shiftHours,
+                      breakHours,
+                      customWorkdays,
+                    );
                   },
                 ),
+                if (scheduleType == ScheduleType.custom) ...[
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: const [
+                        (1, 'Пн'),
+                        (2, 'Вт'),
+                        (3, 'Ср'),
+                        (4, 'Чт'),
+                        (5, 'Пт'),
+                        (6, 'Сб'),
+                        (7, 'Вс'),
+                      ].map((item) {
+                        return FilterChip(
+                          label: Text(item.$2),
+                          selected: customWorkdays.contains(item.$1),
+                          onSelected: (selected) {
+                            final next = [...customWorkdays];
+                            if (selected) {
+                              next.add(item.$1);
+                            } else if (next.length > 1) {
+                              next.remove(item.$1);
+                            }
+                            next.sort();
+                            onChanged(
+                              scheduleType,
+                              startDate,
+                              shiftHours,
+                              breakHours,
+                              next,
+                            );
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Card(
                   margin: EdgeInsets.zero,
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   child: Padding(
                     padding: const EdgeInsets.all(12),
-                    child: Row(
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      alignment: WrapAlignment.spaceBetween,
                       children: [
-                        Expanded(
-                          child: Text(
-                            'Дата старта: ${_formatDate(startDate)}',
-                          ),
-                        ),
+                        Text('Дата старта: ${_formatDate(startDate)}'),
                         FilledButton.tonal(
                           onPressed: () async {
                             final picked = await showDatePicker(
@@ -809,11 +937,12 @@ class _ScheduleTab extends StatelessWidget {
                               initialDate: startDate,
                             );
                             if (picked == null) return;
-                            await onChanged(
+                            onChanged(
                               scheduleType,
                               picked,
                               shiftHours,
                               breakHours,
+                              customWorkdays,
                             );
                           },
                           child: const Text('Выбрать'),
@@ -829,14 +958,23 @@ class _ScheduleTab extends StatelessWidget {
                     labelText: 'Длительность смены',
                     border: OutlineInputBorder(),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 9, child: Text('9 часов')),
-                    DropdownMenuItem(value: 12, child: Text('12 часов')),
-                  ],
-                  onChanged: (v) async {
+                  items: List.generate(
+                    24,
+                    (index) => DropdownMenuItem(
+                      value: index + 1,
+                      child: Text('${index + 1} ч'),
+                    ),
+                  ),
+                  onChanged: (v) {
                     if (v == null) return;
                     final nextBreak = breakHours >= v ? v - 1 : breakHours;
-                    await onChanged(scheduleType, startDate, v, nextBreak);
+                    onChanged(
+                      scheduleType,
+                      startDate,
+                      v,
+                      nextBreak,
+                      customWorkdays,
+                    );
                   },
                 ),
                 const SizedBox(height: 12),
@@ -853,9 +991,15 @@ class _ScheduleTab extends StatelessWidget {
                       child: Text('$i час(а)'),
                     ),
                   ),
-                  onChanged: (v) async {
+                  onChanged: (v) {
                     if (v == null) return;
-                    await onChanged(scheduleType, startDate, shiftHours, v);
+                    onChanged(
+                      scheduleType,
+                      startDate,
+                      shiftHours,
+                      v,
+                      customWorkdays,
+                    );
                   },
                 ),
               ],
@@ -886,6 +1030,7 @@ class _ScheduleTab extends StatelessWidget {
                     day: d,
                     type: scheduleType,
                     startDate: startDate,
+                    customWorkdays: customWorkdays,
                   );
                   final label =
                       '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}';

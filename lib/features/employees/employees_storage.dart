@@ -1,16 +1,20 @@
 import '../../core/api_client.dart';
 import '../../core/id.dart';
+import '../positions/positions_storage.dart';
 
 /// Тип графика (пока минимум)
 enum ScheduleType {
   twoTwo, // 2/2
   fiveTwo, // 5/2
+  custom, // произвольные дни недели
 }
 
 ScheduleType scheduleTypeFromString(String? s) {
   switch (s) {
     case 'fiveTwo':
       return ScheduleType.fiveTwo;
+    case 'custom':
+      return ScheduleType.custom;
     case 'twoTwo':
     default:
       return ScheduleType.twoTwo;
@@ -18,6 +22,12 @@ ScheduleType scheduleTypeFromString(String? s) {
 }
 
 String scheduleTypeToString(ScheduleType t) => t.name;
+
+String scheduleTypeLabel(ScheduleType type) => switch (type) {
+      ScheduleType.twoTwo => '2/2',
+      ScheduleType.fiveTwo => '5/2',
+      ScheduleType.custom => 'Произвольный',
+    };
 
 class EmployeeModel {
   final String id;
@@ -36,6 +46,7 @@ class EmployeeModel {
   final DateTime scheduleStartDate; // дата первой смены
   final int shiftHours; // 9 или 12
   final int breakHours; // 1
+  final List<int> customWorkdays; // 1..7, понедельник..воскресенье
 
   EmployeeModel({
     required this.id,
@@ -50,6 +61,7 @@ class EmployeeModel {
     DateTime? scheduleStartDate,
     this.shiftHours = 12,
     this.breakHours = 1,
+    this.customWorkdays = const [1, 2, 3, 4, 5],
   }) : scheduleStartDate = scheduleStartDate ?? DateTime.now();
 
   EmployeeModel copyWith({
@@ -65,6 +77,7 @@ class EmployeeModel {
     DateTime? scheduleStartDate,
     int? shiftHours,
     int? breakHours,
+    List<int>? customWorkdays,
     bool clearDepartment = false,
     bool clearGroup = false,
   }) {
@@ -82,6 +95,7 @@ class EmployeeModel {
       scheduleStartDate: scheduleStartDate ?? this.scheduleStartDate,
       shiftHours: shiftHours ?? this.shiftHours,
       breakHours: breakHours ?? this.breakHours,
+      customWorkdays: customWorkdays ?? this.customWorkdays,
     );
   }
 
@@ -104,6 +118,7 @@ class EmployeeModel {
         'scheduleStartDate': scheduleStartDate.toIso8601String(),
         'shiftHours': shiftHours,
         'breakHours': breakHours,
+        'customWorkdays': customWorkdays,
       };
 
   static EmployeeModel fromJson(Map json) {
@@ -123,6 +138,11 @@ class EmployeeModel {
         (json['shiftHours'] is num) ? (json['shiftHours'] as num).toInt() : 12;
     final breakHours =
         (json['breakHours'] is num) ? (json['breakHours'] as num).toInt() : 1;
+    final customWorkdays = (json['customWorkdays'] as List?)
+            ?.whereType<num>()
+            .map((day) => day.toInt())
+            .toList() ??
+        const [1, 2, 3, 4, 5];
 
     // миграция структуры
     final depId = (json['departmentId'] as String?)?.trim();
@@ -141,21 +161,67 @@ class EmployeeModel {
       scheduleStartDate: startDate,
       shiftHours: shiftHours,
       breakHours: breakHours,
+      customWorkdays: customWorkdays,
     );
   }
 }
 
 class EmployeesStorage {
-  Future<List<EmployeeModel>> load() async {
+  static List<EmployeeModel>? _cachedEmployees;
+  static DateTime? _cachedAt;
+  static Future<List<EmployeeModel>>? _loadInFlight;
+  static String? _cacheUserId;
+  static String? _inFlightUserId;
+
+  Future<List<EmployeeModel>> load({bool force = false}) {
+    final userId = ApiClient.instance.currentUser?['id'] as String?;
+    if (_cacheUserId != userId) {
+      _cachedEmployees = null;
+      _cachedAt = null;
+      _loadInFlight = null;
+      _inFlightUserId = null;
+      _cacheUserId = userId;
+    }
+    final cached = _cachedEmployees;
+    final cachedAt = _cachedAt;
+    if (!force &&
+        cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < const Duration(minutes: 5)) {
+      return Future.value(List<EmployeeModel>.of(cached));
+    }
+
+    final active = _loadInFlight;
+    if (active != null && _inFlightUserId == userId) {
+      return active.then(List<EmployeeModel>.of);
+    }
+
+    final request = _loadRemote();
+    _loadInFlight = request;
+    _inFlightUserId = userId;
+    return request.then((loaded) {
+      if (_cacheUserId == userId && identical(_loadInFlight, request)) {
+        _cachedEmployees = List<EmployeeModel>.unmodifiable(loaded);
+        _cachedAt = DateTime.now();
+      }
+      return List<EmployeeModel>.of(loaded);
+    }).whenComplete(() {
+      if (identical(_loadInFlight, request)) {
+        _loadInFlight = null;
+        _inFlightUserId = null;
+      }
+    });
+  }
+
+  Future<List<EmployeeModel>> _loadRemote() async {
     final api = ApiClient.instance;
     final results = await Future.wait([
       api.request('GET', '/api/v1/employees'),
-      api.request('GET', '/api/v1/positions'),
+      PositionsStorage().loadPositions(),
     ]);
     final positions = <String, String>{};
-    for (final item in (results[1] as List).whereType<Map>()) {
-      final json = Map<String, dynamic>.from(item);
-      positions[json['id'] as String] = json['name'] as String;
+    for (final item in results[1] as List<PositionModel>) {
+      positions[item.id] = item.name;
     }
     return (results[0] as List).whereType<Map>().map((item) {
       final json = Map<String, dynamic>.from(item);
@@ -174,20 +240,122 @@ class EmployeesStorage {
             DateTime.parse(json['schedule_start_date'] as String),
         shiftHours: (json['shift_hours'] as num).toInt(),
         breakHours: (json['break_hours'] as num).toInt(),
+        customWorkdays: (json['custom_workdays'] as List?)
+                ?.whereType<num>()
+                .map((day) => day.toInt())
+                .toList() ??
+            const [1, 2, 3, 4, 5],
       );
     }).toList();
+  }
+
+  Future<String?> _resolvePositionId(EmployeeModel employee) async {
+    final positionName = employee.position.trim();
+    if (positionName.isEmpty) return null;
+
+    final positions = await PositionsStorage().loadPositions();
+    for (final item in positions) {
+      if (item.name.trim().toLowerCase() == positionName.toLowerCase()) {
+        return item.id;
+      }
+    }
+
+    final positionId = newUuidV4();
+    await ApiClient.instance.request(
+      'POST',
+      '/api/v1/positions',
+      body: {'id': positionId, 'name': positionName},
+    );
+    PositionsStorage().invalidateCache();
+    return positionId;
+  }
+
+  Map<String, dynamic> _body(
+    EmployeeModel employee,
+    String? positionId, {
+    required bool includeId,
+  }) {
+    return {
+      if (includeId) 'id': employee.id,
+      'full_name': employee.fullName,
+      'position_id': positionId,
+      'department_id': employee.departmentId,
+      'group_id': employee.groupId,
+      'salary': employee.salary,
+      'bonus': employee.bonus,
+      'schedule_type': scheduleTypeToString(employee.scheduleType),
+      'schedule_start_date':
+          employee.scheduleStartDate.toIso8601String().split('T').first,
+      'shift_hours': employee.shiftHours,
+      'break_hours': employee.breakHours,
+      'custom_workdays': employee.customWorkdays,
+    };
+  }
+
+  Future<void> create(EmployeeModel employee) async {
+    final positionId = await _resolvePositionId(employee);
+    await ApiClient.instance.request(
+      'POST',
+      '/api/v1/employees',
+      body: _body(employee, positionId, includeId: true),
+    );
+    _invalidateCache();
+  }
+
+  Future<void> update(EmployeeModel employee) async {
+    final positionId = await _resolvePositionId(employee);
+    await ApiClient.instance.request(
+      'PATCH',
+      '/api/v1/employees/${employee.id}',
+      body: _body(employee, positionId, includeId: false),
+    );
+    _invalidateCache();
+  }
+
+  Future<void> updateSchedule({
+    required String employeeId,
+    required ScheduleType scheduleType,
+    required DateTime scheduleStartDate,
+    required int shiftHours,
+    required int breakHours,
+    required List<int> customWorkdays,
+  }) async {
+    await ApiClient.instance.request(
+      'PATCH',
+      '/api/v1/employees/$employeeId',
+      body: {
+        'schedule_type': scheduleTypeToString(scheduleType),
+        'schedule_start_date':
+            scheduleStartDate.toIso8601String().split('T').first,
+        'shift_hours': shiftHours,
+        'break_hours': breakHours,
+        'custom_workdays': customWorkdays,
+      },
+    );
+    _invalidateCache();
+  }
+
+  Future<void> deactivate(String employeeId) async {
+    await ApiClient.instance.request(
+      'DELETE',
+      '/api/v1/employees/$employeeId',
+    );
+    _invalidateCache();
+  }
+
+  void _invalidateCache() {
+    _cachedEmployees = null;
+    _cachedAt = null;
   }
 
   Future<void> save(List<EmployeeModel> employees) async {
     final api = ApiClient.instance;
     final existing = {for (final item in await load()) item.id: item};
     final wanted = {for (final item in employees) item.id: item};
-    final positionData = await api.request('GET', '/api/v1/positions') as List;
+    final positionData = await PositionsStorage().loadPositions();
     final positionsByName = <String, String>{};
-    for (final item in positionData.whereType<Map>()) {
-      final json = Map<String, dynamic>.from(item);
-      positionsByName[(json['name'] as String).trim().toLowerCase()] =
-          json['id'] as String;
+    for (final item in positionData) {
+      positionsByName[item.name.trim().toLowerCase()] = item.id;
     }
 
     for (final employee in employees) {
@@ -202,6 +370,7 @@ class EmployeesStorage {
             '/api/v1/positions',
             body: {'id': positionId, 'name': positionName},
           );
+          PositionsStorage().invalidateCache();
           positionsByName[positionName.toLowerCase()] = positionId;
         }
       }
@@ -218,6 +387,7 @@ class EmployeesStorage {
             employee.scheduleStartDate.toIso8601String().split('T').first,
         'shift_hours': employee.shiftHours,
         'break_hours': employee.breakHours,
+        'custom_workdays': employee.customWorkdays,
       };
       await api.request(
         existing.containsKey(employee.id) ? 'PATCH' : 'POST',
@@ -230,5 +400,6 @@ class EmployeesStorage {
     for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
       await api.request('DELETE', '/api/v1/employees/$id');
     }
+    _invalidateCache();
   }
 }

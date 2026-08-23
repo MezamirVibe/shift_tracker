@@ -21,6 +21,7 @@ class EmployeeDraft {
   final DateTime scheduleStartDate;
   final int shiftHours;
   final int breakHours;
+  final List<int> customWorkdays;
 
   final String? login;
   final String? roleId;
@@ -36,6 +37,7 @@ class EmployeeDraft {
     required this.scheduleStartDate,
     required this.shiftHours,
     required this.breakHours,
+    required this.customWorkdays,
     this.login,
     this.roleId,
   });
@@ -46,6 +48,7 @@ class EmployeeEditorDialog extends StatefulWidget {
   final String title;
   final String confirmText;
   final bool showAccessFields;
+  final VoidCallback? onDeactivate;
 
   const EmployeeEditorDialog({
     super.key,
@@ -53,6 +56,7 @@ class EmployeeEditorDialog extends StatefulWidget {
     this.title = 'Добавить сотрудника',
     this.confirmText = 'Добавить',
     this.showAccessFields = false,
+    this.onDeactivate,
   });
 
   @override
@@ -84,6 +88,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
   late DateTime _scheduleStartDate;
   late int _shiftHours;
   late int _breakHours;
+  late List<int> _customWorkdays;
 
   @override
   void initState() {
@@ -106,6 +111,10 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     _scheduleStartDate = init?.scheduleStartDate ?? DateTime.now();
     _shiftHours = init?.shiftHours ?? 12;
     _breakHours = init?.breakHours ?? 1;
+    _customWorkdays = [...?init?.customWorkdays];
+    if (_customWorkdays.isEmpty) {
+      _customWorkdays = [1, 2, 3, 4, 5];
+    }
 
     _loadData();
   }
@@ -125,9 +134,14 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
       _loadingPositions = true;
     });
 
-    final deps = await _structureStorage.loadDepartments();
-    final groups = await _structureStorage.loadGroups();
-    final positions = await _positionsStorage.loadPositions();
+    final results = await Future.wait([
+      _structureStorage.loadDepartments(),
+      _structureStorage.loadGroups(),
+      _positionsStorage.loadPositions(),
+    ]);
+    final deps = results[0] as List<DepartmentModel>;
+    final groups = results[1] as List<GroupModel>;
+    final positions = results[2] as List<PositionModel>;
 
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
@@ -161,7 +175,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
 
   void _normalizeSelectedGroup() {
     if (_groupId == null) return;
-    final g = _groups.cast<dynamic?>().firstWhere(
+    final g = _groups.cast<dynamic>().firstWhere(
           (x) => x?.id == _groupId,
           orElse: () => null,
         );
@@ -222,6 +236,11 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
         ],
       ),
     );
+
+    if (!mounted) {
+      ctrl.dispose();
+      return;
+    }
 
     if (ok != true) {
       ctrl.dispose();
@@ -329,6 +348,13 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
       return;
     }
 
+    if (_scheduleType == ScheduleType.custom && _customWorkdays.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Выбери хотя бы один рабочий день')),
+      );
+      return;
+    }
+
     Navigator.of(context).pop(
       EmployeeDraft(
         fullName: name,
@@ -341,6 +367,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
         scheduleStartDate: _scheduleStartDate,
         shiftHours: _shiftHours,
         breakHours: _breakHours,
+        customWorkdays: [..._customWorkdays]..sort(),
         login: widget.showAccessFields ? login : null,
         roleId: widget.showAccessFields ? _roleId : null,
       ),
@@ -373,36 +400,56 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                   child: LinearProgressIndicator(),
                 )
               else ...[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _positionName,
-                        decoration: const InputDecoration(
-                          labelText: 'Должность',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: _positions
-                            .map(
-                              (p) => DropdownMenuItem<String>(
-                                value: p.name,
-                                child: Text(p.name),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          setState(() => _positionName = value);
-                        },
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final field = DropdownButtonFormField<String>(
+                      initialValue: _positionName,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Должность',
+                        border: OutlineInputBorder(),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton.tonalIcon(
+                      items: _positions
+                          .map(
+                            (p) => DropdownMenuItem<String>(
+                              value: p.name,
+                              child: Text(
+                                p.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setState(() => _positionName = value);
+                      },
+                    );
+                    final addButton = FilledButton.tonalIcon(
                       onPressed: _showAddPositionDialog,
                       icon: const Icon(Icons.add),
-                      label: const Text('Добавить'),
-                    ),
-                  ],
+                      label: const Text('Добавить должность'),
+                    );
+
+                    if (constraints.maxWidth < 460) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          field,
+                          const SizedBox(height: 8),
+                          addButton,
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: field),
+                        const SizedBox(width: 8),
+                        addButton,
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 6),
                 Align(
@@ -499,12 +546,57 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                     value: ScheduleType.fiveTwo,
                     child: Text('5/2'),
                   ),
+                  DropdownMenuItem(
+                    value: ScheduleType.custom,
+                    child: Text('Произвольный'),
+                  ),
                 ],
                 onChanged: (v) {
                   if (v == null) return;
                   setState(() => _scheduleType = v);
                 },
               ),
+              if (_scheduleType == ScheduleType.custom) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Рабочие дни недели',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: const [
+                      (1, 'Пн'),
+                      (2, 'Вт'),
+                      (3, 'Ср'),
+                      (4, 'Чт'),
+                      (5, 'Пт'),
+                      (6, 'Сб'),
+                      (7, 'Вс'),
+                    ].map((item) {
+                      return FilterChip(
+                        label: Text(item.$2),
+                        selected: _customWorkdays.contains(item.$1),
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              _customWorkdays.add(item.$1);
+                            } else {
+                              _customWorkdays.remove(item.$1);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               InkWell(
                 onTap: _pickStartDate,
@@ -535,10 +627,13 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                   labelText: 'Длительность смены',
                   border: OutlineInputBorder(),
                 ),
-                items: const [
-                  DropdownMenuItem(value: 9, child: Text('9 часов')),
-                  DropdownMenuItem(value: 12, child: Text('12 часов')),
-                ],
+                items: List.generate(
+                  24,
+                  (index) => DropdownMenuItem(
+                    value: index + 1,
+                    child: Text('${index + 1} ч'),
+                  ),
+                ),
                 onChanged: (v) {
                   if (v == null) return;
                   setState(() {
@@ -619,6 +714,22 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ],
+              if (widget.onDeactivate != null) ...[
+                const SizedBox(height: 20),
+                const Divider(),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: widget.onDeactivate,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.error,
+                    ),
+                    icon: const Icon(Icons.person_off_outlined),
+                    label: const Text('Уволить сотрудника'),
                   ),
                 ),
               ],

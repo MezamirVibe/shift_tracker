@@ -1,3 +1,4 @@
+import json
 import secrets
 import string
 import uuid
@@ -9,7 +10,7 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -30,9 +31,11 @@ from .models import (
     Role,
     ScopeKind,
     User,
+    UserPreference,
     utcnow,
 )
 from .schemas import (
+    AttendanceBulkIn,
     AttendanceRecordIn,
     AttendanceRecordOut,
     AttendanceCloseIn,
@@ -54,8 +57,12 @@ from .schemas import (
     RoleUpdate,
     TokenPair,
     UserCreate,
+    UserHiddenGroupsIn,
+    UserHiddenGroupsOut,
     UserOut,
     UserUpdate,
+    UserPreferencesIn,
+    UserPreferencesOut,
     PasswordResetOut,
 )
 from .security import (
@@ -125,6 +132,8 @@ KNOWN_PERMISSIONS = {
     "viewMoney",
 }
 
+ADMIN_HIDDEN_GROUPS_KEY = "admin_hidden_group_ids"
+
 
 async def seed_roles(session: AsyncSession) -> None:
     for definition in DEFAULT_ROLES:
@@ -137,6 +146,27 @@ async def seed_roles(session: AsyncSession) -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.execute(
+            text("ALTER TYPE schedule_type ADD VALUE IF NOT EXISTS 'custom'")
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS "
+                "custom_workdays JSONB NOT NULL DEFAULT '[1,2,3,4,5]'::jsonb"
+            )
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS "
+                "actual_start TIME NULL"
+            )
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS "
+                "actual_end TIME NULL"
+            )
+        )
     async with SessionFactory() as session:
         await seed_roles(session)
     yield
@@ -266,27 +296,49 @@ def generated_password() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(18))
 
 
-def scoped_employees(query: Select, user: User) -> Select:
-    if is_super_admin(user) or user.role.scope_kind == ScopeKind.all:
-        return query
-    if user.role.scope_kind == ScopeKind.department:
-        if user.department_id is None:
-            return query.where(False)
-        return query.where(Employee.department_id == user.department_id)
-    if user.role.scope_kind == ScopeKind.group:
-        if user.group_id is None:
-            return query.where(False)
-        return query.where(Employee.group_id == user.group_id)
-    if user.employee_id is None:
-        return query.where(False)
-    return query.where(Employee.id == user.employee_id)
+async def admin_hidden_group_ids(session: AsyncSession, user_id: uuid.UUID) -> list[uuid.UUID]:
+    preference = await session.get(UserPreference, user_id)
+    raw_ids = (preference.settings or {}).get(ADMIN_HIDDEN_GROUPS_KEY, []) if preference else []
+    result: list[uuid.UUID] = []
+    for raw_id in raw_ids if isinstance(raw_ids, list) else []:
+        try:
+            result.append(uuid.UUID(str(raw_id)))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+async def scoped_employees(session: AsyncSession, query: Select, user: User) -> Select:
+    if not (is_super_admin(user) or user.role.scope_kind == ScopeKind.all):
+        if user.role.scope_kind == ScopeKind.department:
+            if user.department_id is None:
+                query = query.where(False)
+            else:
+                query = query.where(Employee.department_id == user.department_id)
+        elif user.role.scope_kind == ScopeKind.group:
+            if user.group_id is None:
+                query = query.where(False)
+            else:
+                query = query.where(Employee.group_id == user.group_id)
+        elif user.employee_id is None:
+            query = query.where(False)
+        else:
+            query = query.where(Employee.id == user.employee_id)
+
+    hidden_group_ids = await admin_hidden_group_ids(session, user.id)
+    if hidden_group_ids:
+        query = query.where(
+            or_(Employee.group_id.is_(None), Employee.group_id.not_in(hidden_group_ids))
+        )
+    return query
 
 
 async def ensure_employee_in_scope(
     session: AsyncSession, user: User, employee_id: uuid.UUID
 ) -> Employee:
     employee = await session.scalar(
-        scoped_employees(
+        await scoped_employees(
+            session,
             select(Employee).where(Employee.id == employee_id, Employee.is_active.is_(True)),
             user,
         )
@@ -294,6 +346,24 @@ async def ensure_employee_in_scope(
     if employee is None:
         raise api_error(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
     return employee
+
+
+async def ensure_employees_in_scope(
+    session: AsyncSession, user: User, employee_ids: set[uuid.UUID]
+) -> None:
+    if not employee_ids:
+        return
+    query = await scoped_employees(
+        session,
+        select(Employee.id).where(
+            Employee.id.in_(employee_ids),
+            Employee.is_active.is_(True),
+        ),
+        user,
+    )
+    found_ids = set((await session.scalars(query)).all())
+    if found_ids != employee_ids:
+        raise api_error(status.HTTP_404_NOT_FOUND, "Один из сотрудников не найден")
 
 
 async def issue_tokens(session: AsyncSession, user: User) -> TokenPair:
@@ -437,6 +507,59 @@ async def me(user: User = Depends(current_user)) -> User:
     return user
 
 
+@app.get("/api/v1/preferences", response_model=UserPreferencesOut)
+async def get_preferences(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserPreferencesOut:
+    preference = await session.get(UserPreference, user.id)
+    if preference is None:
+        return UserPreferencesOut(settings={}, updated_at=None)
+    return UserPreferencesOut(
+        settings=preference.settings or {},
+        updated_at=preference.updated_at,
+    )
+
+
+@app.put("/api/v1/preferences", response_model=UserPreferencesOut)
+async def save_preferences(
+    payload: UserPreferencesIn,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserPreferencesOut:
+    if len(json.dumps(payload.settings, ensure_ascii=False)) > 65536:
+        raise api_error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Настройки слишком большие")
+
+    preference = await session.get(UserPreference, user.id)
+    settings_value = dict(payload.settings)
+    existing_admin_hidden = (
+        (preference.settings or {}).get(ADMIN_HIDDEN_GROUPS_KEY, [])
+        if preference is not None
+        else []
+    )
+    settings_value[ADMIN_HIDDEN_GROUPS_KEY] = existing_admin_hidden
+    if preference is None:
+        preference = UserPreference(user_id=user.id, settings=settings_value)
+        session.add(preference)
+    else:
+        preference.settings = settings_value
+        preference.updated_at = utcnow()
+
+    await audit(
+        session,
+        actor=user,
+        action="update_preferences",
+        entity_type="user_preferences",
+        entity_id=str(user.id),
+    )
+    await session.commit()
+    await session.refresh(preference)
+    return UserPreferencesOut(
+        settings=preference.settings,
+        updated_at=preference.updated_at,
+    )
+
+
 @app.post("/api/v1/auth/change-password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
     body: PasswordChangeIn,
@@ -559,6 +682,63 @@ async def users(
 ) -> list[User]:
     require_super_admin(user)
     return list((await session.scalars(user_query().order_by(User.last_name, User.first_name))).all())
+
+
+@app.get("/api/v1/users/{user_id}/hidden-groups", response_model=UserHiddenGroupsOut)
+async def get_user_hidden_groups(
+    user_id: uuid.UUID,
+    actor: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserHiddenGroupsOut:
+    require_super_admin(actor)
+    if await session.get(User, user_id) is None:
+        raise api_error(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    return UserHiddenGroupsOut(
+        hidden_group_ids=await admin_hidden_group_ids(session, user_id)
+    )
+
+
+@app.put("/api/v1/users/{user_id}/hidden-groups", response_model=UserHiddenGroupsOut)
+async def set_user_hidden_groups(
+    user_id: uuid.UUID,
+    body: UserHiddenGroupsIn,
+    actor: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserHiddenGroupsOut:
+    require_super_admin(actor)
+    if await session.get(User, user_id) is None:
+        raise api_error(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+
+    unique_ids = list(dict.fromkeys(body.hidden_group_ids))
+    if unique_ids:
+        existing_ids = set(
+            (
+                await session.scalars(select(Group.id).where(Group.id.in_(unique_ids)))
+            ).all()
+        )
+        if existing_ids != set(unique_ids):
+            raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "Одна из групп не найдена")
+
+    preference = await session.get(UserPreference, user_id)
+    settings_value = dict(preference.settings or {}) if preference else {}
+    settings_value[ADMIN_HIDDEN_GROUPS_KEY] = [str(group_id) for group_id in unique_ids]
+    if preference is None:
+        preference = UserPreference(user_id=user_id, settings=settings_value)
+        session.add(preference)
+    else:
+        preference.settings = settings_value
+        preference.updated_at = utcnow()
+
+    await audit(
+        session,
+        actor=actor,
+        action="update_group_visibility",
+        entity_type="user",
+        entity_id=str(user_id),
+        details={"hidden_group_ids": settings_value[ADMIN_HIDDEN_GROUPS_KEY]},
+    )
+    await session.commit()
+    return UserHiddenGroupsOut(hidden_group_ids=unique_ids)
 
 
 @app.post("/api/v1/users", response_model=UserOut, status_code=201)
@@ -753,12 +933,16 @@ async def delete_department(
 @app.get("/api/v1/groups", response_model=list[GroupOut])
 async def groups(
     department_id: uuid.UUID | None = None,
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[Group]:
     query = select(Group).order_by(Group.name)
     if department_id is not None:
         query = query.where(Group.department_id == department_id)
+    if not is_super_admin(user):
+        hidden_ids = await admin_hidden_group_ids(session, user.id)
+        if hidden_ids:
+            query = query.where(Group.id.not_in(hidden_ids))
     return list((await session.scalars(query)).all())
 
 
@@ -913,7 +1097,7 @@ async def employees(
     query = select(Employee).order_by(Employee.full_name)
     if not include_inactive:
         query = query.where(Employee.is_active.is_(True))
-    query = scoped_employees(query, user)
+    query = await scoped_employees(session, query, user)
     items = list((await session.scalars(query)).all())
     if not has_permission(user, "viewMoney") and not is_super_admin(user):
         for item in items:
@@ -964,6 +1148,7 @@ async def update_employee(
         schedule_start_date=changes.get("schedule_start_date", item.schedule_start_date),
         shift_hours=changes.get("shift_hours", item.shift_hours),
         break_hours=changes.get("break_hours", item.break_hours),
+        custom_workdays=changes.get("custom_workdays", item.custom_workdays),
     )
     await validate_employee_links(session, candidate)
     if user.role.scope_kind == ScopeKind.department and candidate.department_id != user.department_id:
@@ -1018,7 +1203,7 @@ async def attendance_range(
 ) -> dict[str, dict[str, object]]:
     if date_to < date_from or (date_to - date_from).days > 5000:
         raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "Недопустимый диапазон дат")
-    allowed = scoped_employees(select(Employee.id), user).subquery()
+    allowed = (await scoped_employees(session, select(Employee.id), user)).subquery()
     records = list(
         (
             await session.scalars(
@@ -1043,6 +1228,12 @@ async def attendance_range(
             "fact": item.fact.value,
             "comment": item.comment,
             "workedMinutes": item.worked_minutes,
+            "actualStart": item.actual_start.isoformat(timespec="minutes")
+            if item.actual_start
+            else None,
+            "actualEnd": item.actual_end.isoformat(timespec="minutes")
+            if item.actual_end
+            else None,
             "updatedAt": item.updated_at.isoformat(),
         }
     for item in days:
@@ -1078,6 +1269,8 @@ async def set_attendance(
     record.fact = body.fact
     record.comment = body.comment.strip() if body.comment else None
     record.worked_minutes = body.worked_minutes
+    record.actual_start = body.actual_start if body.fact == FactStatus.worked else None
+    record.actual_end = body.actual_end if body.fact == FactStatus.worked else None
     record.updated_by_id = user.id
     await audit(
         session,
@@ -1089,6 +1282,59 @@ async def set_attendance(
     await session.commit()
     await session.refresh(record)
     return record
+
+
+@app.put("/api/v1/attendance/{day}", status_code=status.HTTP_204_NO_CONTENT)
+async def set_attendance_bulk(
+    day: date,
+    body: AttendanceBulkIn,
+    user: User = Depends(require_permission("editAttendance")),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    attendance_day = await session.get(AttendanceDay, day)
+    if attendance_day is None:
+        attendance_day = AttendanceDay(day=day)
+        session.add(attendance_day)
+        await session.flush()
+    if attendance_day.is_closed:
+        raise api_error(status.HTTP_409_CONFLICT, "День закрыт")
+
+    employee_ids = {item.employee_id for item in body.records}
+    await ensure_employees_in_scope(session, user, employee_ids)
+    existing_records = {
+        item.employee_id: item
+        for item in (
+            await session.scalars(
+                select(AttendanceRecord).where(
+                    AttendanceRecord.day == day,
+                    AttendanceRecord.employee_id.in_(employee_ids),
+                )
+            )
+        ).all()
+    }
+    for item in body.records:
+        record = existing_records.get(item.employee_id)
+        if record is None:
+            record = AttendanceRecord(day=day, employee_id=item.employee_id)
+            session.add(record)
+            existing_records[item.employee_id] = record
+        record.fact = item.fact
+        record.comment = item.comment.strip() if item.comment else None
+        record.worked_minutes = item.worked_minutes
+        record.actual_start = item.actual_start if item.fact == FactStatus.worked else None
+        record.actual_end = item.actual_end if item.fact == FactStatus.worked else None
+        record.updated_by_id = user.id
+
+    await audit(
+        session,
+        actor=user,
+        action="set_fact_bulk",
+        entity_type="attendance_day",
+        entity_id=str(day),
+        details={"records": len(body.records)},
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.post("/api/v1/attendance/{day}/close", status_code=status.HTTP_204_NO_CONTENT)
@@ -1105,15 +1351,35 @@ async def close_attendance_day(
         await session.flush()
     if attendance_day.is_closed:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    for employee_id in set(body.planned_employee_ids):
-        await ensure_employee_in_scope(session, user, employee_id)
-        record = await session.get(AttendanceRecord, (day, employee_id))
+    planned_ids = set(body.planned_employee_ids)
+    await ensure_employees_in_scope(session, user, planned_ids)
+    existing_records = {
+        item.employee_id: item
+        for item in (
+            await session.scalars(
+                select(AttendanceRecord).where(
+                    AttendanceRecord.day == day,
+                    AttendanceRecord.employee_id.in_(planned_ids),
+                )
+            )
+        ).all()
+    }
+    for employee_id in planned_ids:
+        record = existing_records.get(employee_id)
         if record is None:
-            record = AttendanceRecord(day=day, employee_id=employee_id)
+            record = AttendanceRecord(
+                day=day,
+                employee_id=employee_id,
+                fact=FactStatus.absent,
+                worked_minutes=0,
+                updated_by_id=user.id,
+            )
             session.add(record)
-        if record.fact.value == "none":
+        elif record.fact == FactStatus.none:
             record.fact = FactStatus.absent
             record.worked_minutes = 0
+            record.actual_start = None
+            record.actual_end = None
             record.updated_by_id = user.id
     attendance_day.is_closed = True
     attendance_day.closed_at = utcnow()
@@ -1145,7 +1411,7 @@ async def attendance(
     user: User = Depends(require_permission("viewAttendance")),
     session: AsyncSession = Depends(get_session),
 ) -> list[AttendanceRecord]:
-    allowed = scoped_employees(select(Employee.id), user).subquery()
+    allowed = (await scoped_employees(session, select(Employee.id), user)).subquery()
     query = (
         select(AttendanceRecord)
         .where(AttendanceRecord.day == day, AttendanceRecord.employee_id.in_(select(allowed.c.id)))
