@@ -45,6 +45,9 @@ class FactStatus(str, enum.Enum):
     absent = "absent"
     sick = "sick"
     vacation = "vacation"
+    businessTrip = "businessTrip"
+    vacationWorked = "vacationWorked"
+    unpaid = "unpaid"
 
 
 class Role(Base):
@@ -123,6 +126,33 @@ class Employee(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class EmployeeHistory(Base):
+    """Effective-dated, non-financial employee data used by historical reports."""
+
+    __tablename__ = "employee_history"
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="RESTRICT"), primary_key=True
+    )
+    effective_from: Mapped[date] = mapped_column(Date, primary_key=True)
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+
+
+class AttendanceLock(Base):
+    """A day is closed for specific employees, never for unrelated departments."""
+
+    __tablename__ = "attendance_locks"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="RESTRICT"), primary_key=True
+    )
+    closed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class User(Base):

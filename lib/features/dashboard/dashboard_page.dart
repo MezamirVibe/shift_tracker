@@ -158,7 +158,7 @@ class _DashboardPageState extends State<DashboardPage> {
     var total = 0;
     for (var day = 1; day <= now.day; day++) {
       final record = _record(DateTime(now.year, now.month, day), employee.id);
-      if (record?.fact == FactStatus.worked) {
+      if (record?.hasWorked == true) {
         total += record?.workedMinutes ?? employee.paidShiftHours * 60;
       }
     }
@@ -173,7 +173,7 @@ class _DashboardPageState extends State<DashboardPage> {
     for (var day = 1; day <= now.day; day++) {
       final date = DateTime(now.year, now.month, day);
       final record = _record(date, employee.id);
-      if (record?.fact != FactStatus.worked) continue;
+      if (record?.hasWorked != true) continue;
       result.add(
         _WorkedDayEntry(
           day: date,
@@ -260,10 +260,11 @@ class _DashboardPageState extends State<DashboardPage> {
       final fact = _record(today, employee.id)?.fact;
       if (fact == FactStatus.absent ||
           fact == FactStatus.sick ||
-          fact == FactStatus.vacation) {
+          fact == FactStatus.vacation ||
+          fact == FactStatus.unpaid) {
         return false;
       }
-      return fact == FactStatus.worked ||
+      return _record(today, employee.id)?.hasWorked == true ||
           isWorkDay(
             day: today,
             type: employee.scheduleType,

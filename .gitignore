@@ -1,5 +1,6 @@
 # --- Dart / Flutter ---
 .dart_tool/
+.flutter-plugins-dependencies
 .packages
 .pub/
 build/
@@ -22,6 +23,9 @@ coverage/
 *.log
 
 # --- Python ---
+.venv/
+.pytest_cache/
+*.inspect.ndjson
 __pycache__/
 *.py[cod]
 

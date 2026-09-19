@@ -29,6 +29,8 @@ class _DayPageState extends State<DayPage> {
 
   bool _loading = true;
   bool _closed = false;
+  String? _loadError;
+  List<EmployeeModel> _allDayEmployees = [];
 
   late final DateTime _day;
   late final String _dateIso;
@@ -69,74 +71,78 @@ class _DayPageState extends State<DayPage> {
       AuthService.instance.hasPerm(AppPermission.editAttendance);
 
   Future<void> _load({bool force = false}) async {
-    final results = await Future.wait([
-      _employeesStorage.load(force: force),
-      _structureStorage.loadGroups(force: force),
-      _attendanceStorage.loadDay(_dateIso, force: force),
-      _preferences.syncForCurrentUser(force: force),
-    ]);
-    final allEmployees = results[0] as List<EmployeeModel>;
-    final groups = results[1] as List<GroupModel>;
+    try {
+      final results = await Future.wait([
+        _employeesStorage.load(force: force),
+        _structureStorage.loadGroups(force: force),
+        _attendanceStorage.loadDay(_dateIso, force: force),
+        _preferences.syncForCurrentUser(force: force),
+      ]);
+      final allEmployees = results[0] as List<EmployeeModel>;
+      final groups = results[1] as List<GroupModel>;
 
-    // ✅ scope по роли
-    final scopedEmployees =
-        AuthService.instance.filterEmployeesByScope(allEmployees);
-    final visibleEmployees = scopedEmployees
-        .where((employee) => _preferences.isGroupVisible(employee.groupId))
-        .toList();
+      // ✅ scope по роли
+      final scopedEmployees =
+          AuthService.instance.filterEmployeesByScope(allEmployees);
+      final visibleEmployees = scopedEmployees
+          .where((employee) => _preferences.isGroupVisible(employee.groupId))
+          .toList();
 
-    final d = dateOnly(_day);
-    final planned = visibleEmployees.where((e) {
-      return isWorkDay(
-        day: d,
-        type: e.scheduleType,
-        startDate: e.scheduleStartDate,
-        customWorkdays: e.customWorkdays,
-      );
-    }).toList();
+      final attendance =
+          results[2] as ({Map<String, AttendanceRecord> records, bool closed});
+      final d = dateOnly(_day);
+      final planned = visibleEmployees.where((e) {
+        return (attendance.records[e.id]?.fact != null &&
+                attendance.records[e.id]?.fact != FactStatus.none) ||
+            isWorkDay(
+              day: d,
+              type: e.scheduleType,
+              startDate: e.scheduleStartDate,
+              customWorkdays: e.customWorkdays,
+            );
+      }).toList();
 
-    final attendance =
-        results[2] as ({Map<String, AttendanceRecord> records, bool closed});
-    final configurableGroups = groups
-        .where(
-          (group) => !_preferences.adminHiddenGroupIds.contains(group.id),
-        )
-        .toList();
+      final configurableGroups = groups
+          .where(
+            (group) => !_preferences.adminHiddenGroupIds.contains(group.id),
+          )
+          .toList();
 
-    if (!mounted) return;
-    setState(() {
-      _planned = planned;
-      _groups = configurableGroups..sort((a, b) => a.name.compareTo(b.name));
-      _scopeGroupIds = scopedEmployees
-          .map((employee) => employee.groupId)
-          .whereType<String>()
-          .toSet();
-      _recordsById = attendance.records;
-      _closed = attendance.closed;
-      _loading = false;
-    });
+      if (!mounted) return;
+      setState(() {
+        _planned = planned;
+        _allDayEmployees = visibleEmployees;
+        _loadError = null;
+        _groups = configurableGroups..sort((a, b) => a.name.compareTo(b.name));
+        _scopeGroupIds = scopedEmployees
+            .map((employee) => employee.groupId)
+            .whereType<String>()
+            .toSet();
+        _recordsById = attendance.records;
+        _closed = planned.isNotEmpty &&
+            planned.every((e) => attendance.records[e.id]?.closed == true);
+        _loading = false;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadError = 'Не удалось загрузить день: $error';
+        });
+      }
+    }
   }
 
   AttendanceRecord? _recordOf(EmployeeModel e) => _recordsById[e.id];
   FactStatus _factOf(EmployeeModel e) => _recordOf(e)?.fact ?? FactStatus.none;
 
-  String _factLabel(FactStatus s) {
-    switch (s) {
-      case FactStatus.none:
-        return 'Не заполнено';
-      case FactStatus.worked:
-        return 'Вышел';
-      case FactStatus.absent:
-        return 'Неявка';
-      case FactStatus.sick:
-        return 'Больничный';
-      case FactStatus.vacation:
-        return 'Отпуск';
-    }
-  }
+  String _factLabel(FactStatus s) => s.label;
 
   int _minutesFor(EmployeeModel e, FactStatus s) {
     switch (s) {
+      case FactStatus.businessTrip:
+      case FactStatus.vacationWorked:
+        return _recordOf(e)?.workedMinutes ?? 0;
       case FactStatus.worked:
         return _recordOf(e)?.workedMinutes ?? (e.paidShiftHours * 60);
       case FactStatus.none:
@@ -144,6 +150,7 @@ class _DayPageState extends State<DayPage> {
       case FactStatus.absent:
       case FactStatus.sick:
       case FactStatus.vacation:
+      case FactStatus.unpaid:
         return 0;
     }
   }
@@ -205,7 +212,7 @@ class _DayPageState extends State<DayPage> {
     EmployeeModel employee,
     AttendanceRecord? record,
   ) {
-    if (record?.fact != FactStatus.worked ||
+    if (record?.hasWorked != true ||
         record?.actualStart == null ||
         record?.actualEnd == null) {
       return null;
@@ -288,7 +295,12 @@ class _DayPageState extends State<DayPage> {
     String? actualStart,
     String? actualEnd,
   }) async {
-    if (_savingEmployeeIds.contains(e.id) || _bulkSaving || _closed) return;
+    if (!_canEditAttendance ||
+        _savingEmployeeIds.contains(e.id) ||
+        _bulkSaving ||
+        _recordOf(e)?.closed == true) {
+      return;
+    }
     final previous = _recordsById[e.id];
     final next = AttendanceRecord(
       fact: fact,
@@ -334,10 +346,16 @@ class _DayPageState extends State<DayPage> {
     List<EmployeeModel> employees,
     FactStatus fact,
   ) async {
-    if (employees.isEmpty || _bulkSaving || _closed) return;
+    if (!_canEditAttendance || employees.isEmpty || _bulkSaving || _closed) {
+      return;
+    }
+    final editable =
+        employees.where((e) => _recordOf(e)?.closed != true).toList();
     final targets = fact == FactStatus.worked
-        ? employees.where((employee) => _factOf(employee) != fact).toList()
-        : employees;
+        ? editable
+            .where((employee) => _factOf(employee) == FactStatus.none)
+            .toList()
+        : editable;
     if (targets.isEmpty) return;
     final updates = <String, AttendanceRecord>{
       for (final employee in targets)
@@ -390,8 +408,16 @@ class _DayPageState extends State<DayPage> {
     final targetCount = clear
         ? employees.length
         : employees
-            .where((employee) => _factOf(employee) != FactStatus.worked)
+            .where((employee) =>
+                _factOf(employee) == FactStatus.none &&
+                _recordOf(employee)?.closed != true)
             .length;
+    if (targetCount == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Нет незаполненных отметок. Уже указанные отпуска и другие статусы сохранены.')));
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -399,7 +425,7 @@ class _DayPageState extends State<DayPage> {
         content: Text(
           clear
               ? 'Снять отметку о выходе у $targetCount сотрудников?'
-              : 'Отметить статус «Вышел» для $targetCount сотрудников?',
+              : 'Отметить статус «Вышел» для $targetCount сотрудников? Уже заполненные отметки не изменятся.',
         ),
         actions: [
           TextButton(
@@ -421,11 +447,44 @@ class _DayPageState extends State<DayPage> {
     }
   }
 
+  Future<void> _addUnplanned() async {
+    final candidates = _allDayEmployees
+        .where((e) => !_planned.any((p) => p.id == e.id))
+        .toList();
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Все доступные сотрудники уже показаны')));
+      return;
+    }
+    final employee = await showDialog<EmployeeModel>(
+        context: context,
+        builder: (context) => SimpleDialog(
+              title: const Text('Внеплановый выход'),
+              children: [
+                for (final e in candidates)
+                  SimpleDialogOption(
+                      onPressed: () => Navigator.pop(context, e),
+                      child: Text(e.fullName))
+              ],
+            ));
+    if (employee == null || !mounted) return;
+    await _edit(employee);
+    if (mounted &&
+        _recordsById[employee.id]?.fact != null &&
+        _recordsById[employee.id]?.fact != FactStatus.none) {
+      setState(() {
+        _planned = [..._planned, employee];
+        _closed = false;
+      });
+    }
+  }
+
   Future<void> _edit(EmployeeModel e) async {
-    final canEditNow = _canEditAttendance && !_closed;
+    final canEditNow = _canEditAttendance && _recordOf(e)?.closed != true;
     final current = _recordOf(e);
 
     FactStatus fact = current?.fact ?? FactStatus.none;
+    bool tripHasHours = (current?.workedMinutes ?? 0) > 0;
     final commentController =
         TextEditingController(text: current?.comment ?? '');
     final defaults = _defaultTimes(e);
@@ -474,6 +533,15 @@ class _DayPageState extends State<DayPage> {
                           value: FactStatus.vacation,
                           child: Text('Отпуск'),
                         ),
+                        DropdownMenuItem(
+                            value: FactStatus.businessTrip,
+                            child: Text('Командировка')),
+                        DropdownMenuItem(
+                            value: FactStatus.vacationWorked,
+                            child: Text('Работа в отпуске')),
+                        DropdownMenuItem(
+                            value: FactStatus.unpaid,
+                            child: Text('Без содержания')),
                       ],
                       onChanged: canEditNow
                           ? (v) {
@@ -483,7 +551,19 @@ class _DayPageState extends State<DayPage> {
                           : null,
                       decoration: const InputDecoration(labelText: 'Факт'),
                     ),
-                    if (fact == FactStatus.worked) ...[
+                    if (fact == FactStatus.businessTrip)
+                      SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('В командировке отработаны часы'),
+                          subtitle: const Text(
+                              'Без часов — «К», с часами — например «11к»'),
+                          value: tripHasHours,
+                          onChanged: canEditNow
+                              ? (value) =>
+                                  setLocalState(() => tripHasHours = value)
+                              : null),
+                    if (fact.mayHaveHours &&
+                        (fact != FactStatus.businessTrip || tripHasHours)) ...[
                       const SizedBox(height: 16),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -632,7 +712,9 @@ class _DayPageState extends State<DayPage> {
     commentController.dispose();
     if (saved != true) return;
 
-    final minutesToSave = fact == FactStatus.worked
+    final saveHours =
+        fact.mayHaveHours && (fact != FactStatus.businessTrip || tripHasHours);
+    final minutesToSave = saveHours
         ? _workedMinutesBetween(
             actualStart,
             actualEnd,
@@ -646,13 +728,15 @@ class _DayPageState extends State<DayPage> {
       fact,
       comment: comment.isEmpty ? null : comment,
       workedMinutes: minutesToSave,
-      actualStart: fact == FactStatus.worked ? _timeValue(actualStart) : null,
-      actualEnd: fact == FactStatus.worked ? _timeValue(actualEnd) : null,
+      actualStart: saveHours ? _timeValue(actualStart) : null,
+      actualEnd: saveHours ? _timeValue(actualEnd) : null,
     );
   }
 
   Future<void> _closeDay() async {
-    if (!_canEditAttendance) return;
+    if (!_canEditAttendance || _bulkSaving || _savingEmployeeIds.isNotEmpty) {
+      return;
+    }
 
     final ok = await showDialog<bool>(
       context: context,
@@ -674,19 +758,29 @@ class _DayPageState extends State<DayPage> {
       ),
     );
 
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
 
-    await _attendanceStorage.closeDay(
-      dateIso: _dateIso,
-      plannedEmployeeIds: _planned.map((e) => e.id).toList(),
-    );
-
-    if (!mounted) return;
-    await _load();
+    setState(() => _bulkSaving = true);
+    try {
+      await _attendanceStorage.closeDay(
+        dateIso: _dateIso,
+        plannedEmployeeIds: _planned.map((e) => e.id).toList(),
+      );
+      if (mounted) await _load();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось закрыть день: $error')));
+      }
+    } finally {
+      if (mounted) setState(() => _bulkSaving = false);
+    }
   }
 
   Future<void> _reopenDay() async {
-    if (!_canEditAttendance) return;
+    if (!_canEditAttendance || _bulkSaving || _savingEmployeeIds.isNotEmpty) {
+      return;
+    }
 
     final ok = await showDialog<bool>(
       context: context,
@@ -707,12 +801,21 @@ class _DayPageState extends State<DayPage> {
       ),
     );
 
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
 
-    await _attendanceStorage.reopenDay(dateIso: _dateIso);
-
-    if (!mounted) return;
-    await _load();
+    setState(() => _bulkSaving = true);
+    try {
+      await _attendanceStorage.reopenDay(
+          dateIso: _dateIso, employeeIds: _planned.map((e) => e.id).toList());
+      if (mounted) await _load();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось переоткрыть день: $error')));
+      }
+    } finally {
+      if (mounted) setState(() => _bulkSaving = false);
+    }
   }
 
   String _groupName(String? groupId) {
@@ -870,7 +973,7 @@ class _DayPageState extends State<DayPage> {
     final minutes = _minutesFor(employee, fact);
     final duration = formatWorkDuration(minutes);
     final record = _recordOf(employee);
-    final actualTime = fact == FactStatus.worked &&
+    final actualTime = fact.mayHaveHours &&
             record?.actualStart != null &&
             record?.actualEnd != null
         ? '${record!.actualStart}–${record.actualEnd}'
@@ -879,7 +982,8 @@ class _DayPageState extends State<DayPage> {
     final hasComment = comment != null && comment.isNotEmpty;
     final deviation = _deviationLabel(employee, record);
     final saving = _savingEmployeeIds.contains(employee.id);
-    final canChange = canEditNow && !_bulkSaving && !saving;
+    final canChange =
+        canEditNow && !_bulkSaving && !saving && record?.closed != true;
 
     Future<void> setQuickFact(FactStatus value) async {
       if (!canChange) return;
@@ -1213,7 +1317,7 @@ class _DayPageState extends State<DayPage> {
 
     final plannedCount = _planned.length;
     final workedCount =
-        _planned.where((e) => _factOf(e) == FactStatus.worked).length;
+        _planned.where((e) => _recordOf(e)?.hasWorked == true).length;
     final absentCount =
         _planned.where((e) => _factOf(e) == FactStatus.absent).length;
     final sickCount =
@@ -1231,6 +1335,18 @@ class _DayPageState extends State<DayPage> {
       title: isPhone ? title : 'День: $title',
       selectedRoute: '/day/${widget.dateIso}',
       actions: [
+        if (_canEditAttendance && !_loading)
+          IconButton(
+              tooltip: 'Добавить внеплановый выход',
+              onPressed: _bulkSaving ? null : _addUnplanned,
+              icon: const Icon(Icons.person_add_alt_1)),
+        if (_canEditAttendance &&
+            !_closed &&
+            _planned.any((e) => _recordOf(e)?.closed == true))
+          IconButton(
+              tooltip: 'Переоткрыть закрытые отметки',
+              onPressed: _reopenDay,
+              icon: const Icon(Icons.lock_open)),
         IconButton(
           tooltip: 'Обновить',
           icon: const Icon(Icons.refresh),
@@ -1449,6 +1565,15 @@ class _DayPageState extends State<DayPage> {
                                       value: FactStatus.vacation,
                                       child: Text('Отпуск'),
                                     ),
+                                    DropdownMenuItem(
+                                        value: FactStatus.businessTrip,
+                                        child: Text('Командировка')),
+                                    DropdownMenuItem(
+                                        value: FactStatus.vacationWorked,
+                                        child: Text('Работа в отпуске')),
+                                    DropdownMenuItem(
+                                        value: FactStatus.unpaid,
+                                        child: Text('Без содержания')),
                                   ],
                                   onChanged: (value) =>
                                       setState(() => _statusFilter = value),
@@ -1593,18 +1718,22 @@ class _DayPageState extends State<DayPage> {
                   ),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: _planned.isEmpty
-                        ? const Center(
-                            child: Text(
-                                'Никто не запланирован в смену по графику.'),
-                          )
-                        : visibleCount == 0
+                    child: _loadError != null
+                        ? Center(
+                            child:
+                                Text(_loadError!, textAlign: TextAlign.center))
+                        : _planned.isEmpty
                             ? const Center(
                                 child: Text(
-                                  'По выбранному поиску и статусу сотрудников нет.',
-                                ),
+                                    'Никто не запланирован в смену по графику.'),
                               )
-                            : _employeesList(canEditNow),
+                            : visibleCount == 0
+                                ? const Center(
+                                    child: Text(
+                                      'По выбранному поиску и статусу сотрудников нет.',
+                                    ),
+                                  )
+                                : _employeesList(canEditNow),
                   ),
                 ],
               ),

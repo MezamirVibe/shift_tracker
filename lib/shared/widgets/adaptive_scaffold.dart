@@ -71,6 +71,13 @@ class AdaptiveScaffold extends StatelessWidget {
       ),
       if (canEmployees)
         NavItem(
+          label: 'Табель',
+          icon: Icons.table_view_outlined,
+          route: '/timesheet',
+          onTap: () => context.go('/timesheet'),
+        ),
+      if (canEmployees)
+        NavItem(
           label: 'Сотрудники',
           icon: Icons.people_outline,
           route: '/employees',

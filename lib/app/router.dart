@@ -13,6 +13,7 @@ import '../features/day/day_page.dart' as day;
 import '../features/employees/employee_details_page.dart' as emp_details;
 import '../features/employees/employees_page.dart' as emp;
 import '../features/preferences/preferences_page.dart' as preferences;
+import '../features/attendance/month_report_page.dart';
 
 class AppRouter {
   static const String splash = '/splash';
@@ -69,6 +70,20 @@ class AppRouter {
         return null;
       },
       routes: [
+        GoRoute(
+          path: '/timesheet',
+          builder: (_, state) {
+            final now = DateTime.now();
+            final year =
+                int.tryParse(state.uri.queryParameters['year'] ?? '') ??
+                    now.year;
+            final month =
+                int.tryParse(state.uri.queryParameters['month'] ?? '') ??
+                    now.month;
+            return MonthReportPage(
+                year: year.clamp(2000, 2100), month: month.clamp(1, 12));
+          },
+        ),
         GoRoute(
           path: splash,
           builder: (_, __) => const SplashPage(),

@@ -10,7 +10,8 @@ import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import Select, and_, func, or_, select, text
+from sqlalchemy import Select, and_, delete, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,6 +20,8 @@ from .config import get_settings
 from .database import SessionFactory, engine, get_session
 from .models import (
     AttendanceDay,
+    AttendanceLock,
+    EmployeeHistory,
     AttendanceRecord,
     AuditEvent,
     Base,
@@ -39,6 +42,7 @@ from .schemas import (
     AttendanceRecordIn,
     AttendanceRecordOut,
     AttendanceCloseIn,
+    AttendanceReopenIn,
     BootstrapIn,
     DepartmentIn,
     DepartmentOut,
@@ -74,6 +78,11 @@ from .security import (
     verify_password,
 )
 
+
+from .history import ensure_employee_history, remember_employee, paid_minutes, snapshot_on
+from .migrations import migrate
+from .reports import month_report
+from .timesheet_xlsx import make_timesheet
 
 settings = get_settings()
 bearer = HTTPBearer(auto_error=False)
@@ -144,29 +153,7 @@ async def seed_roles(session: AsyncSession) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-        await connection.execute(
-            text("ALTER TYPE schedule_type ADD VALUE IF NOT EXISTS 'custom'")
-        )
-        await connection.execute(
-            text(
-                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS "
-                "custom_workdays JSONB NOT NULL DEFAULT '[1,2,3,4,5]'::jsonb"
-            )
-        )
-        await connection.execute(
-            text(
-                "ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS "
-                "actual_start TIME NULL"
-            )
-        )
-        await connection.execute(
-            text(
-                "ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS "
-                "actual_end TIME NULL"
-            )
-        )
+    await migrate()
     async with SessionFactory() as session:
         await seed_roles(session)
     yield
@@ -1121,6 +1108,8 @@ async def create_employee(
         raise api_error(status.HTTP_403_FORBIDDEN, "Недостаточно области доступа")
     item = Employee(**body.model_dump(exclude_none=True))
     session.add(item)
+    await session.flush()
+    await remember_employee(session, item, min(date.today(), item.schedule_start_date))
     await audit(session, actor=user, action="create", entity_type="employee", entity_id=str(item.id))
     await session.commit()
     await session.refresh(item)
@@ -1135,6 +1124,7 @@ async def update_employee(
     session: AsyncSession = Depends(get_session),
 ) -> Employee:
     item = await ensure_employee_in_scope(session, user, employee_id)
+    await ensure_employee_history(session, item)
     changes = body.model_dump(exclude_unset=True)
     candidate = EmployeeIn(
         id=item.id,
@@ -1157,6 +1147,7 @@ async def update_employee(
         raise api_error(status.HTTP_403_FORBIDDEN, "Нельзя переносить сотрудника вне своей группы")
     for field, value in changes.items():
         setattr(item, field, value)
+    await remember_employee(session, item, date.today())
     await audit(session, actor=user, action="update", entity_type="employee", entity_id=str(item.id))
     await session.commit()
     await session.refresh(item)
@@ -1175,7 +1166,9 @@ async def delete_employee(
     )
     if linked_users:
         raise api_error(status.HTTP_409_CONFLICT, "Сотрудник связан с активной учётной записью")
+    await ensure_employee_history(session, item)
     item.is_active = False
+    await remember_employee(session, item, date.today())
     await audit(session, actor=user, action="deactivate", entity_type="employee", entity_id=str(item.id))
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1214,13 +1207,16 @@ async def attendance_range(
             )
         ).all()
     )
-    days = list(
-        (
-            await session.scalars(
-                select(AttendanceDay).where(AttendanceDay.day.between(date_from, date_to))
-            )
-        ).all()
-    )
+    locks = list((await session.scalars(select(AttendanceLock).where(
+        AttendanceLock.day.between(date_from, date_to),
+        AttendanceLock.employee_id.in_(select(allowed.c.id)),
+    ))).all())
+    locked_by_day: dict[date, set[str]] = {}
+    for lock in locks:
+        locked_by_day.setdefault(lock.day, set()).add(str(lock.employee_id))
+    active_ids = set(map(str, (await session.scalars(
+        await scoped_employees(session, select(Employee.id).where(Employee.is_active.is_(True)), user)
+    )).all()))
     result: dict[str, dict[str, object]] = {}
     for item in records:
         day_map = result.setdefault(item.day.isoformat(), {})
@@ -1236,173 +1232,134 @@ async def attendance_range(
             else None,
             "updatedAt": item.updated_at.isoformat(),
         }
-    for item in days:
-        day_map = result.setdefault(item.day.isoformat(), {})
+    for day in set(locked_by_day) | {item.day for item in records}:
+        day_map = result.setdefault(day.isoformat(), {})
+        locked_ids = locked_by_day.get(day, set())
         day_map["_meta"] = {
-            "closed": item.is_closed,
-            "closedAt": item.closed_at.isoformat() if item.closed_at else None,
-            "reopenedAt": item.reopened_at.isoformat() if item.reopened_at else None,
+            "closed": bool(active_ids) and active_ids <= locked_ids,
+            "closedEmployeeIds": sorted(locked_ids),
         }
+        for employee_id in locked_ids:
+            day_map.setdefault(employee_id, {"fact": "none", "workedMinutes": 0})
+        for employee_id, value in day_map.items():
+            if employee_id != "_meta":
+                value["closed"] = employee_id in locked_ids
     return result
 
 
-@app.put("/api/v1/attendance/{day}/{employee_id}", response_model=AttendanceRecordOut)
-async def set_attendance(
-    day: date,
-    employee_id: uuid.UUID,
-    body: AttendanceRecordIn,
-    user: User = Depends(require_permission("editAttendance")),
-    session: AsyncSession = Depends(get_session),
-) -> AttendanceRecord:
-    await ensure_employee_in_scope(session, user, employee_id)
-    attendance_day = await session.get(AttendanceDay, day)
-    if attendance_day is None:
-        attendance_day = AttendanceDay(day=day)
-        session.add(attendance_day)
+
+async def lock_attendance_day(session: AsyncSession, day: date) -> None:
+    # Serialize close/edit operations on the same date to prevent lost updates.
+    # SQLite is only used by isolated tests; production runs on PostgreSQL.
+    if session.bind.dialect.name == "postgresql":
+        await session.execute(pg_insert(AttendanceDay).values(day=day).on_conflict_do_nothing())
+        await session.scalar(select(AttendanceDay).where(AttendanceDay.day == day).with_for_update())
+    elif await session.get(AttendanceDay, day) is None:
+        session.add(AttendanceDay(day=day))
         await session.flush()
-    if attendance_day.is_closed:
-        raise api_error(status.HTTP_409_CONFLICT, "День закрыт")
+
+
+async def save_attendance_record(session: AsyncSession, user: User, day: date,
+                                 employee_id: uuid.UUID, body: AttendanceRecordIn) -> AttendanceRecord:
+    employee = await ensure_employee_in_scope(session, user, employee_id)
+    if await session.get(AttendanceLock, (day, employee_id)) is not None:
+        raise api_error(409, "День для этого сотрудника закрыт")
     record = await session.get(AttendanceRecord, (day, employee_id))
     if record is None:
         record = AttendanceRecord(day=day, employee_id=employee_id)
         session.add(record)
+    minutes = body.worked_minutes
+    if body.fact == FactStatus.worked and minutes is None:
+        revisions = list((await session.scalars(select(EmployeeHistory).where(
+            EmployeeHistory.employee_id == employee_id).order_by(EmployeeHistory.effective_from))).all())
+        snapshot = snapshot_on(revisions, day)
+        minutes = paid_minutes(snapshot) if snapshot else (employee.shift_hours - employee.break_hours) * 60
+    elif body.fact not in {FactStatus.worked, FactStatus.businessTrip, FactStatus.vacationWorked}:
+        minutes = 0
     record.fact = body.fact
     record.comment = body.comment.strip() if body.comment else None
-    record.worked_minutes = body.worked_minutes
-    record.actual_start = body.actual_start if body.fact == FactStatus.worked else None
-    record.actual_end = body.actual_end if body.fact == FactStatus.worked else None
+    record.worked_minutes = minutes if minutes is not None else 0
+    record.actual_start = body.actual_start
+    record.actual_end = body.actual_end
     record.updated_by_id = user.id
-    await audit(
-        session,
-        actor=user,
-        action="set_fact",
-        entity_type="attendance",
-        entity_id=f"{day}:{employee_id}",
-    )
+    return record
+
+
+@app.put("/api/v1/attendance/{day}/{employee_id}", response_model=AttendanceRecordOut)
+async def set_attendance(
+    day: date, employee_id: uuid.UUID, body: AttendanceRecordIn,
+    user: User = Depends(require_permission("editAttendance")),
+    session: AsyncSession = Depends(get_session),
+) -> AttendanceRecord:
+    await ensure_employee_in_scope(session, user, employee_id)
+    await lock_attendance_day(session, day)
+    record = await save_attendance_record(session, user, day, employee_id, body)
+    await audit(session, actor=user, action="set_fact", entity_type="attendance", entity_id=f"{day}:{employee_id}")
     await session.commit()
     await session.refresh(record)
     return record
 
 
-@app.put("/api/v1/attendance/{day}", status_code=status.HTTP_204_NO_CONTENT)
+@app.put("/api/v1/attendance/{day}", status_code=204)
 async def set_attendance_bulk(
-    day: date,
-    body: AttendanceBulkIn,
+    day: date, body: AttendanceBulkIn,
     user: User = Depends(require_permission("editAttendance")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    attendance_day = await session.get(AttendanceDay, day)
-    if attendance_day is None:
-        attendance_day = AttendanceDay(day=day)
-        session.add(attendance_day)
-        await session.flush()
-    if attendance_day.is_closed:
-        raise api_error(status.HTTP_409_CONFLICT, "День закрыт")
-
-    employee_ids = {item.employee_id for item in body.records}
-    await ensure_employees_in_scope(session, user, employee_ids)
-    existing_records = {
-        item.employee_id: item
-        for item in (
-            await session.scalars(
-                select(AttendanceRecord).where(
-                    AttendanceRecord.day == day,
-                    AttendanceRecord.employee_id.in_(employee_ids),
-                )
-            )
-        ).all()
-    }
+    ids = {item.employee_id for item in body.records}
+    if len(ids) != len(body.records):
+        raise api_error(422, "Сотрудник указан несколько раз")
+    await ensure_employees_in_scope(session, user, ids)
+    await lock_attendance_day(session, day)
     for item in body.records:
-        record = existing_records.get(item.employee_id)
-        if record is None:
-            record = AttendanceRecord(day=day, employee_id=item.employee_id)
-            session.add(record)
-            existing_records[item.employee_id] = record
-        record.fact = item.fact
-        record.comment = item.comment.strip() if item.comment else None
-        record.worked_minutes = item.worked_minutes
-        record.actual_start = item.actual_start if item.fact == FactStatus.worked else None
-        record.actual_end = item.actual_end if item.fact == FactStatus.worked else None
-        record.updated_by_id = user.id
-
-    await audit(
-        session,
-        actor=user,
-        action="set_fact_bulk",
-        entity_type="attendance_day",
-        entity_id=str(day),
-        details={"records": len(body.records)},
-    )
+        await save_attendance_record(session, user, day, item.employee_id, item)
+    await audit(session, actor=user, action="set_fact_bulk", entity_type="attendance_day",
+                entity_id=str(day), details={"records": len(ids)})
     await session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return Response(status_code=204)
 
 
-@app.post("/api/v1/attendance/{day}/close", status_code=status.HTTP_204_NO_CONTENT)
+@app.post("/api/v1/attendance/{day}/close", status_code=204)
 async def close_attendance_day(
-    day: date,
-    body: AttendanceCloseIn,
+    day: date, body: AttendanceCloseIn,
     user: User = Depends(require_permission("editAttendance")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    attendance_day = await session.get(AttendanceDay, day)
-    if attendance_day is None:
-        attendance_day = AttendanceDay(day=day)
-        session.add(attendance_day)
-        await session.flush()
-    if attendance_day.is_closed:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    planned_ids = set(body.planned_employee_ids)
-    await ensure_employees_in_scope(session, user, planned_ids)
-    existing_records = {
-        item.employee_id: item
-        for item in (
-            await session.scalars(
-                select(AttendanceRecord).where(
-                    AttendanceRecord.day == day,
-                    AttendanceRecord.employee_id.in_(planned_ids),
-                )
-            )
-        ).all()
-    }
-    for employee_id in planned_ids:
-        record = existing_records.get(employee_id)
-        if record is None:
-            record = AttendanceRecord(
-                day=day,
-                employee_id=employee_id,
-                fact=FactStatus.absent,
-                worked_minutes=0,
-                updated_by_id=user.id,
-            )
-            session.add(record)
-        elif record.fact == FactStatus.none:
-            record.fact = FactStatus.absent
-            record.worked_minutes = 0
-            record.actual_start = None
-            record.actual_end = None
-            record.updated_by_id = user.id
-    attendance_day.is_closed = True
-    attendance_day.closed_at = utcnow()
-    attendance_day.closed_by_id = user.id
-    await audit(session, actor=user, action="close", entity_type="attendance_day", entity_id=str(day))
+    ids = set(body.planned_employee_ids)
+    await ensure_employees_in_scope(session, user, ids)
+    await lock_attendance_day(session, day)
+    for employee_id in ids:
+        if await session.get(AttendanceLock, (day, employee_id)) is not None:
+            continue
+        record = await session.get(AttendanceRecord, (day, employee_id))
+        if record is None or record.fact == FactStatus.none:
+            await save_attendance_record(session, user, day, employee_id,
+                                         AttendanceRecordIn(fact=FactStatus.absent, worked_minutes=0))
+        session.add(AttendanceLock(day=day, employee_id=employee_id, closed_by_id=user.id))
+    await audit(session, actor=user, action="close", entity_type="attendance_day",
+                entity_id=str(day), details={"employee_ids": sorted(map(str, ids))})
     await session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return Response(status_code=204)
 
 
-@app.post("/api/v1/attendance/{day}/reopen", status_code=status.HTTP_204_NO_CONTENT)
+@app.post("/api/v1/attendance/{day}/reopen", status_code=204)
 async def reopen_attendance_day(
-    day: date,
+    day: date, body: AttendanceReopenIn | None = None,
     user: User = Depends(require_permission("editAttendance")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    attendance_day = await session.get(AttendanceDay, day)
-    if attendance_day is None:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    attendance_day.is_closed = False
-    attendance_day.reopened_at = utcnow()
-    await audit(session, actor=user, action="reopen", entity_type="attendance_day", entity_id=str(day))
+    allowed = await scoped_employees(session, select(Employee.id), user)
+    allowed_ids = set((await session.scalars(allowed)).all())
+    ids = set(body.employee_ids) if body and body.employee_ids is not None else allowed_ids
+    if not ids <= allowed_ids:
+        raise api_error(404, "Один из сотрудников не найден")
+    await lock_attendance_day(session, day)
+    await session.execute(delete(AttendanceLock).where(
+        AttendanceLock.day == day, AttendanceLock.employee_id.in_(ids)))
+    await audit(session, actor=user, action="reopen", entity_type="attendance_day",
+                entity_id=str(day), details={"employee_ids": sorted(map(str, ids))})
     await session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return Response(status_code=204)
 
 
 @app.get("/api/v1/attendance/{day}", response_model=list[AttendanceRecordOut])
@@ -1418,3 +1375,33 @@ async def attendance(
         .order_by(AttendanceRecord.employee_id)
     )
     return list((await session.scalars(query)).all())
+
+
+@app.get("/api/v1/reports/month")
+async def get_month_report(
+    year: int, month: int,
+    department_id: uuid.UUID | None = None, group_id: uuid.UUID | None = None,
+    user: User = Depends(require_permission("viewAttendance")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    if not has_permission(user, "viewEmployees"):
+        raise api_error(403, "Недостаточно прав для просмотра табеля")
+    hidden = set(map(str, await admin_hidden_group_ids(session, user.id)))
+    return await month_report(session, user, year, month, hidden, department_id, group_id)
+
+
+@app.get("/api/v1/reports/month.xlsx")
+async def export_month_report(
+    year: int, month: int,
+    department_id: uuid.UUID | None = None, group_id: uuid.UUID | None = None,
+    user: User = Depends(require_permission("viewAttendance")),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    report = await get_month_report(year, month, department_id, group_id, user, session)
+    if not report["rows"]:
+        raise api_error(404, "Нет сотрудников за выбранный месяц")
+    from starlette.concurrency import run_in_threadpool
+    content = await run_in_threadpool(make_timesheet, report)
+    return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="timesheet-{year}-{month:02d}.xlsx"',
+                             "Cache-Control": "no-store"})

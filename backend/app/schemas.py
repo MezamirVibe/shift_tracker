@@ -221,8 +221,13 @@ class AttendanceRecordIn(BaseModel):
     def validate_actual_times(self) -> "AttendanceRecordIn":
         if (self.actual_start is None) != (self.actual_end is None):
             raise ValueError("Нужно указать и начало, и окончание работы")
-        if self.fact != FactStatus.worked and self.actual_start is not None:
+        has_hours = self.fact in {FactStatus.worked, FactStatus.businessTrip, FactStatus.vacationWorked}
+        if not has_hours and self.actual_start is not None:
             raise ValueError("Фактическое время доступно только для выхода на смену")
+        if not has_hours and self.worked_minutes not in (None, 0):
+            raise ValueError("Для отсутствия нельзя указывать отработанные часы")
+        if self.fact == FactStatus.vacationWorked and not self.worked_minutes:
+            raise ValueError("Укажите часы работы во время отпуска")
         return self
 
 
@@ -241,4 +246,8 @@ class AttendanceBulkIn(BaseModel):
 
 
 class AttendanceCloseIn(BaseModel):
-    planned_employee_ids: list[uuid.UUID] = Field(default_factory=list)
+    planned_employee_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+
+
+class AttendanceReopenIn(BaseModel):
+    employee_ids: list[uuid.UUID] | None = Field(default=None, max_length=500)

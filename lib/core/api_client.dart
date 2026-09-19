@@ -248,6 +248,7 @@ class ApiClient {
     Object? body,
     bool authenticated = true,
     bool retryAfterRefresh = true,
+    bool binary = false,
   }) async {
     String? authorizationToken;
     if (authenticated) {
@@ -261,6 +262,7 @@ class ApiClient {
           body: body,
           authenticated: authenticated,
           retryAfterRefresh: false,
+          binary: binary,
         );
       }
       final token = _accessToken;
@@ -272,6 +274,7 @@ class ApiClient {
             body: body,
             authenticated: authenticated,
             retryAfterRefresh: false,
+            binary: binary,
           );
         }
         await _invalidateSession();
@@ -294,7 +297,12 @@ class ApiClient {
     }
 
     final response = await request.close().timeout(const Duration(seconds: 20));
-    final raw = await utf8.decoder.bind(response).join();
+    final bytes = await consolidateHttpClientResponseBytes(response)
+        .timeout(const Duration(seconds: 30));
+    if (binary && response.statusCode >= 200 && response.statusCode < 300) {
+      return bytes;
+    }
+    final raw = utf8.decode(bytes, allowMalformed: true);
     if (response.statusCode == 401 && authenticated && retryAfterRefresh) {
       if (await _refresh()) {
         return this.request(
@@ -303,6 +311,7 @@ class ApiClient {
           body: body,
           authenticated: authenticated,
           retryAfterRefresh: false,
+          binary: binary,
         );
       }
     }

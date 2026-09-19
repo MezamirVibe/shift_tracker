@@ -221,7 +221,14 @@ class _CalendarPageState extends State<CalendarPage> {
     final record = _recordFor(day, employee.id);
     switch (record?.fact ?? FactStatus.none) {
       case FactStatus.worked:
+      case FactStatus.vacationWorked:
         return _PersonalDayKind.worked;
+      case FactStatus.businessTrip:
+        return record?.hasWorked == true
+            ? _PersonalDayKind.worked
+            : _PersonalDayKind.vacation;
+      case FactStatus.unpaid:
+        return _PersonalDayKind.vacation;
       case FactStatus.vacation:
         return _PersonalDayKind.vacation;
       case FactStatus.sick:
@@ -262,6 +269,9 @@ class _CalendarPageState extends State<CalendarPage> {
   String _personalFactLabel(FactStatus fact, bool planned) {
     return switch (fact) {
       FactStatus.worked => 'Смена отработана',
+      FactStatus.businessTrip => 'Командировка',
+      FactStatus.vacationWorked => 'Работа в отпуске',
+      FactStatus.unpaid => 'Без содержания',
       FactStatus.vacation => 'Отпуск',
       FactStatus.sick => 'Больничный',
       FactStatus.absent => 'Неявка',
@@ -284,11 +294,14 @@ class _CalendarPageState extends State<CalendarPage> {
     final plannedEnd = plannedStart + employee.shiftHours * 60;
     final actualStart = _clockToMinutes(record?.actualStart);
     final actualEnd = _clockToMinutes(record?.actualEnd);
-    final workedMinutes = fact == FactStatus.worked
-        ? (record?.workedMinutes ?? employee.paidShiftHours * 60)
+    final workedMinutes = record?.hasWorked == true
+        ? (record?.workedMinutes ??
+            (record?.fact == FactStatus.worked
+                ? employee.paidShiftHours * 60
+                : 0))
         : 0;
     AttendanceDeviation? deviation;
-    if (fact == FactStatus.worked && actualStart != null && actualEnd != null) {
+    if (record?.hasWorked == true && actualStart != null && actualEnd != null) {
       deviation = calculateAttendanceDeviation(
         plannedStartMinutes: plannedStart,
         plannedEndMinutes: plannedEnd,
@@ -381,7 +394,7 @@ class _CalendarPageState extends State<CalendarPage> {
                     formatWorkDuration(employee.breakHours * 60),
                   ),
               ],
-              if (fact == FactStatus.worked) ...[
+              if (record?.hasWorked == true) ...[
                 detail(
                   'Фактическое время',
                   record?.actualStart != null && record?.actualEnd != null
@@ -586,6 +599,19 @@ class _CalendarPageState extends State<CalendarPage> {
         final meta = dayMapAny['_meta'];
         if (meta is Map) {
           closed = meta['closed'] == true;
+          if (meta['closedEmployeeIds'] is List) {
+            final locked = (meta['closedEmployeeIds'] as List).toSet();
+            final relevant = {...plannedIds};
+            for (final entry in dayMapAny.entries) {
+              if (employeeIds.contains(entry.key) &&
+                  entry.value is Map &&
+                  entry.value['fact'] != null &&
+                  entry.value['fact'] != 'none') {
+                relevant.add(entry.key as String);
+              }
+            }
+            closed = relevant.isNotEmpty && relevant.every(locked.contains);
+          }
         }
 
         for (final entry in dayMapAny.entries) {
@@ -597,7 +623,9 @@ class _CalendarPageState extends State<CalendarPage> {
             final rec = AttendanceRecord.fromJson(Map<String, dynamic>.from(v));
             switch (rec.fact) {
               case FactStatus.worked:
-                worked++;
+              case FactStatus.businessTrip:
+              case FactStatus.vacationWorked:
+                if (rec.hasWorked) worked++;
                 break;
               case FactStatus.absent:
                 if (plannedIds.contains(entry.key)) absent++;
@@ -606,6 +634,7 @@ class _CalendarPageState extends State<CalendarPage> {
                 if (plannedIds.contains(entry.key)) sick++;
                 break;
               case FactStatus.vacation:
+              case FactStatus.unpaid:
                 if (plannedIds.contains(entry.key)) vacation++;
                 break;
               case FactStatus.none:
@@ -1205,11 +1234,13 @@ class _CalendarPageState extends State<CalendarPage> {
       if (isPlanned) planned++;
       final fact = _recordFor(_selectedScheduleDay, employee.id)?.fact ??
           FactStatus.none;
-      if (fact == FactStatus.worked) worked++;
+      if (_recordFor(_selectedScheduleDay, employee.id)?.hasWorked == true) {
+        worked++;
+      }
       if (isPlanned &&
           (fact == FactStatus.absent ||
               fact == FactStatus.sick ||
-              fact == FactStatus.vacation)) {
+              (fact == FactStatus.vacation || fact == FactStatus.unpaid))) {
         away++;
       }
       if (isPlanned &&
@@ -1541,9 +1572,13 @@ class _CalendarPageState extends State<CalendarPage> {
     Color background;
     switch (record?.fact ?? FactStatus.none) {
       case FactStatus.worked:
-        status = 'Вышел';
-        final workedMinutes =
-            record?.workedMinutes ?? employee.paidShiftHours * 60;
+      case FactStatus.businessTrip:
+      case FactStatus.vacationWorked:
+        status = (record?.fact ?? FactStatus.worked).label;
+        final workedMinutes = record?.workedMinutes ??
+            (record?.fact == FactStatus.worked
+                ? employee.paidShiftHours * 60
+                : 0);
         final factTime =
             record?.actualStart != null && record?.actualEnd != null
                 ? '${record!.actualStart}–${record.actualEnd} · '
@@ -1553,7 +1588,8 @@ class _CalendarPageState extends State<CalendarPage> {
         background = colors.successContainer;
         break;
       case FactStatus.vacation:
-        status = 'Отпуск';
+      case FactStatus.unpaid:
+        status = record!.fact.label;
         details = 'Подтверждённое отсутствие';
         foreground = colors.vacation;
         background = colors.vacationContainer;
@@ -1686,11 +1722,13 @@ class _CalendarPageState extends State<CalendarPage> {
       final fact = _recordFor(_selectedScheduleDay, employee.id)?.fact ??
           FactStatus.none;
       if (isPlanned) planned++;
-      if (fact == FactStatus.worked) worked++;
+      if (_recordFor(_selectedScheduleDay, employee.id)?.hasWorked == true) {
+        worked++;
+      }
       if (isPlanned &&
           (fact == FactStatus.absent ||
               fact == FactStatus.sick ||
-              fact == FactStatus.vacation)) {
+              (fact == FactStatus.vacation || fact == FactStatus.unpaid))) {
         away++;
       }
       if (isPlanned &&
@@ -1915,15 +1953,21 @@ class _CalendarPageState extends State<CalendarPage> {
     Color background;
     switch (record?.fact ?? FactStatus.none) {
       case FactStatus.worked:
-        code = 'Вышел на смену';
+      case FactStatus.businessTrip:
+      case FactStatus.vacationWorked:
+        code = (record?.fact ?? FactStatus.worked).label;
         subtitle = formatWorkDuration(
-          record?.workedMinutes ?? employee.paidShiftHours * 60,
+          record?.workedMinutes ??
+              (record?.fact == FactStatus.worked
+                  ? employee.paidShiftHours * 60
+                  : 0),
         );
         foreground = colors.success;
         background = colors.successContainer;
         break;
       case FactStatus.vacation:
-        code = 'Отпуск';
+      case FactStatus.unpaid:
+        code = record!.fact.label;
         foreground = colors.vacation;
         background = colors.vacationContainer;
         break;
@@ -2003,6 +2047,12 @@ class _CalendarPageState extends State<CalendarPage> {
       title: widget.fullView ? 'Календарь месяца' : 'График на неделю',
       selectedRoute: widget.fullView ? '/calendar' : '/schedule',
       actions: [
+        IconButton(
+          tooltip: 'Табель и выгрузка Excel',
+          icon: const Icon(Icons.table_view_outlined),
+          onPressed: () => context
+              .push('/timesheet?year=${_month.year}&month=${_month.month}'),
+        ),
         IconButton(
           tooltip: widget.fullView ? 'График смен' : 'Полный календарь',
           icon: Icon(

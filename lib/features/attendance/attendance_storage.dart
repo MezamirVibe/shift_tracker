@@ -9,6 +9,27 @@ enum FactStatus {
   absent, // прогул
   sick, // больничный
   vacation, // отпуск
+  businessTrip, // командировка, с часами или без
+  vacationWorked, // работа во время отпуска
+  unpaid, // отпуск без содержания
+}
+
+extension FactStatusInfo on FactStatus {
+  bool get mayHaveHours =>
+      this == FactStatus.worked ||
+      this == FactStatus.businessTrip ||
+      this == FactStatus.vacationWorked;
+
+  String get label => switch (this) {
+        FactStatus.none => 'Не заполнено',
+        FactStatus.worked => 'Вышел',
+        FactStatus.absent => 'Неявка',
+        FactStatus.sick => 'Больничный',
+        FactStatus.vacation => 'Отпуск',
+        FactStatus.businessTrip => 'Командировка',
+        FactStatus.vacationWorked => 'Работа в отпуске',
+        FactStatus.unpaid => 'Без содержания',
+      };
 }
 
 FactStatus factStatusFromString(String? s) {
@@ -21,6 +42,12 @@ FactStatus factStatusFromString(String? s) {
       return FactStatus.sick;
     case 'vacation':
       return FactStatus.vacation;
+    case 'businessTrip':
+      return FactStatus.businessTrip;
+    case 'vacationWorked':
+      return FactStatus.vacationWorked;
+    case 'unpaid':
+      return FactStatus.unpaid;
 
     // миграция со старых значений:
     case 'present':
@@ -43,6 +70,11 @@ class AttendanceRecord {
   final String? actualStart;
   final String? actualEnd;
   final String? updatedAt;
+  final bool closed;
+
+  bool get hasWorked =>
+      (fact == FactStatus.worked && workedMinutes == null) ||
+      (fact.mayHaveHours && (workedMinutes ?? 0) > 0);
 
   const AttendanceRecord({
     required this.fact,
@@ -51,6 +83,7 @@ class AttendanceRecord {
     this.actualStart,
     this.actualEnd,
     this.updatedAt,
+    this.closed = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -60,6 +93,7 @@ class AttendanceRecord {
         if (workedMinutes != null) 'workedMinutes': workedMinutes,
         if (actualStart != null) 'actualStart': actualStart,
         if (actualEnd != null) 'actualEnd': actualEnd,
+        'closed': closed,
         'updatedAt': updatedAt ?? DateTime.now().toIso8601String(),
       };
 
@@ -77,8 +111,8 @@ class AttendanceRecord {
     // comment / note
     final comment = (json['comment'] as String?) ?? (json['note'] as String?);
 
-    final workedMinutes =
-        (json['workedMinutes'] is int) ? json['workedMinutes'] as int : null;
+    final rawMinutes = json['workedMinutes'] ?? json['worked_minutes'];
+    final workedMinutes = rawMinutes is num ? rawMinutes.toInt() : null;
 
     return AttendanceRecord(
       fact: migratedFact,
@@ -89,6 +123,7 @@ class AttendanceRecord {
       actualEnd:
           (json['actualEnd'] as String?) ?? (json['actual_end'] as String?),
       updatedAt: json['updatedAt'] as String?,
+      closed: json['closed'] == true,
     );
   }
 }
@@ -327,10 +362,12 @@ class AttendanceStorage {
     _markChanged();
   }
 
-  Future<void> reopenDay({required String dateIso}) async {
+  Future<void> reopenDay(
+      {required String dateIso, List<String>? employeeIds}) async {
     await ApiClient.instance.request(
       'POST',
       '/api/v1/attendance/$dateIso/reopen',
+      body: {'employee_ids': employeeIds},
     );
     _markChanged();
   }
