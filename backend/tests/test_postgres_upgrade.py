@@ -22,9 +22,11 @@ from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app import migrations
+from app import main as api
 from app.main import app, current_user, get_session
 from app.models import (Base, Role, ScopeKind, User, Employee, Department,
-                        AttendanceDay, AttendanceRecord, FactStatus, ScheduleType)
+                        AttendanceDay, AttendanceRecord, FactStatus, ScheduleType, RefreshToken)
+from app.security import new_refresh_token
 
 TEST_URL = os.environ.get("TEST_POSTGRES_URL")
 
@@ -63,6 +65,87 @@ class PostgreSQLUpgradeTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as session:
             versions = (await session.execute(text("SELECT version FROM schema_migrations"))).scalars().all()
             self.assertEqual(versions, ["20260918_timesheets"])
+
+    async def test_wrong_organization_is_rejected_before_schema_changes(self):
+        async with self.engine.begin() as connection:
+            await connection.execute(text('CREATE TABLE organization_identity (id INTEGER PRIMARY KEY, code TEXT NOT NULL)'))
+            await connection.execute(text("INSERT INTO organization_identity VALUES (1, 'another-company')"))
+        with self.assertRaisesRegex(RuntimeError, 'migration refused'):
+            await migrations.migrate()
+        async with self.engine.connect() as connection:
+            self.assertIsNone(await connection.scalar(text("SELECT to_regclass('employees')")))
+            self.assertIsNone(await connection.scalar(text("SELECT to_regclass('schema_migrations')")))
+
+    async def test_concurrent_bootstrap_creates_only_one_administrator(self):
+        await migrations.migrate()
+        async with self.sessions() as session:
+            await api.seed_roles(session)
+        async def test_session():
+            async with self.sessions() as session:
+                yield session
+        app.dependency_overrides[get_session] = test_session
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            responses = await asyncio.gather(*[
+                client.post('/api/v1/auth/bootstrap', headers={'X-Bootstrap-Token': api.settings.BOOTSTRAP_TOKEN},
+                    json={'login': f'admin-{n}', 'password': 'only-for-tests-12345'}) for n in range(3)])
+            self.assertEqual(sorted(r.status_code for r in responses), [200, 409, 409])
+        async with self.sessions() as session:
+            self.assertEqual(await session.scalar(text('SELECT count(*) FROM users')), 1)
+
+    async def auth_fixture(self):
+        await migrations.migrate()
+        async with self.sessions() as session:
+            role = Role(id='super_admin', name='Admin', scope_kind=ScopeKind.all, permissions=[])
+            admin = User(id=uuid.uuid4(), login='admin', password_hash='unused', role=role)
+            target = User(id=uuid.uuid4(), login='target', password_hash='unused', role=role)
+            session.add_all([role, admin, target])
+            await session.flush()
+            token_id, raw, digest, expires = new_refresh_token()
+            session.add(RefreshToken(id=token_id, user_id=target.id, token_hash=digest, expires_at=expires))
+            await session.commit()
+        async def test_session():
+            async with self.sessions() as session:
+                yield session
+        async def test_actor():
+            return admin
+        app.dependency_overrides[get_session] = test_session
+        app.dependency_overrides[current_user] = test_actor
+        return target, raw
+
+    async def test_concurrent_refresh_token_is_consumed_only_once(self):
+        _, raw = await self.auth_fixture()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            responses = await asyncio.gather(*[
+                client.post('/api/v1/auth/refresh', json={'refresh_token': raw}) for _ in range(5)])
+            self.assertEqual(sorted(r.status_code for r in responses), [200, 401, 401, 401, 401])
+
+    async def test_password_reset_revokes_token_rotating_at_same_time(self):
+        target, raw = await self.auth_fixture()
+        rotating = asyncio.Event()
+        release = asyncio.Event()
+        original_issue = api.issue_tokens
+
+        async def delayed_issue(session, user):
+            rotating.set()
+            await asyncio.wait_for(release.wait(), timeout=10)
+            return await original_issue(session, user)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            with patch.object(api, 'issue_tokens', delayed_issue):
+                refresh_task = asyncio.create_task(client.post('/api/v1/auth/refresh', json={'refresh_token': raw}))
+                await asyncio.wait_for(rotating.wait(), timeout=10)
+                reset_task = asyncio.create_task(client.post(f'/api/v1/users/{target.id}/reset-password'))
+                try:
+                    await asyncio.sleep(0.1)
+                    self.assertFalse(reset_task.done(), 'Reset must wait for the user lock')
+                finally:
+                    release.set()
+                refreshed, reset = await asyncio.gather(refresh_task, reset_task)
+            self.assertEqual(refreshed.status_code, 200, refreshed.text)
+            self.assertEqual(reset.status_code, 200, reset.text)
+            response = await client.post('/api/v1/auth/refresh', json={
+                'refresh_token': refreshed.json()['refresh_token']})
+            self.assertEqual(response.status_code, 401)
 
     async def test_legacy_upgrade_preserves_hours_locks_and_handles_concurrent_closes(self):
         async with self.engine.begin() as connection:

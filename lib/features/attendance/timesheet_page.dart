@@ -96,6 +96,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
       final accepted = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
+                scrollable: true,
                 title: const Text('Выгрузить незавершённый табель?'),
                 content: Text(
                     'Не заполнено плановых дней: $missing. Не закрыто дней: $open. '
@@ -159,11 +160,14 @@ class _MonthReportPageState extends State<MonthReportPage> {
                 tooltip: 'Предыдущий месяц',
                 onPressed: _saving ? null : () => _moveMonth(-1),
                 icon: const Icon(Icons.chevron_left)),
-            TextButton.icon(
-                onPressed: _saving ? null : _pickMonth,
-                icon: const Icon(Icons.calendar_month),
-                label: Text(
-                    '${_month.month.toString().padLeft(2, '0')}.${_month.year}')),
+            Flexible(
+                child: TextButton.icon(
+                    onPressed: _saving ? null : _pickMonth,
+                    icon: const Icon(Icons.calendar_month),
+                    label: Text(
+                        '${_month.month.toString().padLeft(2, '0')}.${_month.year}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis))),
             IconButton(
                 tooltip: 'Следующий месяц',
                 onPressed: _saving ? null : () => _moveMonth(1),
@@ -172,6 +176,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
           SizedBox(
               width: 240,
               child: DropdownButtonFormField<String?>(
+                itemHeight: null,
                 key: ValueKey(
                     'department-$_department-${departments.keys.join()}'),
                 initialValue: _department,
@@ -179,12 +184,14 @@ class _MonthReportPageState extends State<MonthReportPage> {
                 decoration: const InputDecoration(labelText: 'Отдел'),
                 items: [
                   const DropdownMenuItem(
-                      value: null, child: Text('Все доступные отделы')),
+                      value: null,
+                      child: Text('Все доступные отделы',
+                          maxLines: 1, overflow: TextOverflow.ellipsis)),
                   for (final item in departments.entries)
                     DropdownMenuItem(
                         value: item.key,
-                        child:
-                            Text(item.value, overflow: TextOverflow.ellipsis))
+                        child: Text(item.value,
+                            overflow: TextOverflow.ellipsis, maxLines: 1))
                 ],
                 onChanged: _saving || _loading
                     ? null
@@ -197,18 +204,21 @@ class _MonthReportPageState extends State<MonthReportPage> {
             SizedBox(
                 width: 220,
                 child: DropdownButtonFormField<String?>(
+                  itemHeight: null,
                   key: ValueKey('group-$_group-${groups.keys.join()}'),
                   initialValue: _group,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Группа'),
                   items: [
                     const DropdownMenuItem(
-                        value: null, child: Text('Все группы')),
+                        value: null,
+                        child: Text('Все группы',
+                            maxLines: 1, overflow: TextOverflow.ellipsis)),
                     for (final item in groups.entries)
                       DropdownMenuItem(
                           value: item.key,
-                          child:
-                              Text(item.value, overflow: TextOverflow.ellipsis))
+                          child: Text(item.value,
+                              overflow: TextOverflow.ellipsis, maxLines: 1))
                   ],
                   onChanged: _saving || _loading
                       ? null
@@ -366,44 +376,49 @@ class _MonthReportPageState extends State<MonthReportPage> {
       ],
       child: Padding(
           padding: EdgeInsets.all(phone ? 12 : 20),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _filters(),
-            const SizedBox(height: 12),
-            const Text(
-                'Excel по вашему шаблону: часы и отметки. Денежные поля остаются пустыми.'),
-            const SizedBox(height: 8),
-            if (!_loading && _error == null)
-              Wrap(spacing: 12, runSpacing: 4, children: [
-                Chip(label: Text('Строк: ${_rows.length}')),
-                Chip(
-                    label: Text(
-                        'Всего: ${formatWorkDuration(_sum('total_minutes'))}')),
-                Chip(label: Text('Не заполнено: ${_sum('missing_days')}')),
-              ]),
-            const SizedBox(height: 8),
-            Expanded(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _error != null
-                        ? Center(
-                            child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                Text(_error!, textAlign: TextAlign.center),
-                                const SizedBox(height: 12),
-                                FilledButton(
-                                    onPressed: _load,
-                                    child: const Text('Повторить'))
-                              ]))
-                        : _rows.isEmpty
-                            ? const Center(
-                                child: Text(
-                                    'За этот месяц нет сотрудников в выбранном отделе.'))
-                            : phone
-                                ? _mobileList()
-                                : _grid()),
-          ])),
+          child: NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) => [
+              SliverToBoxAdapter(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    _filters(),
+                    const SizedBox(height: 12),
+                    const Text(
+                        'Excel по вашему шаблону: часы и отметки. Денежные поля остаются пустыми.'),
+                    const SizedBox(height: 8),
+                    if (!_loading && _error == null)
+                      Wrap(spacing: 12, runSpacing: 4, children: [
+                        Chip(label: Text('Строк: ${_rows.length}')),
+                        Chip(
+                            label: Text(
+                                'Всего: ${formatWorkDuration(_sum('total_minutes'))}')),
+                        Chip(
+                            label:
+                                Text('Не заполнено: ${_sum('missing_days')}')),
+                      ]),
+                    const SizedBox(height: 8),
+                  ])),
+            ],
+            body: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(
+                        child:
+                            Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text(_error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                            onPressed: _load, child: const Text('Повторить'))
+                      ]))
+                    : _rows.isEmpty
+                        ? const Center(
+                            child: Text(
+                                'За этот месяц нет сотрудников в выбранном отделе.'))
+                        : phone
+                            ? _mobileList()
+                            : _grid(),
+          )),
     );
   }
 }

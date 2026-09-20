@@ -88,18 +88,21 @@ class PreferencesService extends ChangeNotifier {
       _syncInFlightUserId = null;
       _preferences = UserPreferences.defaults();
       _loading = false;
+      _saving = false;
+      _lastError = null;
       notifyListeners();
       return Future<void>.value();
     }
 
+    final scopedUser = ApiClient.instance.cacheUserKey;
     final active = _syncInFlight;
-    if (active != null && _syncInFlightUserId == user.id) return active;
-    if (!force && _loadedUserId == user.id) return Future<void>.value();
+    if (active != null && _syncInFlightUserId == scopedUser) return active;
+    if (!force && _loadedUserId == scopedUser) return Future<void>.value();
 
     final generation = ++_syncGeneration;
     final request = _syncForUser(user, generation);
     _syncInFlight = request;
-    _syncInFlightUserId = user.id;
+    _syncInFlightUserId = scopedUser;
     return request.whenComplete(() {
       if (identical(_syncInFlight, request)) {
         _syncInFlight = null;
@@ -110,15 +113,17 @@ class PreferencesService extends ChangeNotifier {
 
   bool _ownsSync(UserAccount user, int generation) =>
       generation == _syncGeneration &&
-      _loadedUserId == user.id &&
+      _loadedUserId == ApiClient.instance.cacheUserKey &&
       AuthService.instance.currentUser?.id == user.id;
 
   Future<void> _syncForUser(UserAccount user, int generation) async {
-    _loadedUserId = user.id;
+    _loadedUserId = ApiClient.instance.cacheUserKey;
     _loading = true;
+    _saving = false;
     _lastError = null;
 
-    final cacheKey = _cacheKey(user.id);
+    final scopedUser = _loadedUserId!;
+    final cacheKey = _cacheKey(scopedUser);
     try {
       final cached = await _storage.read(key: cacheKey);
       if (!_ownsSync(user, generation)) return;
@@ -132,6 +137,7 @@ class PreferencesService extends ChangeNotifier {
         _preferences = _defaults;
       }
     } catch (_) {
+      if (!_ownsSync(user, generation)) return;
       _preferences = _defaults;
     }
 
@@ -147,10 +153,10 @@ class PreferencesService extends ChangeNotifier {
           settings,
           fallback: _defaults,
         );
-        await _writeCacheFor(user.id, _preferences);
+        await _writeCacheFor(scopedUser, _preferences);
       } else {
         _preferences = _defaults;
-        await _writeCacheFor(user.id, _preferences);
+        await _writeCacheFor(scopedUser, _preferences);
         if (!_ownsSync(user, generation)) return;
         await ApiClient.instance.request(
           'PUT',
@@ -228,25 +234,35 @@ class PreferencesService extends ChangeNotifier {
 
   Future<void> _save() async {
     if (_loadedUserId == null) return;
+    final scope = ApiClient.instance.cacheUserKey;
+    final epoch = ApiClient.instance.sessionEpoch;
     _saving = true;
     _lastError = null;
     notifyListeners();
     await _writeCache();
     try {
+      if (epoch != ApiClient.instance.sessionEpoch ||
+          scope != ApiClient.instance.cacheUserKey) {
+        return;
+      }
       await ApiClient.instance.request(
         'PUT',
         '/api/v1/preferences',
         body: {'settings': _preferences.toJson()},
       );
     } on ApiException catch (error) {
+      if (epoch != ApiClient.instance.sessionEpoch) return;
       _lastError = error.statusCode == 404
           ? 'Настройки сохранены на устройстве. Сервер будет обновлён позже.'
           : error.message;
     } catch (_) {
+      if (epoch != ApiClient.instance.sessionEpoch) return;
       _lastError = 'Настройки сохранены на устройстве, но сервер недоступен';
     } finally {
-      _saving = false;
-      notifyListeners();
+      if (epoch == ApiClient.instance.sessionEpoch) {
+        _saving = false;
+        notifyListeners();
+      }
     }
   }
 

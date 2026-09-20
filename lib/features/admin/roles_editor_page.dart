@@ -31,9 +31,98 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
 
     final selected = auth.roleById(_selectedRoleId);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+    return LayoutBuilder(builder: (context, constraints) {
+      final compact = constraints.maxWidth < 760;
+      final details = selected == null
+          ? const Card(
+              child: Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text('Выбери роль слева'),
+                ),
+              ),
+            )
+          : _RoleDetails(
+              key: ValueKey(selected.id),
+              role: selected,
+              embedded: compact,
+              onChanged: () {
+                if (!mounted) return;
+                setState(() {});
+              },
+              onDelete: () async {
+                final auth = AuthService.instance;
+                final isCurrentUsersRole =
+                    auth.currentUser?.roleId == selected.id;
+
+                if (isCurrentUsersRole) {
+                  _snack('Нельзя удалить роль, которая назначена вам сейчас');
+                  return;
+                }
+
+                final ok = await _confirmDeleteRole(selected);
+                if (!mounted || ok != true) return;
+
+                final deleted = await auth.deleteRole(selected.id);
+                if (!mounted) return;
+
+                if (!deleted) {
+                  _snack(
+                    'Нельзя удалить роль. Возможно, она уже используется пользователями.',
+                  );
+                  return;
+                }
+
+                final rest = auth.roles.toList()
+                  ..sort((a, b) => a.name.compareTo(b.name));
+
+                setState(() {
+                  _selectedRoleId = rest.isEmpty ? null : rest.first.id;
+                });
+
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  _snack('Роль удалена');
+                });
+              },
+            );
+      if (compact) {
+        return ListView(
+          padding: const EdgeInsets.all(8),
+          children: [
+            Card(
+                child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          itemHeight: null,
+                          initialValue: _selectedRoleId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(labelText: 'Роль'),
+                          items: roles
+                              .map((role) => DropdownMenuItem(
+                                  value: role.id,
+                                  child: Text(role.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis)))
+                              .toList(),
+                          onChanged: (value) =>
+                              setState(() => _selectedRoleId = value),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                            onPressed: () => _showCreateRoleDialog(context),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Новая роль')),
+                      ],
+                    ))),
+            details,
+          ],
+        );
+      }
+      return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SizedBox(
           width: 320,
           child: Card(
@@ -77,69 +166,16 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
           ),
         ),
         const SizedBox(width: 12),
-        Expanded(
-          child: selected == null
-              ? const Card(
-                  child: Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text('Выбери роль слева'),
-                    ),
-                  ),
-                )
-              : _RoleDetails(
-                  key: ValueKey(selected.id),
-                  role: selected,
-                  onChanged: () {
-                    if (!mounted) return;
-                    setState(() {});
-                  },
-                  onDelete: () async {
-                    final auth = AuthService.instance;
-                    final isCurrentUsersRole =
-                        auth.currentUser?.roleId == selected.id;
-
-                    if (isCurrentUsersRole) {
-                      _snack(
-                          'Нельзя удалить роль, которая назначена вам сейчас');
-                      return;
-                    }
-
-                    final ok = await _confirmDeleteRole(selected);
-                    if (!mounted || ok != true) return;
-
-                    final deleted = await auth.deleteRole(selected.id);
-                    if (!mounted) return;
-
-                    if (!deleted) {
-                      _snack(
-                        'Нельзя удалить роль. Возможно, она уже используется пользователями.',
-                      );
-                      return;
-                    }
-
-                    final rest = auth.roles.toList()
-                      ..sort((a, b) => a.name.compareTo(b.name));
-
-                    setState(() {
-                      _selectedRoleId = rest.isEmpty ? null : rest.first.id;
-                    });
-
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
-                      _snack('Роль удалена');
-                    });
-                  },
-                ),
-        ),
-      ],
-    );
+        Expanded(child: details),
+      ]);
+    });
   }
 
   Future<bool?> _confirmDeleteRole(AppRole role) {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить роль?'),
         content: Text('Удалить роль "${role.name}"?'),
         actions: [
@@ -167,6 +203,7 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
         return StatefulBuilder(
           builder: (dialogContext, setLocal) {
             return AlertDialog(
+              scrollable: true,
               title: const Text('Новая роль'),
               content: SizedBox(
                 width: 420,
@@ -182,6 +219,8 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<ScopeKind>(
+                      itemHeight: null,
+                      isExpanded: true,
                       initialValue: scope,
                       decoration: const InputDecoration(
                         labelText: 'Scope',
@@ -191,7 +230,8 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
                           .map(
                             (s) => DropdownMenuItem(
                               value: s,
-                              child: Text(scopeKindLabel(s)),
+                              child: Text(scopeKindLabel(s),
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
                             ),
                           )
                           .toList(),
@@ -252,12 +292,14 @@ class _RolesEditorPageState extends State<RolesEditorPage> {
 
 class _RoleDetails extends StatefulWidget {
   final AppRole role;
+  final bool embedded;
   final VoidCallback onChanged;
   final Future<void> Function() onDelete;
 
   const _RoleDetails({
     super.key,
     required this.role,
+    this.embedded = false,
     required this.onChanged,
     required this.onDelete,
   });
@@ -358,6 +400,8 @@ class _RoleDetailsState extends State<_RoleDetails> {
     final isCurrentUsersRole = auth.currentUser?.roleId == widget.role.id;
 
     return ListView(
+      shrinkWrap: widget.embedded,
+      physics: widget.embedded ? const NeverScrollableScrollPhysics() : null,
       padding: const EdgeInsets.only(bottom: 12),
       children: [
         Card(
@@ -377,6 +421,8 @@ class _RoleDetailsState extends State<_RoleDetails> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<ScopeKind>(
+                  itemHeight: null,
+                  isExpanded: true,
                   initialValue: _scopeKind,
                   decoration: const InputDecoration(
                     labelText: 'Scope',
@@ -386,7 +432,8 @@ class _RoleDetailsState extends State<_RoleDetails> {
                       .map(
                         (s) => DropdownMenuItem(
                           value: s,
-                          child: Text(scopeKindLabel(s)),
+                          child: Text(scopeKindLabel(s),
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
                       )
                       .toList(),
@@ -403,7 +450,9 @@ class _RoleDetailsState extends State<_RoleDetails> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                Row(
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
                   children: [
                     FilledButton(
                       onPressed: (_saving || isCurrentUsersRole) ? null : _save,

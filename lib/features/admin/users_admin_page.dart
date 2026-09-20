@@ -357,6 +357,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить пользователя?'),
         content: Text('Удалить "$login"?'),
         actions: [
@@ -423,6 +424,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
                 case ScopeKind.department:
                   return DropdownButtonFormField<String?>(
+                    itemHeight: null,
+                    isExpanded: true,
                     initialValue: depId,
                     decoration: const InputDecoration(
                       labelText: 'Подразделение',
@@ -431,12 +434,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                     items: [
                       const DropdownMenuItem<String?>(
                         value: null,
-                        child: Text('— выбери подразделение —'),
+                        child: Text('— выбери подразделение —',
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                       ..._departments.map(
                         (d) => DropdownMenuItem<String?>(
                           value: d.id,
-                          child: Text(d.name),
+                          child: Text(d.name,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
                       ),
                     ],
@@ -451,6 +456,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                   return Column(
                     children: [
                       DropdownButtonFormField<String?>(
+                        itemHeight: null,
+                        isExpanded: true,
                         initialValue: depId,
                         decoration: const InputDecoration(
                           labelText: 'Подразделение',
@@ -459,12 +466,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                         items: [
                           const DropdownMenuItem<String?>(
                             value: null,
-                            child: Text('— выбери подразделение —'),
+                            child: Text('— выбери подразделение —',
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
                           ),
                           ..._departments.map(
                             (d) => DropdownMenuItem<String?>(
                               value: d.id,
-                              child: Text(d.name),
+                              child: Text(d.name,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
                             ),
                           ),
                         ],
@@ -477,6 +486,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String?>(
+                        itemHeight: null,
+                        isExpanded: true,
                         initialValue: groupId,
                         decoration: const InputDecoration(
                           labelText: 'Группа',
@@ -485,12 +496,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                         items: [
                           const DropdownMenuItem<String?>(
                             value: null,
-                            child: Text('— выбери группу —'),
+                            child: Text('— выбери группу —',
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
                           ),
                           ...groupsForDep.map(
                             (g) => DropdownMenuItem<String?>(
                               value: g.id,
-                              child: Text(g.name),
+                              child: Text(g.name,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
                             ),
                           ),
                         ],
@@ -507,6 +520,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
                 case ScopeKind.self:
                   return DropdownButtonFormField<String?>(
+                    itemHeight: null,
+                    isExpanded: true,
                     initialValue: empId,
                     decoration: const InputDecoration(
                       labelText: 'Сотрудник',
@@ -515,12 +530,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                     items: [
                       const DropdownMenuItem<String?>(
                         value: null,
-                        child: Text('— выбери сотрудника —'),
+                        child: Text('— выбери сотрудника —',
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                       ..._employees.map(
                         (e) => DropdownMenuItem<String?>(
                           value: e.id,
-                          child: Text('${e.fullName} • ${e.position}'),
+                          child: Text('${e.fullName} • ${e.position}',
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
                       ),
                     ],
@@ -534,6 +551,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             }
 
             return AlertDialog(
+              scrollable: true,
               title: Text('Редактирование: ${user.login}'),
               content: SizedBox(
                 width: 560,
@@ -566,6 +584,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
+                        itemHeight: null,
+                        isExpanded: true,
                         initialValue: roleId,
                         decoration: const InputDecoration(
                           labelText: 'Роль',
@@ -575,7 +595,9 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                             .map(
                               (r) => DropdownMenuItem<String>(
                                 value: r.id,
-                                child: Text(r.name),
+                                child: Text(r.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
                               ),
                             )
                             .toList(),
@@ -721,6 +743,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             const SizedBox(height: 8),
             if (_createEmployeeForSelfScope) ...[
               DropdownButtonFormField<String?>(
+                itemHeight: null,
+                isExpanded: true,
                 initialValue: _departmentId,
                 decoration: const InputDecoration(
                   labelText: 'Подразделение нового сотрудника',
@@ -729,12 +753,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('— выбери подразделение —'),
+                    child: Text('— выбери подразделение —',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   ..._departments.map(
                     (d) => DropdownMenuItem<String?>(
                       value: d.id,
-                      child: Text(d.name),
+                      child: Text(d.name,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                 ],
@@ -745,6 +771,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String?>(
+                itemHeight: null,
+                isExpanded: true,
                 initialValue: _groupId,
                 decoration: const InputDecoration(
                   labelText: 'Группа нового сотрудника',
@@ -753,12 +781,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('— выбери группу —'),
+                    child: Text('— выбери группу —',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   ..._groupsForDepartment(_departmentId).map(
                     (g) => DropdownMenuItem<String?>(
                       value: g.id,
-                      child: Text(g.name),
+                      child: Text(g.name,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                 ],
@@ -768,6 +798,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               ),
             ] else ...[
               DropdownButtonFormField<String?>(
+                itemHeight: null,
+                isExpanded: true,
                 initialValue: _employeeId,
                 decoration: const InputDecoration(
                   labelText: 'Привязать к существующему сотруднику',
@@ -776,12 +808,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('— выбери сотрудника —'),
+                    child: Text('— выбери сотрудника —',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   ..._employees.map(
                     (e) => DropdownMenuItem<String?>(
                       value: e.id,
-                      child: Text('${e.fullName} • ${e.position}'),
+                      child: Text('${e.fullName} • ${e.position}',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                 ],
@@ -814,6 +848,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
       case ScopeKind.department:
         return DropdownButtonFormField<String?>(
+          itemHeight: null,
+          isExpanded: true,
           initialValue: _departmentId,
           decoration: const InputDecoration(
             labelText: 'Подразделение',
@@ -822,12 +858,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
           items: [
             const DropdownMenuItem<String?>(
               value: null,
-              child: Text('— выбери подразделение —'),
+              child: Text('— выбери подразделение —',
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
             ..._departments.map(
               (d) => DropdownMenuItem<String?>(
                 value: d.id,
-                child: Text(d.name),
+                child:
+                    Text(d.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               ),
             ),
           ],
@@ -840,6 +878,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
         return Column(
           children: [
             DropdownButtonFormField<String?>(
+              itemHeight: null,
+              isExpanded: true,
               initialValue: _departmentId,
               decoration: const InputDecoration(
                 labelText: 'Подразделение',
@@ -848,12 +888,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               items: [
                 const DropdownMenuItem<String?>(
                   value: null,
-                  child: Text('— выбери подразделение —'),
+                  child: Text('— выбери подразделение —',
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
                 ),
                 ..._departments.map(
                   (d) => DropdownMenuItem<String?>(
                     value: d.id,
-                    child: Text(d.name),
+                    child: Text(d.name,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                 ),
               ],
@@ -864,6 +906,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
+              itemHeight: null,
+              isExpanded: true,
               initialValue: _groupId,
               decoration: const InputDecoration(
                 labelText: 'Группа',
@@ -872,12 +916,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               items: [
                 const DropdownMenuItem<String?>(
                   value: null,
-                  child: Text('— выбери группу —'),
+                  child: Text('— выбери группу —',
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
                 ),
                 ...groups.map(
                   (g) => DropdownMenuItem<String?>(
                     value: g.id,
-                    child: Text(g.name),
+                    child: Text(g.name,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                 ),
               ],
@@ -1001,6 +1047,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: Text(
           credentials.length == 1
               ? 'Учётная запись создана'
@@ -1090,6 +1137,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
+          scrollable: true,
           title: Text('Доступ к группам: ${user.fullName}'),
           content: SizedBox(
             width: 650,
@@ -1201,6 +1249,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               .take(12)
               .toList();
           return AlertDialog(
+            scrollable: true,
             title: const Text('Создать вход сотруднику'),
             content: SizedBox(
               width: 680,
@@ -1325,6 +1374,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Создать вход всем сотрудникам?'),
         content: Text(
           'Будут автоматически созданы логины и временные пароли для ${available.length} сотрудников без учётной записи. Роль — «Рабочий».',
@@ -1569,6 +1619,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
+                  itemHeight: null,
+                  isExpanded: true,
                   initialValue: _roleId,
                   decoration: const InputDecoration(
                     labelText: 'Роль',
@@ -1578,7 +1630,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                       .map(
                         (r) => DropdownMenuItem<String>(
                           value: r.id,
-                          child: Text(r.name),
+                          child: Text(r.name,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
                       )
                       .toList(),

@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../auth/auth_service.dart';
+import '../../core/api_client.dart';
 
 class OnboardingService {
   OnboardingService._();
@@ -42,5 +43,5 @@ class OnboardingService {
   }
 
   String _key(String userId, String roleId) =>
-      'shift_tracker_onboarding_${userId}_$roleId';
+      'shift_tracker_onboarding_${ApiClient.instance.cacheNamespace}_${userId}_$roleId';
 }

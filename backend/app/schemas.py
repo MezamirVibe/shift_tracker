@@ -112,6 +112,7 @@ class TokenPair(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: UserOut
+    organization: dict[str, str]
 
 
 class DepartmentIn(BaseModel):
@@ -183,6 +184,7 @@ class EmployeeOut(EmployeeIn):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    position_name: str | None = None
 
 
 class EmployeeUpdate(BaseModel):
@@ -198,6 +200,14 @@ class EmployeeUpdate(BaseModel):
     break_hours: int | None = Field(default=None, ge=0, le=23)
     custom_workdays: list[int] | None = Field(default=None, min_length=1, max_length=7)
     is_active: bool | None = None
+
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> "EmployeeUpdate":
+        nullable = {"position_id", "department_id", "group_id"}
+        for field in self.model_fields_set - nullable:
+            if getattr(self, field) is None:
+                raise ValueError(f"Поле {field} не может быть пустым")
+        return self
 
     @field_validator("custom_workdays")
     @classmethod

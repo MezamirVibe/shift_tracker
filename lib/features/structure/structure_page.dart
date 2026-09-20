@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/id.dart';
+import '../auth/auth_models.dart';
+import '../auth/auth_service.dart';
 
 import 'structure_storage.dart';
 
@@ -17,8 +19,34 @@ class _StructurePageState extends State<StructurePage>
   final _storage = StructureStorage();
 
   bool _loading = true;
+  bool _saving = false;
+  String? _loadError;
   List<DepartmentModel> _departments = [];
   List<GroupModel> _groups = [];
+
+  bool get _canEdit =>
+      !_saving && AuthService.instance.hasPerm(AppPermission.editEmployees);
+  ScopeKind? get _scope => AuthService.instance
+      .roleById(AuthService.instance.currentUser?.roleId)
+      ?.scopeKind;
+  bool get _global =>
+      AuthService.instance.isCurrentUserSuperAdmin || _scope == ScopeKind.all;
+  bool get _canCreateDepartment => _canEdit && _global;
+  bool get _canCreateGroup =>
+      _canEdit && (_global || _scope == ScopeKind.department);
+  bool _canEditDepartment(DepartmentModel department) =>
+      _canEdit &&
+      (_global ||
+          (_scope == ScopeKind.department &&
+              AuthService.instance.currentUser?.departmentId == department.id));
+  bool _canEditGroup(GroupModel group) =>
+      _canEdit &&
+      (_global ||
+          (_scope == ScopeKind.department &&
+              AuthService.instance.currentUser?.departmentId ==
+                  group.departmentId) ||
+          (_scope == ScopeKind.group &&
+              AuthService.instance.currentUser?.groupId == group.id));
 
   @override
   void initState() {
@@ -34,14 +62,38 @@ class _StructurePageState extends State<StructurePage>
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final deps = await _storage.loadDepartments();
-    final grps = await _storage.loadGroups();
-    if (!mounted) return;
-    setState(() {
-      _departments = deps;
-      _groups = grps;
-      _loading = false;
-    });
+    try {
+      final deps = await _storage.loadDepartments(force: true);
+      final grps = await _storage.loadGroups(force: true);
+      if (!mounted) return;
+      setState(() {
+        _departments = deps;
+        _groups = grps;
+        _loadError = null;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _loadError = 'Не удалось загрузить структуру: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _persist(Future<void> Function() save, String message) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await save();
+      if (mounted) _snack(message);
+    } catch (error) {
+      if (mounted) {
+        _snack('Не удалось сохранить: $error');
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   void _snack(String t) =>
@@ -55,6 +107,7 @@ class _StructurePageState extends State<StructurePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: Text(title),
         content: TextField(
           controller: c,
@@ -92,8 +145,8 @@ class _StructurePageState extends State<StructurePage>
     final next = [..._departments, dep]
       ..sort((a, b) => a.name.compareTo(b.name));
     setState(() => _departments = next);
-    await _storage.saveDepartments(_departments);
-    _snack('Подразделение добавлено');
+    await _persist(() => _storage.saveDepartments(_departments),
+        'Подразделение добавлено');
   }
 
   Future<void> _renameDepartment(DepartmentModel dep) async {
@@ -107,8 +160,7 @@ class _StructurePageState extends State<StructurePage>
           .toList()
         ..sort((a, b) => a.name.compareTo(b.name));
     });
-    await _storage.saveDepartments(_departments);
-    _snack('Сохранено');
+    await _persist(() => _storage.saveDepartments(_departments), 'Сохранено');
   }
 
   Future<void> _deleteDepartment(DepartmentModel dep) async {
@@ -116,6 +168,7 @@ class _StructurePageState extends State<StructurePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить подразделение?'),
         content: Text(
           linkedGroups > 0
@@ -140,8 +193,7 @@ class _StructurePageState extends State<StructurePage>
     setState(() {
       _departments = _departments.where((d) => d.id != dep.id).toList();
     });
-    await _storage.saveDepartments(_departments);
-    _snack('Удалено');
+    await _persist(() => _storage.saveDepartments(_departments), 'Удалено');
   }
 
   // ---------- Groups ----------
@@ -159,6 +211,7 @@ class _StructurePageState extends State<StructurePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Добавить группу'),
         content: SizedBox(
           width: 480,
@@ -166,11 +219,15 @@ class _StructurePageState extends State<StructurePage>
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
+                itemHeight: null,
+                isExpanded: true,
                 initialValue: selected.id,
                 decoration: const InputDecoration(labelText: 'Подразделение'),
                 items: _departments
-                    .map((d) =>
-                        DropdownMenuItem(value: d.id, child: Text(d.name)))
+                    .map((d) => DropdownMenuItem(
+                        value: d.id,
+                        child: Text(d.name,
+                            maxLines: 1, overflow: TextOverflow.ellipsis)))
                     .toList(),
                 onChanged: (v) {
                   if (v == null) return;
@@ -213,8 +270,7 @@ class _StructurePageState extends State<StructurePage>
       _groups = [..._groups, g]..sort((a, b) => a.name.compareTo(b.name));
     });
 
-    await _storage.saveGroups(_groups);
-    _snack('Группа добавлена');
+    await _persist(() => _storage.saveGroups(_groups), 'Группа добавлена');
   }
 
   Future<void> _editGroup(GroupModel g) async {
@@ -229,6 +285,7 @@ class _StructurePageState extends State<StructurePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Редактировать группу'),
         content: SizedBox(
           width: 480,
@@ -236,16 +293,22 @@ class _StructurePageState extends State<StructurePage>
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
+                itemHeight: null,
+                isExpanded: true,
                 initialValue: depId,
                 decoration: const InputDecoration(labelText: 'Подразделение'),
                 items: _departments
-                    .map((d) =>
-                        DropdownMenuItem(value: d.id, child: Text(d.name)))
+                    .map((d) => DropdownMenuItem(
+                        value: d.id,
+                        child: Text(d.name,
+                            maxLines: 1, overflow: TextOverflow.ellipsis)))
                     .toList(),
-                onChanged: (v) {
-                  if (v == null) return;
-                  depId = v;
-                },
+                onChanged: !_global
+                    ? null
+                    : (v) {
+                        if (v == null) return;
+                        depId = v;
+                      },
               ),
               const SizedBox(height: 12),
               TextField(
@@ -279,14 +342,14 @@ class _StructurePageState extends State<StructurePage>
         ..sort((a, b) => a.name.compareTo(b.name));
     });
 
-    await _storage.saveGroups(_groups);
-    _snack('Сохранено');
+    await _persist(() => _storage.saveGroups(_groups), 'Сохранено');
   }
 
   Future<void> _deleteGroup(GroupModel g) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить группу?'),
         content: Text('Удалить "${g.name}"?'),
         actions: [
@@ -305,8 +368,7 @@ class _StructurePageState extends State<StructurePage>
     setState(() {
       _groups = _groups.where((x) => x.id != g.id).toList();
     });
-    await _storage.saveGroups(_groups);
-    _snack('Удалено');
+    await _persist(() => _storage.saveGroups(_groups), 'Удалено');
   }
 
   String _depName(String depId) {
@@ -332,98 +394,113 @@ class _StructurePageState extends State<StructurePage>
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabs,
-              children: [
-                // Departments
-                ListView(
-                  padding: const EdgeInsets.all(12),
+          : _loadError != null
+              ? Center(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(_loadError!),
+                  TextButton(onPressed: _load, child: const Text('Повторить'))
+                ]))
+              : TabBarView(
+                  controller: _tabs,
                   children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: FilledButton.icon(
-                        onPressed: _addDepartment,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Добавить подразделение'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ..._departments.map(
-                      (d) => Card(
-                        child: ListTile(
-                          title: Text(d.name),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                tooltip: 'Переименовать',
-                                icon: const Icon(Icons.edit_outlined),
-                                onPressed: () => _renameDepartment(d),
-                              ),
-                              IconButton(
-                                tooltip: 'Удалить',
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () => _deleteDepartment(d),
-                              ),
-                            ],
+                    // Departments
+                    ListView(
+                      padding: const EdgeInsets.all(12),
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: FilledButton.icon(
+                            onPressed:
+                                _canCreateDepartment ? _addDepartment : null,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Добавить подразделение'),
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 12),
+                        ..._departments.map(
+                          (d) => Card(
+                            child: ListTile(
+                              title: Text(d.name),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Переименовать',
+                                    icon: const Icon(Icons.edit_outlined),
+                                    onPressed: _canEditDepartment(d)
+                                        ? () => _renameDepartment(d)
+                                        : null,
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Удалить',
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: _canEditDepartment(d)
+                                        ? () => _deleteDepartment(d)
+                                        : null,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_departments.isEmpty)
+                          const Center(
+                              child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Text('Пока пусто'))),
+                      ],
                     ),
-                    if (_departments.isEmpty)
-                      const Center(
-                          child: Padding(
-                              padding: EdgeInsets.all(24),
-                              child: Text('Пока пусто'))),
-                  ],
-                ),
 
-                // Groups
-                ListView(
-                  padding: const EdgeInsets.all(12),
-                  children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: FilledButton.icon(
-                        onPressed: _addGroup,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Добавить группу'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ..._groups.map(
-                      (g) => Card(
-                        child: ListTile(
-                          title: Text(g.name),
-                          subtitle: Text(
-                              'Подразделение: ${_depName(g.departmentId)}'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                tooltip: 'Редактировать',
-                                icon: const Icon(Icons.edit_outlined),
-                                onPressed: () => _editGroup(g),
-                              ),
-                              IconButton(
-                                tooltip: 'Удалить',
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () => _deleteGroup(g),
-                              ),
-                            ],
+                    // Groups
+                    ListView(
+                      padding: const EdgeInsets.all(12),
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: FilledButton.icon(
+                            onPressed: _canCreateGroup ? _addGroup : null,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Добавить группу'),
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 12),
+                        ..._groups.map(
+                          (g) => Card(
+                            child: ListTile(
+                              title: Text(g.name),
+                              subtitle: Text(
+                                  'Подразделение: ${_depName(g.departmentId)}'),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Редактировать',
+                                    icon: const Icon(Icons.edit_outlined),
+                                    onPressed: _canEditGroup(g)
+                                        ? () => _editGroup(g)
+                                        : null,
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Удалить',
+                                    icon: const Icon(Icons.delete_outline),
+                                    onPressed: _canEditGroup(g)
+                                        ? () => _deleteGroup(g)
+                                        : null,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_groups.isEmpty)
+                          const Center(
+                              child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Text('Пока пусто'))),
+                      ],
                     ),
-                    if (_groups.isEmpty)
-                      const Center(
-                          child: Padding(
-                              padding: EdgeInsets.all(24),
-                              child: Text('Пока пусто'))),
                   ],
                 ),
-              ],
-            ),
     );
   }
 }

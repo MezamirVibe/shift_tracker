@@ -282,7 +282,7 @@ class AppTheme {
         style: FilledButton.styleFrom(
           minimumSize: const Size(44, 44),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          textStyle: textTheme.labelLarge,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(

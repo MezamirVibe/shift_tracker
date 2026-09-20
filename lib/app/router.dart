@@ -1,4 +1,6 @@
 import 'package:go_router/go_router.dart';
+import '../core/api_client.dart';
+import '../features/auth/organization_page.dart';
 
 import '../features/auth/auth_models.dart';
 import '../features/auth/auth_service.dart';
@@ -41,13 +43,16 @@ class AppRouter {
         if (!auth.initialized) {
           return loc == splash ? null : splash;
         }
+        if (ApiClient.instance.organization == null) {
+          return loc == '/organization' ? null : '/organization';
+        }
+        if (loc == '/organization') return login;
 
         final isAuthRoute =
             loc == splash || loc.startsWith(login) || loc.startsWith(bootstrap);
 
-        if (!auth.hasUsers) {
-          return loc == bootstrap ? null : bootstrap;
-        }
+        // First administrators are provisioned by the platform operator.
+        if (loc == bootstrap) return login;
 
         if (!auth.isLoggedIn) {
           return isAuthRoute ? null : login;
@@ -70,6 +75,9 @@ class AppRouter {
         return null;
       },
       routes: [
+        GoRoute(
+            path: '/organization',
+            builder: (_, __) => const OrganizationPage()),
         GoRoute(
           path: '/timesheet',
           builder: (_, state) {

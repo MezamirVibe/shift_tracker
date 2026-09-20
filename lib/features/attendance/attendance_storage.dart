@@ -170,7 +170,7 @@ class AttendanceStorage {
     DateTime to, {
     bool force = false,
   }) {
-    final userId = ApiClient.instance.currentUser?['id'] as String? ?? 'none';
+    final userId = ApiClient.instance.cacheUserKey ?? 'none';
     final key = '$userId|${_iso(from)}|${_iso(to)}';
     final cached = _rangeCache[key];
     if (!force &&

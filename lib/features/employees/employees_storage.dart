@@ -174,7 +174,7 @@ class EmployeesStorage {
   static String? _inFlightUserId;
 
   Future<List<EmployeeModel>> load({bool force = false}) {
-    final userId = ApiClient.instance.currentUser?['id'] as String?;
+    final userId = ApiClient.instance.cacheUserKey;
     if (_cacheUserId != userId) {
       _cachedEmployees = null;
       _cachedAt = null;
@@ -213,10 +213,18 @@ class EmployeesStorage {
     });
   }
 
-  Future<List<EmployeeModel>> _loadRemote() async {
+  // Historical rosters must never share the current-employee cache.
+  Future<List<EmployeeModel>> loadForDay(String dateIso) =>
+      _loadRemote(onDate: dateIso);
+
+  Future<List<EmployeeModel>> _loadRemote({String? onDate}) async {
     final api = ApiClient.instance;
     final results = await Future.wait([
-      api.request('GET', '/api/v1/employees'),
+      api.request(
+          'GET',
+          onDate == null
+              ? '/api/v1/employees'
+              : '/api/v1/employees?on_date=$onDate'),
       PositionsStorage().loadPositions(),
     ]);
     final positions = <String, String>{};
@@ -229,7 +237,8 @@ class EmployeesStorage {
       return EmployeeModel(
         id: json['id'] as String,
         fullName: json['full_name'] as String,
-        position: positionId == null ? '' : (positions[positionId] ?? ''),
+        position: (json['position_name'] as String?) ??
+            (positionId == null ? '' : (positions[positionId] ?? '')),
         positionId: positionId,
         salary: (json['salary'] as num).toInt(),
         bonus: (json['bonus'] as num).toInt(),
@@ -250,10 +259,12 @@ class EmployeesStorage {
   }
 
   Future<String?> _resolvePositionId(EmployeeModel employee) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     final positionName = employee.position.trim();
     if (positionName.isEmpty) return null;
 
     final positions = await PositionsStorage().loadPositions();
+    ApiClient.instance.checkSessionEpoch(epoch);
     for (final item in positions) {
       if (item.name.trim().toLowerCase() == positionName.toLowerCase()) {
         return item.id;
@@ -281,8 +292,6 @@ class EmployeesStorage {
       'position_id': positionId,
       'department_id': employee.departmentId,
       'group_id': employee.groupId,
-      'salary': employee.salary,
-      'bonus': employee.bonus,
       'schedule_type': scheduleTypeToString(employee.scheduleType),
       'schedule_start_date':
           employee.scheduleStartDate.toIso8601String().split('T').first,
@@ -293,7 +302,9 @@ class EmployeesStorage {
   }
 
   Future<void> create(EmployeeModel employee) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     final positionId = await _resolvePositionId(employee);
+    ApiClient.instance.checkSessionEpoch(epoch);
     await ApiClient.instance.request(
       'POST',
       '/api/v1/employees',
@@ -303,7 +314,9 @@ class EmployeesStorage {
   }
 
   Future<void> update(EmployeeModel employee) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     final positionId = await _resolvePositionId(employee);
+    ApiClient.instance.checkSessionEpoch(epoch);
     await ApiClient.instance.request(
       'PATCH',
       '/api/v1/employees/${employee.id}',
@@ -350,15 +363,19 @@ class EmployeesStorage {
 
   Future<void> save(List<EmployeeModel> employees) async {
     final api = ApiClient.instance;
+    final epoch = api.sessionEpoch;
     final existing = {for (final item in await load()) item.id: item};
+    api.checkSessionEpoch(epoch);
     final wanted = {for (final item in employees) item.id: item};
     final positionData = await PositionsStorage().loadPositions();
+    api.checkSessionEpoch(epoch);
     final positionsByName = <String, String>{};
     for (final item in positionData) {
       positionsByName[item.name.trim().toLowerCase()] = item.id;
     }
 
     for (final employee in employees) {
+      api.checkSessionEpoch(epoch);
       var positionId = employee.positionId;
       final positionName = employee.position.trim();
       if (positionName.isNotEmpty) {
@@ -380,8 +397,6 @@ class EmployeesStorage {
         'position_id': positionId,
         'department_id': employee.departmentId,
         'group_id': employee.groupId,
-        'salary': employee.salary,
-        'bonus': employee.bonus,
         'schedule_type': scheduleTypeToString(employee.scheduleType),
         'schedule_start_date':
             employee.scheduleStartDate.toIso8601String().split('T').first,
@@ -389,6 +404,7 @@ class EmployeesStorage {
         'break_hours': employee.breakHours,
         'custom_workdays': employee.customWorkdays,
       };
+      api.checkSessionEpoch(epoch);
       await api.request(
         existing.containsKey(employee.id) ? 'PATCH' : 'POST',
         existing.containsKey(employee.id)
@@ -398,6 +414,7 @@ class EmployeesStorage {
       );
     }
     for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
+      api.checkSessionEpoch(epoch);
       await api.request('DELETE', '/api/v1/employees/$id');
     }
     _invalidateCache();

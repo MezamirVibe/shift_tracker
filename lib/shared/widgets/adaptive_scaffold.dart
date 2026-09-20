@@ -133,9 +133,8 @@ class AdaptiveScaffold extends StatelessWidget {
       showDragHandle: true,
       builder: (sheetContext) => Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ListView(
+          shrinkWrap: true,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -188,6 +187,33 @@ class AdaptiveScaffold extends StatelessWidget {
           : moreSelected && moreItems.isNotEmpty
               ? primaryItems.length
               : 0;
+      // NavigationBar lays out labels separately from icons; a fixed height
+      // can silently clip wrapped labels without reporting a RenderFlex error.
+      final compactLabels = MediaQuery.sizeOf(context).width < 380;
+      String mobileLabel(NavItem item) =>
+          compactLabels && item.route == '/settings' ? 'Опции' : item.label;
+      final labels = [
+        for (final item in primaryItems) mobileLabel(item),
+        if (moreItems.isNotEmpty) 'Ещё'
+      ];
+      final labelStyle = (compactLabels
+          ? Theme.of(context).textTheme.labelSmall
+          : Theme.of(context).textTheme.labelMedium)!;
+      var navigationHeight = 80.0;
+      for (final label in labels) {
+        final painter = TextPainter(
+          text: TextSpan(text: label, style: labelStyle),
+          textDirection: Directionality.of(context),
+          textScaler:
+              MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3),
+        )..layout(
+            maxWidth: MediaQuery.sizeOf(context).width / labels.length - 4);
+        final requiredHeight = 56 + painter.height * 2;
+        if (requiredHeight > navigationHeight) {
+          navigationHeight = requiredHeight;
+        }
+        painter.dispose();
+      }
 
       return Scaffold(
         appBar: AppBar(
@@ -197,6 +223,8 @@ class AdaptiveScaffold extends StatelessWidget {
         body: child,
         floatingActionButton: floatingActionButton,
         bottomNavigationBar: NavigationBar(
+          height: navigationHeight,
+          labelTextStyle: WidgetStatePropertyAll(labelStyle),
           selectedIndex: mobileIndex,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           onDestinationSelected: (idx) {
@@ -212,7 +240,7 @@ class AdaptiveScaffold extends StatelessWidget {
             for (final item in primaryItems)
               NavigationDestination(
                 icon: Icon(item.icon),
-                label: item.label,
+                label: mobileLabel(item),
               ),
             if (moreItems.isNotEmpty)
               const NavigationDestination(

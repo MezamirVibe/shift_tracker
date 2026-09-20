@@ -31,6 +31,9 @@ __pycache__/
 
 # --- Deployment secrets and local backups ---
 deploy/.env
+deploy/organizations/*.env
+deploy/organizations/*.caddy
+deploy/organizations/*.pending
 deploy/backups/
 *.dump
 

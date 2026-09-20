@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_MINUTES: int = 15
     REFRESH_TOKEN_DAYS: int = 30
     CORS_ORIGINS: str = ""
+    ORGANIZATION_CODE: str = Field(default="tehnodor-sk", pattern=r"^[a-z0-9][a-z0-9-]{1,47}$")
+    ORGANIZATION_NAME: str = Field(default='ООО «Технодор СК»', min_length=1, max_length=200)
 
     @property
     def cors_origins(self) -> list[str]:

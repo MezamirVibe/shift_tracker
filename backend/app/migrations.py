@@ -8,11 +8,17 @@ from sqlalchemy import select, text
 from .database import SessionFactory, engine
 from .history import ensure_employee_history
 from .models import Base, Employee
+from .config import get_settings
 
 
 async def migrate() -> None:
     async with engine.begin() as connection:
         await connection.execute(text("SELECT pg_advisory_xact_lock(193701, 1)"))
+        # Check the immutable ownership marker before touching an existing database.
+        if await connection.scalar(text("SELECT to_regclass('organization_identity')")):
+            owner = await connection.scalar(text("SELECT code FROM organization_identity WHERE id=1"))
+            if owner is not None and owner != get_settings().ORGANIZATION_CODE:
+                raise RuntimeError("Database belongs to another organization; migration refused")
         await connection.run_sync(Base.metadata.create_all)
         await connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"))
         for sql in (

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import 'auth_models.dart';
+import '../../core/api_client.dart';
 
 class UserAccount {
   final String id;
@@ -191,8 +192,13 @@ class AuthStorage {
   static const _rolesFile = 'roles.json';
 
   Future<File> _file(String name) async {
+    final namespace = base64Url.encode(utf8.encode(
+        ApiClient.instance.cacheUserKey ?? ApiClient.instance.cacheNamespace));
     final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}${Platform.pathSeparator}$name');
+    final folder =
+        Directory('${dir.path}${Platform.pathSeparator}chereda_$namespace');
+    await folder.create(recursive: true);
+    return File('${folder.path}${Platform.pathSeparator}$name');
   }
 
   Future<List<UserAccount>> loadUsers() async {

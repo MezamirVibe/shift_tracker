@@ -60,7 +60,7 @@ class StructureStorage {
   static String? _cacheUserId;
 
   void _ensureCacheOwner() {
-    final userId = ApiClient.instance.currentUser?['id'] as String?;
+    final userId = ApiClient.instance.cacheUserKey;
     if (_cacheUserId == userId) return;
     _cacheUserId = userId;
     _departmentsCache = null;
@@ -111,11 +111,14 @@ class StructureStorage {
   }
 
   Future<void> saveDepartments(List<DepartmentModel> items) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     final existing = {
       for (final item in await loadDepartments()) item.id: item
     };
     final wanted = {for (final item in items) item.id: item};
     for (final item in items) {
+      ApiClient.instance.checkSessionEpoch(epoch);
+      if (existing[item.id]?.name == item.name) continue;
       await ApiClient.instance.request(
         existing.containsKey(item.id) ? 'PATCH' : 'POST',
         existing.containsKey(item.id)
@@ -125,6 +128,7 @@ class StructureStorage {
       );
     }
     for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
+      ApiClient.instance.checkSessionEpoch(epoch);
       await ApiClient.instance.request('DELETE', '/api/v1/departments/$id');
     }
     _departmentsCache = null;
@@ -171,9 +175,16 @@ class StructureStorage {
   }
 
   Future<void> saveGroups(List<GroupModel> items) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     final existing = {for (final item in await loadGroups()) item.id: item};
     final wanted = {for (final item in items) item.id: item};
     for (final item in items) {
+      ApiClient.instance.checkSessionEpoch(epoch);
+      final previous = existing[item.id];
+      if (previous?.name == item.name &&
+          previous?.departmentId == item.departmentId) {
+        continue;
+      }
       await ApiClient.instance.request(
         existing.containsKey(item.id) ? 'PATCH' : 'POST',
         existing.containsKey(item.id)
@@ -187,6 +198,7 @@ class StructureStorage {
       );
     }
     for (final id in existing.keys.where((id) => !wanted.containsKey(id))) {
+      ApiClient.instance.checkSessionEpoch(epoch);
       await ApiClient.instance.request('DELETE', '/api/v1/groups/$id');
     }
     _groupsCache = null;

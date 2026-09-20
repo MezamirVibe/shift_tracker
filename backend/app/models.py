@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timezone
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -24,6 +25,14 @@ def utcnow() -> datetime:
 
 class Base(DeclarativeBase):
     pass
+
+
+class OrganizationIdentity(Base):
+    """A deployment owns one organization/database; accidental reuse fails closed."""
+    __tablename__ = "organization_identity"
+    __table_args__ = (CheckConstraint("id = 1", name="single_organization_identity"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    code: Mapped[str] = mapped_column(String(48), nullable=False)
 
 
 class ScopeKind(str, enum.Enum):

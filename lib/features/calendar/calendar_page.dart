@@ -788,6 +788,7 @@ class _CalendarPageState extends State<CalendarPage> {
             SizedBox(
               width: fieldWidth,
               child: DropdownButtonFormField<String?>(
+                itemHeight: null,
                 initialValue: _selectedDepartmentId,
                 isExpanded: true,
                 decoration: const InputDecoration(
@@ -797,12 +798,14 @@ class _CalendarPageState extends State<CalendarPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Все подразделения'),
+                    child: Text('Все подразделения',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   ..._departments.map(
                     (d) => DropdownMenuItem<String?>(
                       value: d.id,
-                      child: Text(d.name),
+                      child: Text(d.name,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                 ],
@@ -821,6 +824,7 @@ class _CalendarPageState extends State<CalendarPage> {
             SizedBox(
               width: fieldWidth,
               child: DropdownButtonFormField<String?>(
+                itemHeight: null,
                 initialValue: _selectedGroupId,
                 isExpanded: true,
                 decoration: const InputDecoration(
@@ -830,12 +834,14 @@ class _CalendarPageState extends State<CalendarPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Все группы'),
+                    child: Text('Все группы',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   ...groups.map(
                     (g) => DropdownMenuItem<String?>(
                       value: g.id,
-                      child: Text(g.name),
+                      child: Text(g.name,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                 ],
@@ -855,6 +861,7 @@ class _CalendarPageState extends State<CalendarPage> {
             SizedBox(
               width: fieldWidth,
               child: DropdownButtonFormField<String?>(
+                itemHeight: null,
                 initialValue: _selectedPosition,
                 isExpanded: true,
                 decoration: const InputDecoration(
@@ -864,7 +871,8 @@ class _CalendarPageState extends State<CalendarPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Все должности'),
+                    child: Text('Все должности',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   for (final position in _availablePositions)
                     DropdownMenuItem<String?>(
@@ -1149,7 +1157,10 @@ class _CalendarPageState extends State<CalendarPage> {
     );
   }
 
-  double _cellHeightFor(bool isPhone) => isPhone ? 58 : 104;
+  double _cellHeightFor(bool isPhone) {
+    final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    return (isPhone ? 64 : 112) * (scale < 1 ? 1 : scale);
+  }
 
   AttendanceRecord? _recordFor(DateTime day, String employeeId) {
     final cacheKey = '${_isoDate(day)}|$employeeId';
@@ -1263,248 +1274,244 @@ class _CalendarPageState extends State<CalendarPage> {
         '${_selectedScheduleDay.day.toString().padLeft(2, '0')}.'
         '${_selectedScheduleDay.month.toString().padLeft(2, '0')}.'
         '${_selectedScheduleDay.year}';
-    return Column(
-      children: [
-        Row(
-          children: [
-            IconButton(
-              tooltip: 'Предыдущая неделя',
-              onPressed: () => _moveWeek(-1),
-              icon: const Icon(Icons.chevron_left),
-            ),
-            Card(
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Text(
-                  '${_weekStart.day.toString().padLeft(2, '0')}.${_weekStart.month.toString().padLeft(2, '0')} – '
-                  '${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}.${end.year}',
-                  style: Theme.of(context).textTheme.titleMedium,
+    return NestedScrollView(
+      headerSliverBuilder: (context, innerBoxIsScrolled) => [
+        SliverToBoxAdapter(
+            child: Column(children: [
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              IconButton(
+                tooltip: 'Предыдущая неделя',
+                onPressed: () => _moveWeek(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Card(
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Text(
+                    '${_weekStart.day.toString().padLeft(2, '0')}.${_weekStart.month.toString().padLeft(2, '0')} – '
+                    '${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}.${end.year}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
               ),
-            ),
-            IconButton(
-              tooltip: 'Следующая неделя',
-              onPressed: () => _moveWeek(1),
-              icon: const Icon(Icons.chevron_right),
-            ),
-            const Spacer(),
-            if (!_isPersonalView) ...[
-              OutlinedButton.icon(
-                onPressed: () => context.go('/employees'),
-                icon: const Icon(Icons.edit_calendar_outlined),
-                label: const Text('Настроить графики'),
+              IconButton(
+                tooltip: 'Следующая неделя',
+                onPressed: () => _moveWeek(1),
+                icon: const Icon(Icons.chevron_right),
               ),
-              const SizedBox(width: 10),
+              if (!_isPersonalView) ...[
+                OutlinedButton.icon(
+                  onPressed: () => context.go('/employees'),
+                  icon: const Icon(Icons.edit_calendar_outlined),
+                  label: const Text('Настроить графики'),
+                ),
+                const SizedBox(width: 10),
+              ],
+              OutlinedButton.icon(
+                onPressed: _isPersonalView
+                    ? _jumpToToday
+                    : () => _openDay(DateTime.now()),
+                icon: const Icon(Icons.today_outlined),
+                label: const Text('Сегодня'),
+              ),
             ],
-            OutlinedButton.icon(
-              onPressed: _isPersonalView
-                  ? _jumpToToday
-                  : () => _openDay(DateTime.now()),
-              icon: const Icon(Icons.today_outlined),
-              label: const Text('Сегодня'),
+          ),
+          if (!_isPersonalView) ...[
+            const SizedBox(height: 12),
+            _filtersBlock(false),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Показатели за $selectedLabel',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                _desktopStat(
+                  icon: Icons.badge_outlined,
+                  label: 'План на смену',
+                  value: '$planned',
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                _desktopStat(
+                  icon: Icons.how_to_reg_outlined,
+                  label: 'Фактически вышли',
+                  value: '$worked',
+                  color: Colors.green,
+                ),
+                const SizedBox(width: 10),
+                _desktopStat(
+                  icon: Icons.beach_access_outlined,
+                  label: 'Отсутствуют',
+                  value: '$away',
+                  color: Theme.of(context).colorScheme.tertiary,
+                ),
+                const SizedBox(width: 10),
+                _desktopStat(
+                  icon: Icons.warning_amber_rounded,
+                  label: 'Не заполнено',
+                  value: '$missing',
+                  color: Colors.orange,
+                ),
+              ],
             ),
           ],
-        ),
-        if (!_isPersonalView) ...[
           const SizedBox(height: 12),
-          _filtersBlock(false),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Показатели за $selectedLabel',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              _desktopStat(
-                icon: Icons.badge_outlined,
-                label: 'План на смену',
-                value: '$planned',
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(width: 10),
-              _desktopStat(
-                icon: Icons.how_to_reg_outlined,
-                label: 'Фактически вышли',
-                value: '$worked',
-                color: Colors.green,
-              ),
-              const SizedBox(width: 10),
-              _desktopStat(
-                icon: Icons.beach_access_outlined,
-                label: 'Отсутствуют',
-                value: '$away',
-                color: Theme.of(context).colorScheme.tertiary,
-              ),
-              const SizedBox(width: 10),
-              _desktopStat(
-                icon: Icons.warning_amber_rounded,
-                label: 'Не заполнено',
-                value: '$missing',
-                color: Colors.orange,
-              ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 12),
-        Expanded(
-          child: Card(
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                Container(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 220,
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 16),
-                          child: Text(
-                              _isPersonalView ? 'Мой график' : 'Сотрудник',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w600)),
-                        ),
-                      ),
-                      for (final day in days)
-                        Expanded(
-                          child: Material(
-                            color: dateOnly(day) == _selectedScheduleDay
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                            child: InkWell(
-                              onTap: () => setState(
-                                () => _selectedScheduleDay = dateOnly(day),
-                              ),
-                              borderRadius: BorderRadius.circular(8),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 4),
-                                child: Column(
-                                  children: [
-                                    Text(
-                                      const [
-                                        'Пн',
-                                        'Вт',
-                                        'Ср',
-                                        'Чт',
-                                        'Пт',
-                                        'Сб',
-                                        'Вс'
-                                      ][day.weekday - 1],
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelMedium,
-                                    ),
-                                    Text(
-                                      '${day.day}',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                    ),
-                                  ],
+          _scheduleLegend(),
+          const SizedBox(height: 10),
+        ])),
+      ],
+      body: Card(
+        clipBehavior: Clip.antiAlias,
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+                child: Container(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 220,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Text(_isPersonalView ? 'Мой график' : 'Сотрудник',
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                  for (final day in days)
+                    Expanded(
+                      child: Material(
+                        color: dateOnly(day) == _selectedScheduleDay
+                            ? Theme.of(context).colorScheme.primaryContainer
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                        child: InkWell(
+                          onTap: () => setState(
+                            () => _selectedScheduleDay = dateOnly(day),
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Column(
+                              children: [
+                                Text(
+                                  const [
+                                    'Пн',
+                                    'Вт',
+                                    'Ср',
+                                    'Чт',
+                                    'Пт',
+                                    'Сб',
+                                    'Вс'
+                                  ][day.weekday - 1],
+                                  style:
+                                      Theme.of(context).textTheme.labelMedium,
                                 ),
-                              ),
+                                Text(
+                                  '${day.day}',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: employees.isEmpty
-                      ? const Center(
-                          child: Text('Нет сотрудников по выбранным фильтрам'))
-                      : ListView.separated(
-                          itemCount: employees.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final employee = employees[index];
-                            return SizedBox(
-                              height: 72,
-                              child: Row(
-                                children: [
-                                  SizedBox(
-                                    width: 220,
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: () => context
-                                            .push('/employee/${employee.id}'),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 14),
-                                          child: Row(
+                      ),
+                    ),
+                ],
+              ),
+            )),
+            employees.isEmpty
+                ? const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                        child: Text('Нет сотрудников по выбранным фильтрам')))
+                : SliverList.separated(
+                    itemCount: employees.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final employee = employees[index];
+                      return SizedBox(
+                        height: 72,
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 220,
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () =>
+                                      context.push('/employee/${employee.id}'),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14),
+                                    child: Row(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 18,
+                                          child: Text(
+                                              _initials(employee.fullName)),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Column(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              CircleAvatar(
-                                                radius: 18,
-                                                child: Text(_initials(
-                                                    employee.fullName)),
+                                              Text(
+                                                employee.fullName,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .labelLarge,
                                               ),
-                                              const SizedBox(width: 10),
-                                              Expanded(
-                                                child: Column(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      employee.fullName,
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: Theme.of(context)
-                                                          .textTheme
-                                                          .labelLarge,
-                                                    ),
-                                                    Text(
-                                                      employee.position,
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: Theme.of(context)
-                                                          .textTheme
-                                                          .bodySmall,
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                              Icon(
-                                                Icons.chevron_right,
-                                                size: 18,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant,
+                                              Text(
+                                                employee.position,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall,
                                               ),
                                             ],
                                           ),
                                         ),
-                                      ),
+                                        Icon(
+                                          Icons.chevron_right,
+                                          size: 18,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  for (final day in days)
-                                    Expanded(
-                                        child: _scheduleCell(employee, day)),
-                                ],
+                                ),
                               ),
-                            );
-                          },
+                            ),
+                            for (final day in days)
+                              Expanded(child: _scheduleCell(employee, day)),
+                          ],
                         ),
-                ),
-              ],
-            ),
-          ),
+                      );
+                    },
+                  ),
+          ],
         ),
-        const SizedBox(height: 10),
-        _scheduleLegend(),
-      ],
+      ),
     );
   }
 
@@ -2073,85 +2080,85 @@ class _CalendarPageState extends State<CalendarPage> {
             ? const Center(child: CircularProgressIndicator())
             : !widget.fullView
                 ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
-                : Column(
-                    children: [
-                      _monthHeader(compact: isPhone),
-                      const SizedBox(height: 8),
-                      _filtersBlock(isPhone),
-                      const SizedBox(height: 8),
-                      _calendarLegend(compact: isPhone),
-                      const SizedBox(height: 8),
-                      _weekHeader(),
-                      const SizedBox(height: 6),
-                      Expanded(
-                        child: PageView.builder(
-                          controller: _pageController,
-                          onPageChanged: (page) async {
-                            final m = _monthFromPage(page);
-                            setState(() => _month = m);
-                            await _loadAndRecalc(forMonth: m);
-                          },
-                          itemBuilder: (context, pageIndex) {
-                            final pageMonth = _monthFromPage(pageIndex);
-                            final days = _buildGridDays(pageMonth);
+                : NestedScrollView(
+                    headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                      SliverToBoxAdapter(
+                          child: Column(children: [
+                        _monthHeader(compact: isPhone),
+                        const SizedBox(height: 8),
+                        _filtersBlock(isPhone),
+                        const SizedBox(height: 8),
+                        _calendarLegend(compact: isPhone),
+                        const SizedBox(height: 8),
+                        _weekHeader(),
+                        const SizedBox(height: 6),
+                      ])),
+                    ],
+                    body: PageView.builder(
+                      controller: _pageController,
+                      onPageChanged: (page) async {
+                        final m = _monthFromPage(page);
+                        setState(() => _month = m);
+                        await _loadAndRecalc(forMonth: m);
+                      },
+                      itemBuilder: (context, pageIndex) {
+                        final pageMonth = _monthFromPage(pageIndex);
+                        final days = _buildGridDays(pageMonth);
 
-                            return LayoutBuilder(
-                              builder: (context, c) {
-                                const cross = 7;
-                                final spacing = isPhone ? 4.0 : 6.0;
-                                final cellHeight = _cellHeightFor(isPhone);
+                        return LayoutBuilder(
+                          builder: (context, c) {
+                            const cross = 7;
+                            final spacing = isPhone ? 4.0 : 6.0;
+                            final cellHeight = _cellHeightFor(isPhone);
 
-                                return SingleChildScrollView(
-                                  child: GridView.builder(
-                                    shrinkWrap: true,
-                                    physics:
-                                        const NeverScrollableScrollPhysics(),
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    gridDelegate:
-                                        SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: cross,
-                                      crossAxisSpacing: spacing,
-                                      mainAxisSpacing: spacing,
-                                      mainAxisExtent: cellHeight,
-                                    ),
-                                    itemCount: days.length,
-                                    itemBuilder: (context, index) {
-                                      final day = days[index];
-                                      if (day == null) {
-                                        return const SizedBox.shrink();
-                                      }
+                            return SingleChildScrollView(
+                              child: GridView.builder(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                padding: const EdgeInsets.only(bottom: 12),
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: cross,
+                                  crossAxisSpacing: spacing,
+                                  mainAxisSpacing: spacing,
+                                  mainAxisExtent: cellHeight,
+                                ),
+                                itemCount: days.length,
+                                itemBuilder: (context, index) {
+                                  final day = days[index];
+                                  if (day == null) {
+                                    return const SizedBox.shrink();
+                                  }
 
-                                      final d0 = dateOnly(day);
-                                      final iso = _isoDate(d0);
+                                  final d0 = dateOnly(day);
+                                  final iso = _isoDate(d0);
 
-                                      final s = _summaryByDateIso[iso] ??
-                                          const _DaySummary(
-                                            planned: 0,
-                                            worked: 0,
-                                            absent: 0,
-                                            sick: 0,
-                                            vacation: 0,
-                                            closed: false,
-                                          );
-
-                                      return _DayCell(
-                                        day: day,
-                                        summary: s,
-                                        compact: isPhone,
-                                        personalKind: _isPersonalView
-                                            ? _personalKindFor(day)
-                                            : null,
-                                        onTap: () => _openDay(day),
+                                  final s = _summaryByDateIso[iso] ??
+                                      const _DaySummary(
+                                        planned: 0,
+                                        worked: 0,
+                                        absent: 0,
+                                        sick: 0,
+                                        vacation: 0,
+                                        closed: false,
                                       );
-                                    },
-                                  ),
-                                );
-                              },
+
+                                  return _DayCell(
+                                    day: day,
+                                    summary: s,
+                                    compact: isPhone,
+                                    personalKind: _isPersonalView
+                                        ? _personalKindFor(day)
+                                        : null,
+                                    onTap: () => _openDay(day),
+                                  );
+                                },
+                              ),
                             );
                           },
-                        ),
-                      ),
-                    ],
+                        );
+                      },
+                    ),
                   ),
       ),
     );
@@ -2270,11 +2277,16 @@ class _DayCell extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Text(
-                              '${day.day}',
-                              style: Theme.of(context).textTheme.labelMedium,
-                            ),
-                            const Spacer(),
+                            Expanded(
+                                child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      '${day.day}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelMedium,
+                                    ))),
                             if (summary.closed)
                               Icon(
                                 Icons.lock,

@@ -234,6 +234,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        scrollable: true,
         title: const Text('Сотрудник и учётная запись созданы'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -472,6 +473,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                     SizedBox(
                       width: filterWidth,
                       child: DropdownButtonFormField<String?>(
+                        itemHeight: null,
                         initialValue: _selectedDepartmentId,
                         isExpanded: true,
                         decoration: const InputDecoration(
@@ -481,18 +483,14 @@ class _EmployeesPageState extends State<EmployeesPage> {
                         items: [
                           const DropdownMenuItem<String?>(
                             value: null,
-                            child: Text(
-                              'Все подразделения',
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            child: Text('Все подразделения',
+                                overflow: TextOverflow.ellipsis, maxLines: 1),
                           ),
                           ..._departments.map(
                             (d) => DropdownMenuItem<String?>(
                               value: d.id as String?,
-                              child: Text(
-                                d.name as String,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                              child: Text(d.name as String,
+                                  overflow: TextOverflow.ellipsis, maxLines: 1),
                             ),
                           ),
                         ],
@@ -507,6 +505,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                     SizedBox(
                       width: filterWidth,
                       child: DropdownButtonFormField<String?>(
+                        itemHeight: null,
                         initialValue: _selectedGroupId,
                         isExpanded: true,
                         decoration: const InputDecoration(
@@ -516,18 +515,14 @@ class _EmployeesPageState extends State<EmployeesPage> {
                         items: [
                           const DropdownMenuItem<String?>(
                             value: null,
-                            child: Text(
-                              'Все группы',
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            child: Text('Все группы',
+                                overflow: TextOverflow.ellipsis, maxLines: 1),
                           ),
                           ...groups.map(
                             (g) => DropdownMenuItem<String?>(
                               value: g.id as String?,
-                              child: Text(
-                                g.name as String,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                              child: Text(g.name as String,
+                                  overflow: TextOverflow.ellipsis, maxLines: 1),
                             ),
                           ),
                         ],
@@ -683,8 +678,6 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 children: [
                   Chip(label: Text(dep)),
                   Chip(label: Text(grp)),
-                  Chip(label: Text('Оклад ${e.salary} ₽')),
-                  Chip(label: Text('Премия ${e.bonus} ₽')),
                   if (linkedUser != null)
                     Chip(label: Text('Логин: ${linkedUser.login}')),
                 ],
@@ -788,7 +781,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
-        child: Column(
+        child: SingleChildScrollView(
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -838,7 +832,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
             _DetailLine(label: 'Смена', value: '${employee.shiftHours} ч'),
             _DetailLine(label: 'Перерыв', value: '${employee.breakHours} ч'),
             _DetailLine(label: 'Логин', value: linked?.login ?? 'Не создан'),
-            const Spacer(),
+            const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -849,7 +843,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
               ),
             ),
           ],
-        ),
+        )),
       ),
     );
   }
@@ -907,36 +901,37 @@ class _EmployeesPageState extends State<EmployeesPage> {
             : _loading
                 ? const Center(child: CircularProgressIndicator())
                 : isDesktop
-                    ? Column(
-                        children: [
-                          _heroCard(false),
-                          const SizedBox(height: 12),
-                          _scopeHint(),
-                          if (showBindingWarning) ...[
+                    ? NestedScrollView(
+                        headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                          SliverToBoxAdapter(
+                              child: Column(children: [
+                            _heroCard(false),
                             const SizedBox(height: 12),
-                            const _MissingScopeWarning(),
-                          ],
-                          const SizedBox(height: 12),
-                          _filtersCard(),
-                          const SizedBox(height: 12),
-                          Expanded(
-                            child: list.isEmpty
-                                ? _emptyState(noBinding)
-                                : Row(
-                                    children: [
-                                      Expanded(
-                                        flex: 7,
-                                        child: _desktopList(list, canEdit),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      SizedBox(
-                                        width: 360,
-                                        child: _employeePreview(canEdit),
-                                      ),
-                                    ],
-                                  ),
-                          ),
+                            _scopeHint(),
+                            if (showBindingWarning) ...[
+                              const SizedBox(height: 12),
+                              const _MissingScopeWarning(),
+                            ],
+                            const SizedBox(height: 12),
+                            _filtersCard(),
+                            const SizedBox(height: 12),
+                          ])),
                         ],
+                        body: list.isEmpty
+                            ? _emptyState(noBinding)
+                            : Row(
+                                children: [
+                                  Expanded(
+                                    flex: 7,
+                                    child: _desktopList(list, canEdit),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  SizedBox(
+                                    width: 360,
+                                    child: _employeePreview(canEdit),
+                                  ),
+                                ],
+                              ),
                       )
                     : ListView(
                         physics: const AlwaysScrollableScrollPhysics(),

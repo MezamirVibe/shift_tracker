@@ -27,6 +27,8 @@ services:
       ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
       REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-30}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ORGANIZATION_CODE: ${ORGANIZATION_CODE:-tehnodor-sk}
+      ORGANIZATION_NAME: ${ORGANIZATION_NAME:-ООО «Технодор СК»}
     depends_on:
       db:
         condition: service_healthy
@@ -36,7 +38,9 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - internal
+      internal:
+      gateway:
+        aliases: ["org-tehnodor-sk-api"]
 
   caddy:
     image: caddy:2.10-alpine
@@ -47,13 +51,14 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./organizations:/etc/caddy/organizations:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       api:
         condition: service_healthy
     networks:
-      - internal
+      - gateway
 
   backup:
     image: postgres:17-alpine
@@ -78,6 +83,8 @@ services:
 
 networks:
   internal:
+  gateway:
+    name: chereda_gateway
 
 volumes:
   postgres_data:

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
+import '../../shared/widgets/responsive_form_body.dart';
 import 'auth_service.dart';
 
 class LoginPage extends StatefulWidget {
@@ -69,98 +70,105 @@ class _LoginPageState extends State<LoginPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Вход')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+      body: ResponsiveFormBody(
+        child: Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(18),
-                      child: Image.asset(
-                        'assets/branding/chereda_app_icon.png',
-                        width: 72,
-                        height: 72,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Череда — график смен',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _login,
-                      decoration: const InputDecoration(
-                        labelText: 'Логин',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _password,
-                      obscureText: !_showPassword,
-                      onSubmitted: (_) => _busy ? null : _doLogin(),
-                      decoration: InputDecoration(
-                        labelText: 'Пароль',
-                        border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          tooltip: _showPassword
-                              ? 'Скрыть пароль'
-                              : 'Показать пароль',
-                          onPressed: () => setState(
-                            () => _showPassword = !_showPassword,
-                          ),
-                          icon: Icon(
-                            _showPassword
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
-                          ),
-                        ),
-                      ),
-                    ),
-                    CheckboxListTile(
-                      value: _rememberMe,
-                      contentPadding: EdgeInsets.zero,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      title: const Text('Оставаться в системе'),
-                      subtitle: const Text(
-                        'При следующем запуске вход выполнится автоматически. '
-                        'Пароль не сохраняется.',
-                      ),
-                      onChanged: _busy
-                          ? null
-                          : (value) => setState(
-                                () => _rememberMe = value ?? true,
-                              ),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _busy ? null : _doLogin,
-                        child: Text(_busy ? 'Входим...' : 'Войти'),
-                      ),
-                    ),
-                  ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Image.asset(
+                    'assets/branding/chereda_app_icon.png',
+                    width: 72,
+                    height: 72,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 12),
+                Text(
+                  'Череда — график смен',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 12),
+                if (ApiClient.instance.organization != null) ...[
+                  Text(ApiClient.instance.organization!.name,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleMedium),
+                  TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () async {
+                              await AuthService.instance.changeOrganization();
+                              if (context.mounted) context.go('/organization');
+                            },
+                      child: const Text('Другая организация')),
+                ],
+                TextField(
+                  controller: _login,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Логин',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _password,
+                  obscureText: !_showPassword,
+                  onSubmitted: (_) => _busy ? null : _doLogin(),
+                  decoration: InputDecoration(
+                    labelText: 'Пароль',
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      tooltip:
+                          _showPassword ? 'Скрыть пароль' : 'Показать пароль',
+                      onPressed: () => setState(
+                        () => _showPassword = !_showPassword,
+                      ),
+                      icon: Icon(
+                        _showPassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                    ),
+                  ),
+                ),
+                CheckboxListTile(
+                  value: _rememberMe,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('Оставаться в системе'),
+                  subtitle: const Text(
+                    'При следующем запуске вход выполнится автоматически. '
+                    'Пароль не сохраняется.',
+                  ),
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(
+                            () => _rememberMe = value ?? true,
+                          ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _busy ? null : _doLogin,
+                    child: Text(_busy ? 'Входим...' : 'Войти'),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

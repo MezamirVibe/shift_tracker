@@ -18,6 +18,7 @@ async def employee_snapshot(session: AsyncSession, employee: Employee) -> dict:
         "group_id": str(employee.group_id) if employee.group_id else None,
         "group": group.name if group else "Без группы",
         "position": position.name if position else "",
+        "position_id": str(employee.position_id) if employee.position_id else None,
         "schedule_type": employee.schedule_type.value,
         "schedule_start_date": employee.schedule_start_date.isoformat(),
         "shift_hours": employee.shift_hours,

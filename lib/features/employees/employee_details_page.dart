@@ -27,7 +27,7 @@ class EmployeeDetailsPage extends StatefulWidget {
 class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController =
-      TabController(length: 5, vsync: this);
+      TabController(length: 4, vsync: this);
 
   final _storage = EmployeesStorage();
   final _structureStorage = StructureStorage();
@@ -239,6 +239,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Уволить сотрудника?'),
         content: Text('Уволить "$_fullName"?'),
         actions: [
@@ -279,6 +280,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        scrollable: true,
         title: const Text('Пароль сброшен'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -392,8 +394,6 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
               spacing: 8,
               runSpacing: 8,
               children: [
-                Chip(label: Text('Оклад $_salary ₽')),
-                Chip(label: Text('Премия $_bonus ₽')),
                 Chip(label: Text('График ${_scheduleLabel(_scheduleType)}')),
                 if (_linkedUser != null)
                   Chip(label: Text('Логин: ${_linkedUser!.login}')),
@@ -471,63 +471,58 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
           tabs: [
             const Tab(text: 'График'),
             Tab(text: isPhone ? 'Отдел' : 'Структура'),
-            Tab(text: isPhone ? 'Оплата' : 'Зарплата'),
             const Tab(text: 'Доступ'),
             const Tab(text: 'История'),
           ],
         ),
       ),
-      body: Column(
-        children: [
-          Padding(
+      body: NestedScrollView(
+        headerSliverBuilder: (context, innerBoxIsScrolled) => [
+          SliverToBoxAdapter(
+              child: Padding(
             padding: EdgeInsets.fromLTRB(
                 isPhone ? 8 : 12, isPhone ? 8 : 12, isPhone ? 8 : 12, 0),
             child: _heroCard(isPhone),
-          ),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _ScheduleTab(
-                  scheduleType: _scheduleType,
-                  startDate: _startDate,
-                  shiftHours: _shiftHours,
-                  breakHours: _breakHours,
-                  customWorkdays: _customWorkdays,
-                  onChanged: _changeSchedule,
-                ),
-                _StructureTab(
-                  departmentId: _departmentId,
-                  groupId: _groupId,
-                  storage: _structureStorage,
-                  onChanged: (depId, grpId) async {
-                    final current = await _getFreshEmployee();
-                    if (!mounted || current == null) return;
-
-                    final updated = current.copyWith(
-                      departmentId: depId,
-                      groupId: grpId,
-                      clearDepartment: depId == null,
-                      clearGroup: grpId == null,
-                    );
-                    await _saveEmployee(updated);
-                  },
-                ),
-                _SalaryTab(salary: _salary, bonus: _bonus),
-                _AccessTab(
-                  user: _linkedUser,
-                  roleName: _linkedUser == null
-                      ? null
-                      : AuthService.instance
-                          .roleById(_linkedUser!.roleId)
-                          ?.name,
-                  onResetPassword: _resetPassword,
-                ),
-                const _HistoryTab(),
-              ],
-            ),
-          ),
+          )),
         ],
+        body: TabBarView(
+          controller: _tabController,
+          children: [
+            _ScheduleTab(
+              scheduleType: _scheduleType,
+              startDate: _startDate,
+              shiftHours: _shiftHours,
+              breakHours: _breakHours,
+              customWorkdays: _customWorkdays,
+              onChanged: _changeSchedule,
+            ),
+            _StructureTab(
+              departmentId: _departmentId,
+              groupId: _groupId,
+              storage: _structureStorage,
+              onChanged: (depId, grpId) async {
+                final current = await _getFreshEmployee();
+                if (!mounted || current == null) return;
+
+                final updated = current.copyWith(
+                  departmentId: depId,
+                  groupId: grpId,
+                  clearDepartment: depId == null,
+                  clearGroup: grpId == null,
+                );
+                await _saveEmployee(updated);
+              },
+            ),
+            _AccessTab(
+              user: _linkedUser,
+              roleName: _linkedUser == null
+                  ? null
+                  : AuthService.instance.roleById(_linkedUser!.roleId)?.name,
+              onResetPassword: _resetPassword,
+            ),
+            const _HistoryTab(),
+          ],
+        ),
       ),
     );
   }
@@ -702,6 +697,8 @@ class _StructureTabState extends State<_StructureTab> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
+                  itemHeight: null,
+                  isExpanded: true,
                   initialValue: _depId,
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
@@ -709,12 +706,14 @@ class _StructureTabState extends State<_StructureTab> {
                   items: [
                     const DropdownMenuItem(
                       value: null,
-                      child: Text('— не выбрано —'),
+                      child: Text('— не выбрано —',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                     ..._deps.map(
                       (d) => DropdownMenuItem<String?>(
                         value: d.id as String,
-                        child: Text(d.name as String),
+                        child: Text(d.name as String,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     ),
                   ],
@@ -749,6 +748,8 @@ class _StructureTabState extends State<_StructureTab> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
+                  itemHeight: null,
+                  isExpanded: true,
                   initialValue: _groupId,
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
@@ -756,12 +757,14 @@ class _StructureTabState extends State<_StructureTab> {
                   items: [
                     const DropdownMenuItem(
                       value: null,
-                      child: Text('— не выбрано —'),
+                      child: Text('— не выбрано —',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                     ...groups.map(
                       (g) => DropdownMenuItem<String?>(
                         value: g.id as String,
-                        child: Text(g.name as String),
+                        child: Text(g.name as String,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     ),
                   ],
@@ -845,6 +848,8 @@ class _ScheduleTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
                 DropdownButtonFormField<ScheduleType>(
+                  itemHeight: null,
+                  isExpanded: true,
                   initialValue: scheduleType,
                   decoration: const InputDecoration(
                     labelText: 'Тип графика',
@@ -853,15 +858,18 @@ class _ScheduleTab extends StatelessWidget {
                   items: const [
                     DropdownMenuItem(
                       value: ScheduleType.twoTwo,
-                      child: Text('2/2'),
+                      child: Text('2/2',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                     DropdownMenuItem(
                       value: ScheduleType.fiveTwo,
-                      child: Text('5/2'),
+                      child: Text('5/2',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                     DropdownMenuItem(
                       value: ScheduleType.custom,
-                      child: Text('Произвольный'),
+                      child: Text('Произвольный',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ],
                   onChanged: (v) {
@@ -953,6 +961,8 @@ class _ScheduleTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
+                  itemHeight: null,
+                  isExpanded: true,
                   initialValue: shiftHours,
                   decoration: const InputDecoration(
                     labelText: 'Длительность смены',
@@ -962,7 +972,8 @@ class _ScheduleTab extends StatelessWidget {
                     24,
                     (index) => DropdownMenuItem(
                       value: index + 1,
-                      child: Text('${index + 1} ч'),
+                      child: Text('${index + 1} ч',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                   onChanged: (v) {
@@ -979,6 +990,8 @@ class _ScheduleTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
+                  itemHeight: null,
+                  isExpanded: true,
                   initialValue: breakHours,
                   decoration: const InputDecoration(
                     labelText: 'Перерыв',
@@ -988,7 +1001,8 @@ class _ScheduleTab extends StatelessWidget {
                     shiftHours,
                     (i) => DropdownMenuItem<int>(
                       value: i,
-                      child: Text('$i час(а)'),
+                      child: Text('$i час(а)',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                   onChanged: (v) {
@@ -1046,52 +1060,6 @@ class _ScheduleTab extends StatelessWidget {
                     ),
                   );
                 }),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SalaryTab extends StatelessWidget {
-  final int salary;
-  final int bonus;
-
-  const _SalaryTab({required this.salary, required this.bonus});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: [
-        Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Оплата',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Базовые параметры оплаты сотрудника.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    Chip(label: Text('Оклад $salary ₽')),
-                    Chip(label: Text('Премия $bonus ₽')),
-                    Chip(label: Text('Итого ${salary + bonus} ₽')),
-                  ],
-                ),
               ],
             ),
           ),

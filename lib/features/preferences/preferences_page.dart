@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../core/api_client.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
@@ -45,6 +46,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
+          scrollable: true,
           title: const Text('Сменить пароль'),
           content: SizedBox(
             width: 420,
@@ -124,6 +126,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Выйти из аккаунта?'),
         content: const Text(
             'Для продолжения потребуется снова ввести логин и пароль.'),
@@ -169,6 +172,14 @@ class _PreferencesPageState extends State<PreferencesPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (ApiClient.instance.organization != null) ...[
+                  Text(ApiClient.instance.organization!.name,
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 6),
+                  Text(
+                      'Код организации: ${ApiClient.instance.organization!.code}'),
+                  const SizedBox(height: 20),
+                ],
                 Text('Внешний вид',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 6),

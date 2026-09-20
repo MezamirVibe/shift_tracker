@@ -41,51 +41,53 @@ class AdminPage extends StatelessWidget {
       child: AdaptiveScaffold(
         title: 'Администрирование',
         selectedRoute: '/admin',
-        child: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Wrap(
-                    runSpacing: 8,
-                    spacing: 12,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      const Icon(Icons.tune),
-                      Text(
-                        'Здесь настраиваются пользователи, роли, структура и справочник должностей.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
+        child: NestedScrollView(
+          headerSliverBuilder: (context, innerBoxIsScrolled) => [
+            SliverToBoxAdapter(
+                child: Column(children: [
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Wrap(
+                      runSpacing: 8,
+                      spacing: 12,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        const Icon(Icons.tune),
+                        Text(
+                          'Здесь настраиваются пользователи, роли, структура и справочник должностей.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            Material(
-              color: Theme.of(context).colorScheme.surface,
-              child: TabBar(
-                isScrollable: !isPhone,
-                tabAlignment: isPhone ? TabAlignment.fill : TabAlignment.start,
-                labelPadding: isPhone
-                    ? EdgeInsets.zero
-                    : const EdgeInsets.symmetric(horizontal: 16),
-                labelStyle: isPhone
-                    ? Theme.of(context).textTheme.labelSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        )
-                    : null,
-                tabs: safeTabs,
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: TabBar(
+                  isScrollable: !isPhone,
+                  tabAlignment:
+                      isPhone ? TabAlignment.fill : TabAlignment.start,
+                  labelPadding: isPhone
+                      ? EdgeInsets.zero
+                      : const EdgeInsets.symmetric(horizontal: 16),
+                  labelStyle: isPhone
+                      ? Theme.of(context).textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          )
+                      : null,
+                  tabs: safeTabs,
+                ),
               ),
-            ),
-            Expanded(
-              child: TabBarView(
-                children: safeViews,
-              ),
-            ),
+            ])),
           ],
+          body: TabBarView(
+            children: safeViews,
+          ),
         ),
       ),
     );

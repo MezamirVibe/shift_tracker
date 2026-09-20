@@ -9,5 +9,15 @@ api.mezamir.com {
 		-Server
 	}
 
-	reverse_proxy api:8000
+	handle_path /o/tehnodor-sk/* {
+		reverse_proxy org-tehnodor-sk-api:8000
+	}
+	import /etc/caddy/organizations/*.caddy
+	# Unknown codes must never fall through to the default organization's API.
+	handle /o/* {
+		respond "Organization not found" 404
+	}
+	handle {
+		reverse_proxy org-tehnodor-sk-api:8000
+	}
 }

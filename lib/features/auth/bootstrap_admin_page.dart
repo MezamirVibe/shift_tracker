@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'auth_service.dart';
+import '../../shared/widgets/responsive_form_body.dart';
 
 class BootstrapAdminPage extends StatefulWidget {
   const BootstrapAdminPage({super.key});
@@ -69,71 +70,67 @@ class _BootstrapAdminPageState extends State<BootstrapAdminPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Первый запуск')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Создай суперадмина. Этот пользователь сможет добавлять остальных.',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _login,
-                  decoration: const InputDecoration(
-                    labelText: 'Логин суперадмина',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Пароль',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password2,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Повтори пароль',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (_) => _busy ? null : _create(),
-                ),
-                const SizedBox(height: 12),
-                if (_error != null)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _error!,
-                      style:
-                          TextStyle(color: Theme.of(context).colorScheme.error),
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: _busy ? null : _create,
-                    child: _busy
-                        ? const SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('Создать и войти'),
-                  ),
-                ),
-              ],
+      body: ResponsiveFormBody(
+        maxWidth: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Создай суперадмина. Этот пользователь сможет добавлять остальных.',
+              textAlign: TextAlign.center,
             ),
-          ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _login,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(
+                labelText: 'Логин суперадмина',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _password,
+              textInputAction: TextInputAction.next,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Пароль',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _password2,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Повтори пароль',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (_) => _busy ? null : _create(),
+            ),
+            const SizedBox(height: 12),
+            if (_error != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _busy ? null : _create,
+                child: _busy
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Создать и войти'),
+              ),
+            ),
+          ],
         ),
       ),
     );

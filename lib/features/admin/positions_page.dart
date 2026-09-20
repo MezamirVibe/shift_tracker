@@ -58,6 +58,7 @@ class _PositionsPageState extends State<PositionsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Новая должность'),
         content: TextField(
           controller: ctrl,
@@ -118,6 +119,7 @@ class _PositionsPageState extends State<PositionsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Переименовать должность'),
         content: TextField(
           controller: ctrl,
@@ -187,6 +189,7 @@ class _PositionsPageState extends State<PositionsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить должность?'),
         content: Text('Удалить "${item.name}"?'),
         actions: [

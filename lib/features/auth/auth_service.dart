@@ -64,11 +64,20 @@ class AuthService extends ChangeNotifier {
   void _handleSessionInvalidated() {
     if (_currentUser == null) return;
     _currentUser = null;
+    _users = const [];
+    _roles = const [];
     notifyListeners();
   }
 
   Future<void> init() async {
     final api = ApiClient.instance;
+    await api.restoreOrganization();
+    if (api.organization == null) {
+      _initialized = true;
+      notifyListeners();
+      return;
+    }
+    final restored = await api.restoreSession();
     final cached = await Future.wait([
       _storage.loadUsers(),
       _storage.loadRoles(),
@@ -80,13 +89,11 @@ class AuthService extends ChangeNotifier {
       api.bootstrapRequired().then<Object?>((required) => required).catchError(
             (_) => null,
           ),
-      api.restoreSession(),
     ]);
     final bootstrapRequired = startup[0] as bool?;
     if (bootstrapRequired != null) {
       _serverHasUsers = !bootstrapRequired;
     }
-    final restored = startup[1] as Map<String, dynamic>?;
     if (restored != null) {
       _currentUser = UserAccount.fromApiJson(restored);
       if (_users.every((user) => user.id != _currentUser!.id)) {
@@ -177,6 +184,7 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _reloadServerState() async {
     final api = ApiClient.instance;
+    final epoch = api.sessionEpoch;
     final roleFuture = api.request('GET', '/api/v1/roles');
     final userFuture = () async {
       try {
@@ -187,6 +195,7 @@ class AuthService extends ChangeNotifier {
       }
     }();
     final results = await Future.wait([roleFuture, userFuture]);
+    if (epoch != api.sessionEpoch) return;
     final roleData = results[0] as List;
     final userData = results[1] as List;
 
@@ -221,19 +230,11 @@ class AuthService extends ChangeNotifier {
   }
 
   bool isSuperAdminRoleId(String? roleId) {
-    final role = roleById(roleId);
-    if (role == null) return false;
-    return role.scopeKind == ScopeKind.all &&
-        role.permissions.isEmpty &&
-        role.name.trim().toLowerCase() == 'суперадмин';
+    return roleId == BuiltInRoleIds.superAdmin;
   }
 
   bool get isCurrentUserSuperAdmin {
-    final u = _currentUser;
-    if (u == null) return false;
-    final role = roleById(u.roleId);
-    if (role == null) return false;
-    return role.name.trim().toLowerCase() == 'суперадмин';
+    return isSuperAdminRoleId(_currentUser?.roleId);
   }
 
   bool hasPerm(AppPermission p) {
@@ -243,7 +244,7 @@ class AuthService extends ChangeNotifier {
     final role = roleById(u.roleId);
     if (role == null) return false;
 
-    if (role.name.trim().toLowerCase() == 'суперадмин') return true;
+    if (isSuperAdminRoleId(u.roleId)) return true;
     return role.permissions.contains(p);
   }
 
@@ -254,8 +255,7 @@ class AuthService extends ChangeNotifier {
     final role = roleById(u.roleId);
     if (role == null) return const [];
 
-    if (role.name.trim().toLowerCase() == 'суперадмин' ||
-        role.scopeKind == ScopeKind.all) {
+    if (isSuperAdminRoleId(u.roleId) || role.scopeKind == ScopeKind.all) {
       return employees;
     }
 
@@ -288,8 +288,7 @@ class AuthService extends ChangeNotifier {
     final role = roleById(roleId);
     if (role == null) return 'Роль не найдена.';
 
-    if (role.name.trim().toLowerCase() == 'суперадмин' ||
-        role.scopeKind == ScopeKind.all) {
+    if (isSuperAdminRoleId(roleId) || role.scopeKind == ScopeKind.all) {
       return 'Эта роль видит всё, привязка не требуется.';
     }
 
@@ -317,6 +316,10 @@ class AuthService extends ChangeNotifier {
         rememberSession: rememberSession,
       );
       _currentUser = UserAccount.fromApiJson(data);
+      _roles = [
+        AppRole.fromApiJson(Map<String, dynamic>.from(data['role'] as Map))
+      ];
+      _users = [_currentUser!];
       _serverHasUsers = true;
       if (_users.every((user) => user.id != _currentUser!.id)) {
         _users = [..._users, _currentUser!];
@@ -343,6 +346,26 @@ class AuthService extends ChangeNotifier {
     _currentUser = null;
     _users = const [];
     _roles = const [];
+    notifyListeners();
+  }
+
+  Future<void> changeOrganization() async {
+    await ApiClient.instance.forgetOrganization();
+    _currentUser = null;
+    _users = const [];
+    _roles = const [];
+    _serverHasUsers = true;
+    notifyListeners();
+  }
+
+  Future<void> selectOrganization(String code) async {
+    await ApiClient.instance.selectOrganization(code);
+    _currentUser = null;
+    _users = const [];
+    _roles = const [];
+    // First administrators are provisioned by the platform operator, never
+    // by an unauthenticated mobile client that merely knows the public code.
+    _serverHasUsers = true;
     notifyListeners();
   }
 
@@ -403,6 +426,7 @@ class AuthService extends ChangeNotifier {
     int employeeBreakHours = 1,
     List<int> employeeCustomWorkdays = const [1, 2, 3, 4, 5],
   }) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     if (!hasPerm(AppPermission.manageUsers) && !isCurrentUserSuperAdmin) {
       return false;
     }
@@ -490,6 +514,7 @@ class AuthService extends ChangeNotifier {
     }
 
     try {
+      ApiClient.instance.checkSessionEpoch(epoch);
       await ApiClient.instance.request(
         'POST',
         '/api/v1/users',
@@ -529,6 +554,7 @@ class AuthService extends ChangeNotifier {
     required String login,
     required String roleId,
   }) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     if (!hasPerm(AppPermission.editEmployees) &&
         !hasPerm(AppPermission.manageUsers) &&
         !isCurrentUserSuperAdmin) {
@@ -599,6 +625,7 @@ class AuthService extends ChangeNotifier {
 
     final password = generateReadablePassword();
     try {
+      ApiClient.instance.checkSessionEpoch(epoch);
       final data = await ApiClient.instance.request(
         'POST',
         '/api/v1/users',

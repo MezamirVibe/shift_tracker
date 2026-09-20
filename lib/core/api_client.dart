@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'organization.dart';
 
 dynamic _decodeJsonOffMainIsolate(String raw) => jsonDecode(raw);
 
@@ -36,6 +37,84 @@ class ApiClient {
   Future<bool>? _refreshInFlight;
   bool _persistSession = true;
   bool _sessionInvalidationNotified = false;
+  Organization? _organization;
+  Organization? get organization => _organization;
+  int _sessionEpoch = 0;
+  Future<void> _storageQueue = Future<void>.value();
+  int get sessionEpoch => _sessionEpoch;
+  String get cacheNamespace =>
+      '${base64Url.encode(utf8.encode(baseUrl)).replaceAll('=', '')}_${_organization?.code ?? 'unselected'}';
+  String? get cacheUserKey =>
+      _currentUser == null ? null : '$cacheNamespace|${_currentUser!['id']}';
+  String _scopedKey(String key) => '${cacheNamespace}_$key';
+  String get _organizationKey =>
+      '${base64Url.encode(utf8.encode(baseUrl))}_organization';
+
+  Future<void> restoreOrganization() async {
+    if (_organization != null) return;
+    final epoch = _sessionEpoch;
+    try {
+      final raw = await _storage.read(key: _organizationKey);
+      _checkEpoch(epoch);
+      if (raw != null) {
+        _organization =
+            Organization.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      }
+    } catch (_) {
+      if (epoch == _sessionEpoch) _organization = null;
+    }
+  }
+
+  Future<Organization> selectOrganization(String input) async {
+    final code = input.trim().toLowerCase();
+    if (!Organization.codePattern.hasMatch(code)) {
+      throw const ApiException(400,
+          'Код организации: латинские буквы, цифры и дефис, от 2 до 48 символов.');
+    }
+    if (hasSession) {
+      throw const ApiException(409, 'Сначала выйдите из текущего аккаунта.');
+    }
+    final epoch = _sessionEpoch;
+    final data = await request('GET', '/api/v1/organization',
+        authenticated: false, discoveryCode: code) as Map<String, dynamic>;
+    final selected = Organization.fromJson(data);
+    if (selected.code != code) {
+      throw const ApiException(
+          409, 'Сервер вернул другую организацию. Вход отменён.');
+    }
+    _checkEpoch(epoch);
+    final clearing = clearSession();
+    final clearingEpoch = _sessionEpoch;
+    await clearing;
+    _checkEpoch(clearingEpoch);
+    _organization = selected;
+    _sessionEpoch++;
+    await _storage.write(
+        key: _organizationKey, value: jsonEncode(selected.toJson()));
+    return selected;
+  }
+
+  Future<void> forgetOrganization() async {
+    final previous = _organization;
+    await logout();
+    if (!identical(previous, _organization) || hasSession) {
+      throw const ApiException(
+          409, 'Сессия уже изменилась. Повторите действие.');
+    }
+    _organization = null;
+    _sessionEpoch++;
+    await _storage.delete(key: _organizationKey);
+  }
+
+  void _checkEpoch(int epoch) {
+    if (epoch != _sessionEpoch) {
+      throw const ApiException(
+          409, 'Организация или пользователь изменились. Повторите действие.');
+    }
+  }
+
+  // Multi-request operations must carry the starting epoch across every await.
+  void checkSessionEpoch(int epoch) => _checkEpoch(epoch);
 
   VoidCallback? onSessionInvalidated;
 
@@ -50,33 +129,25 @@ class ApiClient {
   Map<String, dynamic>? get currentUser => _currentUser;
   bool get hasSession => _accessToken != null && _refreshToken != null;
 
-  Future<void> _saveSession() async {
-    if (!hasSession || !_persistSession) {
-      await Future.wait([
-        _storage.delete(key: _accessTokenKey),
-        _storage.delete(key: _refreshTokenKey),
-        _storage.delete(key: _accessTokenExpiresAtKey),
-        _storage.delete(key: _currentUserKey),
-      ]);
-      return;
-    }
-    final user = _currentUser;
-    await Future.wait([
-      _storage.write(key: _accessTokenKey, value: _accessToken),
-      _storage.write(key: _refreshTokenKey, value: _refreshToken),
-      if (_accessTokenExpiresAt != null)
-        _storage.write(
-          key: _accessTokenExpiresAtKey,
-          value: _accessTokenExpiresAt!.toUtc().toIso8601String(),
-        )
-      else
-        _storage.delete(key: _accessTokenExpiresAtKey),
-      if (user != null)
-        _storage.write(
-          key: _currentUserKey,
-          value: jsonEncode(user),
-        ),
-    ]);
+  Future<void> _saveSession() {
+    final persist = hasSession && _persistSession;
+    final values = <String, String?>{
+      _scopedKey(_accessTokenKey): persist ? _accessToken : null,
+      _scopedKey(_refreshTokenKey): persist ? _refreshToken : null,
+      _scopedKey(_accessTokenExpiresAtKey):
+          persist ? _accessTokenExpiresAt?.toUtc().toIso8601String() : null,
+      _scopedKey(_currentUserKey):
+          persist && _currentUser != null ? jsonEncode(_currentUser) : null,
+    };
+    // Snapshot keys/values now and serialize writes: a slow old login must not
+    // resurrect tokens after logout or write into the next organization's keys.
+    final pending = _storageQueue.then((_) async {
+      await Future.wait(values.entries.map((entry) => entry.value == null
+          ? _storage.delete(key: entry.key)
+          : _storage.write(key: entry.key, value: entry.value)));
+    });
+    _storageQueue = pending.catchError((Object _) {});
+    return pending;
   }
 
   Future<bool> bootstrapRequired() async {
@@ -91,8 +162,8 @@ class ApiClient {
   Future<({String login, bool remember})> loadLoginPreference() async {
     try {
       final stored = await Future.wait([
-        _storage.read(key: _rememberLoginKey),
-        _storage.read(key: _savedLoginKey),
+        _storage.read(key: _scopedKey(_rememberLoginKey)),
+        _storage.read(key: _scopedKey(_savedLoginKey)),
       ]);
       final rememberRaw = stored[0];
       final remember = rememberRaw != 'false';
@@ -104,8 +175,11 @@ class ApiClient {
   }
 
   Future<void> _saveLoginPreference(String login, bool remember) async {
-    await _storage.write(key: _rememberLoginKey, value: remember.toString());
-    await _storage.write(key: _savedLoginKey, value: login.trim());
+    await Future.wait([
+      _storage.write(
+          key: _scopedKey(_rememberLoginKey), value: remember.toString()),
+      _storage.write(key: _scopedKey(_savedLoginKey), value: login.trim()),
+    ]);
   }
 
   Future<Map<String, dynamic>> login(
@@ -113,6 +187,13 @@ class ApiClient {
     String password, {
     bool rememberSession = true,
   }) async {
+    if (_organization == null) {
+      throw const ApiException(400, 'Сначала выберите организацию.');
+    }
+    if (hasSession) {
+      throw const ApiException(409, 'Сначала выйдите из текущего аккаунта.');
+    }
+    final epoch = ++_sessionEpoch;
     _persistSession = rememberSession;
     final result = await request(
       'POST',
@@ -120,26 +201,33 @@ class ApiClient {
       authenticated: false,
       body: {'login': login.trim(), 'password': password},
     ) as Map<String, dynamic>;
+    _checkEpoch(epoch);
     await _acceptTokenPair(result);
+    _checkEpoch(epoch);
     await _saveLoginPreference(login, rememberSession);
+    _checkEpoch(epoch);
     return _currentUser!;
   }
 
   Future<Map<String, dynamic>?> restoreSession() async {
+    if (_organization == null) return null;
+    final epoch = _sessionEpoch;
     Map<String, dynamic>? cachedUser;
     try {
       final loginPreference = await loadLoginPreference();
+      _checkEpoch(epoch);
       _persistSession = loginPreference.remember;
       if (!_persistSession) {
         await clearSession();
         return null;
       }
       final stored = await Future.wait([
-        _storage.read(key: _accessTokenKey),
-        _storage.read(key: _refreshTokenKey),
-        _storage.read(key: _currentUserKey),
-        _storage.read(key: _accessTokenExpiresAtKey),
+        _storage.read(key: _scopedKey(_accessTokenKey)),
+        _storage.read(key: _scopedKey(_refreshTokenKey)),
+        _storage.read(key: _scopedKey(_currentUserKey)),
+        _storage.read(key: _scopedKey(_accessTokenExpiresAtKey)),
       ]);
+      _checkEpoch(epoch);
       _accessToken = stored[0];
       _refreshToken = stored[1];
       _accessTokenExpiresAt =
@@ -156,19 +244,23 @@ class ApiClient {
       final result = await request('GET', '/api/v1/auth/me');
       _currentUser = Map<String, dynamic>.from(result as Map);
       await _saveSession();
+      _checkEpoch(epoch);
       return _currentUser;
     } on ApiException catch (error) {
+      if (epoch != _sessionEpoch) return null;
       if (error.statusCode == 401 || error.statusCode == 403) {
         await clearSession();
         return null;
       }
       return cachedUser;
     } catch (_) {
+      if (epoch != _sessionEpoch) return null;
       return cachedUser;
     }
   }
 
   Future<void> logout() async {
+    final epoch = _sessionEpoch;
     final refresh = _refreshToken;
     if (refresh != null && _accessToken != null) {
       try {
@@ -181,10 +273,13 @@ class ApiClient {
         // Локальный выход должен сработать даже при отсутствии сети.
       }
     }
+    _checkEpoch(epoch);
     await clearSession();
   }
 
   Future<void> clearSession() async {
+    _sessionEpoch++;
+    _refreshInFlight = null;
     _accessToken = null;
     _refreshToken = null;
     _accessTokenExpiresAt = null;
@@ -193,6 +288,11 @@ class ApiClient {
   }
 
   Future<void> _acceptTokenPair(Map<String, dynamic> pair) async {
+    final info = pair['organization'];
+    if (info is! Map || info['code'] != _organization?.code) {
+      throw const ApiException(409,
+          'Сессия относится к другой организации или сервер требует обновления.');
+    }
     _accessToken = pair['access_token'] as String;
     _refreshToken = pair['refresh_token'] as String;
     final expiresIn = (pair['expires_in'] as num?)?.toInt();
@@ -205,23 +305,27 @@ class ApiClient {
   }
 
   Future<void> _invalidateSession() async {
-    await clearSession();
+    final clearing = clearSession();
+    final epoch = _sessionEpoch;
+    await clearing;
+    if (epoch != _sessionEpoch) return;
     if (_sessionInvalidationNotified) return;
     _sessionInvalidationNotified = true;
     onSessionInvalidated?.call();
   }
 
-  Future<bool> _refresh() => _refreshInFlight ??= _runRefresh();
-
-  Future<bool> _runRefresh() async {
-    try {
-      return await _performRefresh();
-    } finally {
-      _refreshInFlight = null;
-    }
+  Future<bool> _refresh() {
+    final active = _refreshInFlight;
+    if (active != null) return active;
+    late final Future<bool> pending;
+    pending = _performRefresh().whenComplete(() {
+      if (identical(_refreshInFlight, pending)) _refreshInFlight = null;
+    });
+    return _refreshInFlight = pending;
   }
 
   Future<bool> _performRefresh() async {
+    final epoch = _sessionEpoch;
     final refresh = _refreshToken;
     if (refresh == null) return false;
     try {
@@ -231,9 +335,12 @@ class ApiClient {
         authenticated: false,
         body: {'refresh_token': refresh},
       ) as Map<String, dynamic>;
+      _checkEpoch(epoch);
       await _acceptTokenPair(pair);
+      _checkEpoch(epoch);
       return true;
     } on ApiException catch (error) {
+      if (epoch != _sessionEpoch) return false;
       if (error.statusCode == 401 || error.statusCode == 403) {
         await _invalidateSession();
         return false;
@@ -249,13 +356,31 @@ class ApiClient {
     bool authenticated = true,
     bool retryAfterRefresh = true,
     bool binary = false,
+    String? discoveryCode,
   }) async {
+    if (discoveryCode != null &&
+        (authenticated ||
+            path != '/api/v1/organization' ||
+            !Organization.codePattern.hasMatch(discoveryCode))) {
+      throw const ApiException(400, 'Некорректный запрос организации.');
+    }
+    final selectedCode = discoveryCode ?? _organization?.code;
+    if (selectedCode == null) {
+      throw const ApiException(400, 'Сначала выберите организацию.');
+    }
+    final epoch = _sessionEpoch;
+    Future<bool> refreshInScope() async {
+      final ok = await _refresh();
+      _checkEpoch(epoch);
+      return ok;
+    }
+
     String? authorizationToken;
     if (authenticated) {
       if (retryAfterRefresh &&
           _refreshToken != null &&
           _accessTokenNeedsRefresh &&
-          await _refresh()) {
+          await refreshInScope()) {
         return this.request(
           method,
           path,
@@ -267,7 +392,9 @@ class ApiClient {
       }
       final token = _accessToken;
       if (token == null) {
-        if (retryAfterRefresh && _refreshToken != null && await _refresh()) {
+        if (retryAfterRefresh &&
+            _refreshToken != null &&
+            await refreshInScope()) {
           return this.request(
             method,
             path,
@@ -283,7 +410,11 @@ class ApiClient {
       authorizationToken = token;
     }
 
-    final request = await _http.openUrl(method, Uri.parse('$baseUrl$path'));
+    _checkEpoch(epoch);
+    final request =
+        await _http.openUrl(method, Uri.parse('$baseUrl/o/$selectedCode$path'));
+    _checkEpoch(epoch);
+    request.headers.set('X-Organization-Code', selectedCode);
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     if (authorizationToken != null) {
       request.headers.set(
@@ -299,12 +430,19 @@ class ApiClient {
     final response = await request.close().timeout(const Duration(seconds: 20));
     final bytes = await consolidateHttpClientResponseBytes(response)
         .timeout(const Duration(seconds: 30));
+    _checkEpoch(epoch);
+    if (response.statusCode >= 200 &&
+        response.statusCode < 300 &&
+        response.headers.value('X-Organization-Code') != selectedCode) {
+      throw const ApiException(
+          409, 'Не удалось подтвердить организацию сервера. Вход отменён.');
+    }
     if (binary && response.statusCode >= 200 && response.statusCode < 300) {
       return bytes;
     }
     final raw = utf8.decode(bytes, allowMalformed: true);
     if (response.statusCode == 401 && authenticated && retryAfterRefresh) {
-      if (await _refresh()) {
+      if (await refreshInScope()) {
         return this.request(
           method,
           path,
@@ -327,7 +465,9 @@ class ApiClient {
     }
     if (raw.trim().isEmpty) return null;
     if (raw.length >= 64 * 1024) {
-      return compute(_decodeJsonOffMainIsolate, raw);
+      final decoded = await compute(_decodeJsonOffMainIsolate, raw);
+      _checkEpoch(epoch);
+      return decoded;
     }
     return jsonDecode(raw);
   }

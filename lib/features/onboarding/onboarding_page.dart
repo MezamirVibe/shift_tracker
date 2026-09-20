@@ -697,7 +697,7 @@ class _EventsPreview extends StatelessWidget {
               children: [
                 Icon(item.$2, size: 18, color: item.$1),
                 const SizedBox(width: 7),
-                Text(item.$3),
+                Flexible(child: Text(item.$3)),
               ],
             ),
           ),
