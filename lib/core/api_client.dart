@@ -66,7 +66,12 @@ class ApiClient {
   }
 
   Future<Organization> selectOrganization(String input) async {
-    final code = input.trim().toLowerCase();
+    final String code;
+    try {
+      code = Organization.parseConnection(input);
+    } on FormatException catch (error) {
+      throw ApiException(400, error.message);
+    }
     if (!Organization.codePattern.hasMatch(code)) {
       throw const ApiException(400,
           'Код организации: латинские буквы, цифры и дефис, от 2 до 48 символов.');

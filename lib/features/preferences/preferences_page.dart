@@ -6,6 +6,7 @@ import '../../core/api_client.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
+import '../auth/qr_connection.dart';
 import '../dashboard/dashboard_customizer.dart';
 import '../onboarding/onboarding_page.dart';
 import 'preferences_service.dart';
@@ -176,8 +177,29 @@ class _PreferencesPageState extends State<PreferencesPage> {
                   Text(ApiClient.instance.organization!.name,
                       style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 6),
-                  Text(
-                      'Код организации: ${ApiClient.instance.organization!.code}'),
+                  const SizedBox(height: 12),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.qr_code),
+                    title: const Text('Подключить другое устройство'),
+                    subtitle: const Text('QR-код и ссылка вашей организации'),
+                    onTap: () => showOrganizationConnection(
+                        context, ApiClient.instance.organization!),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+                if (auth.isCurrentUserSuperAdmin ||
+                    auth.hasPerm(AppPermission.manageUsers) ||
+                    auth.hasPerm(AppPermission.editRolePolicies)) ...[
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.admin_panel_settings_outlined),
+                    title: const Text('Управление организацией'),
+                    subtitle:
+                        const Text('Учётные записи, права доступа и отделы'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.go('/admin'),
+                  ),
                   const SizedBox(height: 20),
                 ],
                 Text('Внешний вид',

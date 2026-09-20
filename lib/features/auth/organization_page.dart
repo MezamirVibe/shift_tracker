@@ -3,6 +3,9 @@ import 'package:go_router/go_router.dart';
 import '../../core/api_client.dart';
 import '../../shared/widgets/responsive_form_body.dart';
 import 'auth_service.dart';
+import 'qr_connection.dart';
+import 'dart:io';
+import 'package:flutter/services.dart';
 
 class OrganizationPage extends StatefulWidget {
   const OrganizationPage({super.key});
@@ -63,8 +66,22 @@ class _OrganizationPageState extends State<OrganizationPage> {
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 12),
                 const Text(
-                    'Введите код, полученный у администратора вашей организации. Выбрать организацию нужно только один раз.'),
+                    'Получите QR-код или ссылку у администратора. Подключение нужно только на новом устройстве. Для входа понадобятся ваши логин и пароль.'),
                 const SizedBox(height: 20),
+                if (Platform.isAndroid ||
+                    Platform.isIOS ||
+                    Platform.isMacOS) ...[
+                  OutlinedButton.icon(
+                      onPressed: _busy ? null : () => _readQr(camera: true),
+                      icon: const Icon(Icons.qr_code_scanner),
+                      label: const Text('Сканировать QR')),
+                  const SizedBox(height: 8),
+                ],
+                TextButton.icon(
+                    onPressed: _busy ? null : _readQr,
+                    icon: const Icon(Icons.image_outlined),
+                    label: const Text('Выбрать картинку с QR')),
+                const SizedBox(height: 12),
                 TextField(
                     controller: _code,
                     enabled: !_busy,
@@ -72,9 +89,20 @@ class _OrganizationPageState extends State<OrganizationPage> {
                     enableSuggestions: false,
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => _select(),
-                    decoration: const InputDecoration(
-                        labelText: 'Код организации',
-                        hintText: 'Например: tehnodor-sk')),
+                    decoration: InputDecoration(
+                        labelText: 'Ссылка или код',
+                        suffixIcon: IconButton(
+                            tooltip: 'Вставить из буфера',
+                            onPressed: _busy
+                                ? null
+                                : () async {
+                                    final data = await Clipboard.getData(
+                                        Clipboard.kTextPlain);
+                                    if (mounted && data?.text != null) {
+                                      _code.text = data!.text!;
+                                    }
+                                  },
+                            icon: const Icon(Icons.content_paste)))),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(_error!,
@@ -88,4 +116,30 @@ class _OrganizationPageState extends State<OrganizationPage> {
               ]),
         ))),
       );
+
+  Future<void> _readQr({bool camera = false}) async {
+    if (_busy) return;
+    final navigator = Navigator.of(context);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      if (!mounted) return;
+      final value = camera
+          ? await navigator.push<String>(
+              MaterialPageRoute(builder: (_) => const ConnectionScannerPage()))
+          : await pickConnectionImage();
+      if (value != null && mounted) _code.text = value;
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error =
+            'Не удалось прочитать QR. Вставьте ссылку или код вручную.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 }

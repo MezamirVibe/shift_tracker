@@ -28,6 +28,8 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Камера нужна для сканирования QR-кода вашей организации.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

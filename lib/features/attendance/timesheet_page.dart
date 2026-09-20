@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
 import 'package:go_router/go_router.dart';
 import '../../core/api_client.dart';
 import '../../shared/formatters/work_duration_formatter.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import 'timesheet_service.dart';
+import '../auth/auth_models.dart';
+import '../auth/auth_service.dart';
 
 class MonthReportPage extends StatefulWidget {
   final int year;
@@ -88,7 +91,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
   int _sum(String key) =>
       _rows.fold(0, (sum, row) => sum + (row[key] as num).toInt());
 
-  Future<void> _export() async {
+  Future<void> _export({bool share = false}) async {
     if (_saving || _loading || _rows.isEmpty) return;
     final missing = _sum('missing_days');
     final open = _sum('open_days');
@@ -118,7 +121,8 @@ class _MonthReportPageState extends State<MonthReportPage> {
         : box.localToGlobal(Offset.zero) & box.size;
     setState(() => _saving = true);
     try {
-      final message = await _service.save(
+      final export = share ? _service.share : _service.save;
+      final message = await export(
           year: _month.year,
           month: _month.month,
           departmentId: _department,
@@ -173,34 +177,35 @@ class _MonthReportPageState extends State<MonthReportPage> {
                 onPressed: _saving ? null : () => _moveMonth(1),
                 icon: const Icon(Icons.chevron_right)),
           ]),
-          SizedBox(
-              width: 240,
-              child: DropdownButtonFormField<String?>(
-                itemHeight: null,
-                key: ValueKey(
-                    'department-$_department-${departments.keys.join()}'),
-                initialValue: _department,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Отдел'),
-                items: [
-                  const DropdownMenuItem(
-                      value: null,
-                      child: Text('Все доступные отделы',
-                          maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  for (final item in departments.entries)
-                    DropdownMenuItem(
-                        value: item.key,
-                        child: Text(item.value,
-                            overflow: TextOverflow.ellipsis, maxLines: 1))
-                ],
-                onChanged: _saving || _loading
-                    ? null
-                    : (value) => setState(() {
-                          _department = value;
-                          _group = null;
-                        }),
-              )),
-          if (groups.isNotEmpty)
+          if (departments.length > 1)
+            SizedBox(
+                width: 240,
+                child: DropdownButtonFormField<String?>(
+                  itemHeight: null,
+                  key: ValueKey(
+                      'department-$_department-${departments.keys.join()}'),
+                  initialValue: _department,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Отдел'),
+                  items: [
+                    const DropdownMenuItem(
+                        value: null,
+                        child: Text('Все доступные отделы',
+                            maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    for (final item in departments.entries)
+                      DropdownMenuItem(
+                          value: item.key,
+                          child: Text(item.value,
+                              overflow: TextOverflow.ellipsis, maxLines: 1))
+                  ],
+                  onChanged: _saving || _loading
+                      ? null
+                      : (value) => setState(() {
+                            _department = value;
+                            _group = null;
+                          }),
+                )),
+          if (groups.length > 1)
             SizedBox(
                 width: 220,
                 child: DropdownButtonFormField<String?>(
@@ -227,14 +232,14 @@ class _MonthReportPageState extends State<MonthReportPage> {
           FilledButton.icon(
               onPressed: _loading || _saving || _rows.isEmpty || _error != null
                   ? null
-                  : _export,
+                  : () => _export(share: true),
               icon: _saving
                   ? const SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.download),
-              label: Text(_saving ? 'Подготовка…' : 'Сохранить Excel')),
+                  : const Icon(Icons.share_outlined),
+              label: Text(_saving ? 'Подготовка…' : 'Поделиться табелем')),
         ]);
   }
 
@@ -366,13 +371,37 @@ class _MonthReportPageState extends State<MonthReportPage> {
   Widget build(BuildContext context) {
     final phone = MediaQuery.sizeOf(context).width < 700;
     return AdaptiveScaffold(
-      title: 'Табель за месяц',
+      title: 'Табель',
       selectedRoute: '/timesheet',
       actions: [
-        IconButton(
-            tooltip: 'Обновить',
-            onPressed: _loading || _saving ? null : _load,
-            icon: const Icon(Icons.refresh))
+        PopupMenuButton<String>(
+          tooltip: 'Действия с табелем',
+          enabled: !_saving,
+          onSelected: (action) {
+            if (action == 'save') _export();
+            if (action == 'refresh') _load();
+            if (action == 'import') context.push('/timesheet/import');
+            if (action == 'delivery') context.push('/timesheet/delivery');
+          },
+          itemBuilder: (_) => [
+            if (!Platform.isAndroid && !Platform.isIOS)
+              PopupMenuItem(
+                  value: 'save',
+                  enabled: !_loading && _rows.isNotEmpty && _error == null,
+                  child: const Text('Сохранить Excel')),
+            if (AuthService.instance.hasPerm(AppPermission.editEmployees) &&
+                AuthService.instance.hasPerm(AppPermission.editAttendance))
+              const PopupMenuItem(
+                  value: 'import', child: Text('Импортировать старый табель')),
+            if (AuthService.instance.hasPerm(AppPermission.viewAttendance))
+              const PopupMenuItem(
+                  value: 'delivery', child: Text('Отправка по расписанию')),
+            PopupMenuItem(
+                value: 'refresh',
+                enabled: !_loading,
+                child: const Text('Обновить табель')),
+          ],
+        ),
       ],
       child: Padding(
           padding: EdgeInsets.all(phone ? 12 : 20),
@@ -384,8 +413,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
                       children: [
                     _filters(),
                     const SizedBox(height: 12),
-                    const Text(
-                        'Excel по вашему шаблону: часы и отметки. Денежные поля остаются пустыми.'),
+                    const Text('Часы и отметки · Excel без денежных полей'),
                     const SizedBox(height: 8),
                     if (!_loading && _error == null)
                       Wrap(spacing: 12, runSpacing: 4, children: [

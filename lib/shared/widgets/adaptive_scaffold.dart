@@ -47,9 +47,6 @@ class AdaptiveScaffold extends StatelessWidget {
     final currentRole = auth.roleById(auth.currentUser?.roleId);
     final canEmployees = currentRole?.scopeKind != ScopeKind.self &&
         auth.hasPerm(AppPermission.viewEmployees);
-    final canAdmin = auth.isCurrentUserSuperAdmin ||
-        auth.hasPerm(AppPermission.manageUsers) ||
-        auth.hasPerm(AppPermission.editRolePolicies);
     return [
       NavItem(
         label: 'Главная',
@@ -58,16 +55,10 @@ class AdaptiveScaffold extends StatelessWidget {
         onTap: () => context.go('/'),
       ),
       NavItem(
-        label: 'Неделя',
+        label: 'График',
         icon: Icons.calendar_view_week_outlined,
         route: '/schedule',
         onTap: () => context.go('/schedule'),
-      ),
-      NavItem(
-        label: 'Месяц',
-        icon: Icons.calendar_month_outlined,
-        route: '/calendar',
-        onTap: () => context.go('/calendar'),
       ),
       if (canEmployees)
         NavItem(
@@ -83,13 +74,6 @@ class AdaptiveScaffold extends StatelessWidget {
           route: '/employees',
           onTap: () => context.go('/employees'),
         ),
-      if (canAdmin)
-        NavItem(
-          label: 'Управление',
-          icon: Icons.admin_panel_settings_outlined,
-          route: '/admin',
-          onTap: () => context.go('/admin'),
-        ),
       NavItem(
         label: 'Настройки',
         icon: Icons.settings_outlined,
@@ -101,11 +85,13 @@ class AdaptiveScaffold extends StatelessWidget {
 
   int _resolvedIndex(List<NavItem> resolvedItems) {
     if (selectedRoute != null) {
+      final matched = resolvedItems.indexWhere(_matchesRoute);
+      if (matched >= 0) return matched;
       final exact = resolvedItems.indexWhere(
         (item) => item.route == selectedRoute,
       );
       if (exact >= 0) return exact;
-      if (selectedRoute!.startsWith('/day/')) {
+      if (selectedRoute!.startsWith('/day/') || selectedRoute == '/calendar') {
         final schedule = resolvedItems.indexWhere(
           (item) => item.route == '/schedule',
         );
@@ -120,7 +106,13 @@ class AdaptiveScaffold extends StatelessWidget {
     final route = selectedRoute;
     if (route == null) return false;
     if (item.route == route) return true;
-    return item.route == '/schedule' && route.startsWith('/day/');
+    if (item.route == '/schedule') {
+      return route.startsWith('/day/') || route == '/calendar';
+    }
+    if (item.route == '/employees') return route.startsWith('/employee/');
+    if (item.route == '/settings') return route == '/admin';
+    if (item.route == '/timesheet') return route.startsWith('/timesheet/');
+    return false;
   }
 
   Future<void> _showMobileMore(
@@ -139,7 +131,7 @@ class AdaptiveScaffold extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Text(
-                'Ещё',
+                'Настройки',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
             ),
@@ -174,27 +166,21 @@ class AdaptiveScaffold extends StatelessWidget {
             (item) =>
                 item.route == '/' ||
                 item.route == '/schedule' ||
-                item.route == '/calendar' ||
-                item.route == '/settings',
+                item.route == '/timesheet' ||
+                item.route == '/employees',
           )
           .toList();
       final moreItems =
           resolvedItems.where((item) => !primaryItems.contains(item)).toList();
       final primaryIndex = primaryItems.indexWhere(_matchesRoute);
-      final moreSelected = moreItems.any(_matchesRoute);
-      final mobileIndex = primaryIndex >= 0
-          ? primaryIndex
-          : moreSelected && moreItems.isNotEmpty
-              ? primaryItems.length
-              : 0;
+      final mobileIndex = primaryIndex >= 0 ? primaryIndex : 0;
       // NavigationBar lays out labels separately from icons; a fixed height
       // can silently clip wrapped labels without reporting a RenderFlex error.
       final compactLabels = MediaQuery.sizeOf(context).width < 380;
       String mobileLabel(NavItem item) =>
-          compactLabels && item.route == '/settings' ? 'Опции' : item.label;
+          item.route == '/employees' ? 'Люди' : item.label;
       final labels = [
         for (final item in primaryItems) mobileLabel(item),
-        if (moreItems.isNotEmpty) 'Ещё'
       ];
       final labelStyle = (compactLabels
           ? Theme.of(context).textTheme.labelSmall
@@ -218,37 +204,51 @@ class AdaptiveScaffold extends StatelessWidget {
       return Scaffold(
         appBar: AppBar(
           title: Text(title),
-          actions: actions,
-        ),
-        body: child,
-        floatingActionButton: floatingActionButton,
-        bottomNavigationBar: NavigationBar(
-          height: navigationHeight,
-          labelTextStyle: WidgetStatePropertyAll(labelStyle),
-          selectedIndex: mobileIndex,
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          onDestinationSelected: (idx) {
-            if (idx < primaryItems.length) {
-              primaryItems[idx].onTap();
-              return;
-            }
-            if (moreItems.isNotEmpty) {
-              _showMobileMore(context, moreItems);
-            }
-          },
-          destinations: [
-            for (final item in primaryItems)
-              NavigationDestination(
-                icon: Icon(item.icon),
-                label: mobileLabel(item),
-              ),
-            if (moreItems.isNotEmpty)
-              const NavigationDestination(
-                icon: Icon(Icons.more_horiz),
-                label: 'Ещё',
+          leading: selectedRoute == '/settings' || selectedRoute == '/admin'
+              ? BackButton(
+                  onPressed: () =>
+                      context.go(selectedRoute == '/admin' ? '/settings' : '/'))
+              : null,
+          actions: [
+            ...actions,
+            if (selectedRoute != '/settings')
+              IconButton(
+                tooltip: 'Настройки',
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () {
+                  if (items == null) {
+                    context.go('/settings');
+                  } else {
+                    _showMobileMore(context, moreItems);
+                  }
+                },
               ),
           ],
         ),
+        body: child,
+        floatingActionButton: floatingActionButton,
+        bottomNavigationBar: selectedRoute == '/settings' ||
+                selectedRoute == '/admin'
+            ? null
+            : NavigationBar(
+                height: navigationHeight,
+                labelTextStyle: WidgetStatePropertyAll(labelStyle),
+                selectedIndex: mobileIndex,
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                onDestinationSelected: (idx) {
+                  if (idx < primaryItems.length) {
+                    primaryItems[idx].onTap();
+                    return;
+                  }
+                },
+                destinations: [
+                  for (final item in primaryItems)
+                    NavigationDestination(
+                      icon: Icon(item.icon),
+                      label: mobileLabel(item),
+                    ),
+                ],
+              ),
       );
     }
 

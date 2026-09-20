@@ -270,3 +270,38 @@ class AuditEvent(Base):
     entity_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     details: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReportDelivery(Base):
+    """One explicitly configured recipient/schedule per user, within their tenant."""
+    __tablename__ = "report_deliveries"
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    chat_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    telegram_actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pair_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    pair_expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    candidate_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    candidate_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    candidate_actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    settings: Mapped[dict] = mapped_column(JSONB, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DeliveryAttempt(Base):
+    __tablename__ = "delivery_attempts"
+    __table_args__ = (UniqueConstraint("user_id", "due_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(500), default="Отправка начата")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BotCursor(Base):
+    __tablename__ = "bot_cursors"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    next_update_id: Mapped[int] = mapped_column(Integer, default=0)

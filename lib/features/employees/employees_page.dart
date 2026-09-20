@@ -582,6 +582,12 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   label: const Text('Добавить сотрудника'),
                 ),
               ),
+            if (_canEditEmployees &&
+                AuthService.instance.hasPerm(AppPermission.editAttendance))
+              TextButton.icon(
+                  onPressed: () => context.push('/timesheet/import'),
+                  icon: const Icon(Icons.upload_file),
+                  label: const Text('Импортировать старый табель')),
           ],
         ),
       ),
@@ -593,7 +599,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         ? 'Нет данных из-за отсутствия привязки.\nПопросите настроить доступ в админке.'
         : (_employeesAll.isEmpty
             ? (_canAddEmployees
-                ? 'Список пока пуст.\nСоздай первого сотрудника.'
+                ? 'Список пока пуст.\nДобавьте сотрудника вручную или импортируйте старый табель.'
                 : 'Список сотрудников пока пуст.')
             : 'По текущим фильтрам и поиску сотрудников не найдено.');
 
@@ -705,58 +711,50 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final scheme = Theme.of(context).colorScheme;
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            color: scheme.surfaceContainerHighest,
-            child: const _EmployeeTableRow(
-              name: 'Сотрудник',
-              position: 'Должность',
-              schedule: 'График',
-              department: 'Подразделение',
-              header: true,
-            ),
-          ),
-          Expanded(
-            child: ListView.separated(
-              itemCount: employees.length,
-              separatorBuilder: (_, __) => Divider(
-                height: 1,
-                color: scheme.outlineVariant,
+      child: ListView.separated(
+        itemCount: employees.length + 1,
+        separatorBuilder: (_, __) =>
+            Divider(height: 1, color: scheme.outlineVariant),
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: scheme.surfaceContainerHighest,
+              child: const _EmployeeTableRow(
+                name: 'Сотрудник',
+                position: 'Должность',
+                schedule: 'График',
+                department: 'Подразделение',
+                header: true,
               ),
-              itemBuilder: (context, index) {
-                final employee = employees[index];
-                final selected = employee.id == _selectedEmployeeId;
-                final schedule = scheduleTypeLabel(employee.scheduleType);
-                return Material(
-                  color: selected
-                      ? scheme.primaryContainer.withValues(alpha: 0.55)
-                      : Colors.transparent,
-                  child: InkWell(
-                    onTap: () =>
-                        setState(() => _selectedEmployeeId = employee.id),
-                    onDoubleTap: () => _openEmployee(employee, canEdit),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 13,
-                      ),
-                      child: _EmployeeTableRow(
-                        name: employee.fullName,
-                        initials: _initials(employee.fullName),
-                        position:
-                            employee.position.isEmpty ? '—' : employee.position,
-                        schedule: schedule,
-                        department: _depName(employee.departmentId),
-                      ),
-                    ),
-                  ),
-                );
-              },
+            );
+          }
+          final employee = employees[index - 1];
+          final selected = employee.id == _selectedEmployeeId;
+          final schedule = scheduleTypeLabel(employee.scheduleType);
+          return Material(
+            color: selected
+                ? scheme.primaryContainer.withValues(alpha: 0.55)
+                : Colors.transparent,
+            child: InkWell(
+              onTap: () => setState(() => _selectedEmployeeId = employee.id),
+              onDoubleTap: () => _openEmployee(employee, canEdit),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 13,
+                ),
+                child: _EmployeeTableRow(
+                  name: employee.fullName,
+                  initials: _initials(employee.fullName),
+                  position: employee.position.isEmpty ? '—' : employee.position,
+                  schedule: schedule,
+                  department: _depName(employee.departmentId),
+                ),
+              ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -871,8 +869,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
         u == null ? null : AuthService.instance.roleById(u.roleId);
     final noBinding = u != null &&
         !_isSuperAdmin &&
-        _employeesVisible.isEmpty &&
-        currentRole != null;
+        currentRole != null &&
+        ((currentRole.scopeKind == ScopeKind.department &&
+                u.departmentId == null) ||
+            (currentRole.scopeKind == ScopeKind.group && u.groupId == null) ||
+            (currentRole.scopeKind == ScopeKind.self && u.employeeId == null));
     final showBindingWarning =
         noBinding && currentRole.scopeKind != ScopeKind.all;
 
@@ -900,68 +901,82 @@ class _EmployeesPageState extends State<EmployeesPage> {
               )
             : _loading
                 ? const Center(child: CircularProgressIndicator())
-                : isDesktop
-                    ? NestedScrollView(
-                        headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                          SliverToBoxAdapter(
-                              child: Column(children: [
-                            _heroCard(false),
-                            const SizedBox(height: 12),
-                            _scopeHint(),
-                            if (showBindingWarning) ...[
-                              const SizedBox(height: 12),
-                              const _MissingScopeWarning(),
-                            ],
-                            const SizedBox(height: 12),
-                            _filtersCard(),
-                            const SizedBox(height: 12),
-                          ])),
-                        ],
-                        body: list.isEmpty
-                            ? _emptyState(noBinding)
-                            : Row(
-                                children: [
-                                  Expanded(
-                                    flex: 7,
-                                    child: _desktopList(list, canEdit),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  SizedBox(
-                                    width: 360,
-                                    child: _employeePreview(canEdit),
-                                  ),
+                : _employeesAll.isEmpty
+                    ? SingleChildScrollView(
+                        child: Column(children: [
+                        _emptyState(noBinding),
+                        if (_canEditEmployees &&
+                            AuthService.instance
+                                .hasPerm(AppPermission.editAttendance))
+                          TextButton.icon(
+                              onPressed: () =>
+                                  context.push('/timesheet/import'),
+                              icon: const Icon(Icons.upload_file),
+                              label: const Text('Импортировать старый табель')),
+                      ]))
+                    : isDesktop
+                        ? NestedScrollView(
+                            headerSliverBuilder:
+                                (context, innerBoxIsScrolled) => [
+                              SliverToBoxAdapter(
+                                  child: Column(children: [
+                                _heroCard(false),
+                                const SizedBox(height: 12),
+                                _scopeHint(),
+                                if (showBindingWarning) ...[
+                                  const SizedBox(height: 12),
+                                  const _MissingScopeWarning(),
                                 ],
-                              ),
-                      )
-                    : ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: [
-                          _heroCard(isPhone),
-                          const SizedBox(height: 12),
-                          _scopeHint(),
-                          if (showBindingWarning) ...[
-                            const SizedBox(height: 12),
-                            const _MissingScopeWarning(),
-                          ],
-                          const SizedBox(height: 12),
-                          _filtersCard(),
-                          const SizedBox(height: 12),
-                          if (list.isEmpty)
-                            SizedBox(
-                              height: 240,
-                              child: _emptyState(noBinding),
-                            )
-                          else
-                            for (var index = 0;
-                                index < list.length;
-                                index++) ...[
-                              _employeeTile(list[index], canEdit),
-                              if (index != list.length - 1)
-                                const SizedBox(height: 10),
+                                const SizedBox(height: 12),
+                                _filtersCard(),
+                                const SizedBox(height: 12),
+                              ])),
                             ],
-                          const SizedBox(height: 12),
-                        ],
-                      ),
+                            body: list.isEmpty
+                                ? _emptyState(noBinding)
+                                : Row(
+                                    children: [
+                                      Expanded(
+                                        flex: 7,
+                                        child: _desktopList(list, canEdit),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      SizedBox(
+                                        width: 360,
+                                        child: _employeePreview(canEdit),
+                                      ),
+                                    ],
+                                  ),
+                          )
+                        : ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              _heroCard(isPhone),
+                              const SizedBox(height: 12),
+                              _scopeHint(),
+                              if (showBindingWarning) ...[
+                                const SizedBox(height: 12),
+                                const _MissingScopeWarning(),
+                              ],
+                              const SizedBox(height: 12),
+                              _filtersCard(),
+                              const SizedBox(height: 12),
+                              if (list.isEmpty)
+                                SizedBox(
+                                  height: 240,
+                                  child: _emptyState(noBinding),
+                                )
+                              else
+                                for (var index = 0;
+                                    index < list.length;
+                                    index++) ...[
+                                  _employeeTile(list[index], canEdit),
+                                  if (index != list.length - 1)
+                                    const SizedBox(height: 10),
+                                ],
+                              const SizedBox(height: 12),
+                            ],
+                          ),
       ),
     );
   }

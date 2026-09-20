@@ -29,6 +29,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       ORGANIZATION_CODE: ${ORGANIZATION_CODE:-tehnodor-sk}
       ORGANIZATION_NAME: ${ORGANIZATION_NAME:-ООО «Технодор СК»}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
     depends_on:
       db:
         condition: service_healthy

@@ -356,6 +356,8 @@ class EmployeesStorage {
     _invalidateCache();
   }
 
+  void invalidateCache() => _invalidateCache();
+
   void _invalidateCache() {
     _cachedEmployees = null;
     _cachedAt = null;

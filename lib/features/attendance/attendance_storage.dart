@@ -154,6 +154,8 @@ class AttendanceStorage {
   static final Map<String, Future<Map<String, dynamic>>> _rangeInFlight = {};
   static int _cacheGeneration = 0;
 
+  void invalidateCache() => _markChanged();
+
   void _markChanged() {
     _cacheGeneration++;
     _rangeCache.clear();

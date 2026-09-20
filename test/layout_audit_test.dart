@@ -24,6 +24,8 @@ import 'package:shift_tracker/features/employees/employee_editor_dialog.dart';
 import 'package:shift_tracker/features/employees/employees_storage.dart';
 import 'support/layout_fixture.dart';
 import 'package:shift_tracker/features/auth/organization_page.dart';
+import 'package:shift_tracker/features/attendance/import_timesheet_page.dart';
+import 'package:shift_tracker/features/attendance/delivery_page.dart';
 
 final captureKey = GlobalKey();
 Future<void> capture(WidgetTester tester, String name) async {
@@ -48,6 +50,8 @@ void main() {
 
   final screens = <String, Widget Function()>{
     'organization': () => const OrganizationPage(),
+    'import-timesheet': () => const ImportTimesheetPage(),
+    'delivery': () => const DeliveryPage(),
     'login': () => const LoginPage(),
     'bootstrap': () => const BootstrapAdminPage(),
     'dashboard': () => const DashboardPage(),

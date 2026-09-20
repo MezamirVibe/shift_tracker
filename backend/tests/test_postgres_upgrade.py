@@ -66,6 +66,49 @@ class PostgreSQLUpgradeTests(unittest.IsolatedAsyncioTestCase):
             versions = (await session.execute(text("SELECT version FROM schema_migrations"))).scalars().all()
             self.assertEqual(versions, ["20260918_timesheets"])
 
+    async def test_concurrent_import_does_not_duplicate_employees(self):
+        import base64
+        from test_imports import fixture_file
+        await self.auth_fixture()
+        async with self.sessions() as session:
+            dep = Department(id=uuid.uuid4(), name='Import department')
+            session.add(dep)
+            await session.commit()
+        body = {'file_base64': base64.b64encode(fixture_file()).decode(), 'year':2026, 'month':8,
+                'department_id': str(dep.id)}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            preview = await client.post('/api/v1/imports/timesheet/preview', json=body)
+            self.assertEqual(preview.status_code, 200, preview.text)
+            payload = {**body, 'preview_token':preview.json()['preview_token'], 'selected_rows':[2]}
+            responses = await asyncio.gather(*[client.post('/api/v1/imports/timesheet/commit', json=payload) for _ in range(2)])
+            self.assertEqual(sorted(r.status_code for r in responses), [200,409], [r.text for r in responses])
+        async with self.sessions() as session:
+            self.assertEqual(await session.scalar(text('SELECT count(*) FROM employees')), 1)
+
+    async def test_two_delivery_workers_send_one_document(self):
+        from datetime import datetime, timezone
+        from app.history import remember_employee
+        from app.models import ReportDelivery
+        from app.telegram_delivery import DeliverySettings, run_due_once
+        from test_delivery import FakeTelegram
+        await self.auth_fixture()
+        now = datetime.now(timezone.utc)
+        async with self.sessions() as session:
+            admin = await session.scalar(select(User).where(User.login == 'admin'))
+            employee = Employee(full_name='Delivery employee', schedule_start_date=date(2026,1,1))
+            session.add(employee)
+            await session.flush()
+            await remember_employee(session, employee, date(2026,1,1))
+            cfg = DeliverySettings(enabled=True, cadence='daily', period='current', include_unfinished=True)
+            session.add(ReportDelivery(user_id=admin.id, chat_id='123', enabled=True,
+                                      next_run_at=now, settings=cfg.model_dump(mode='json')))
+            await session.commit()
+        telegram = FakeTelegram()
+        await asyncio.gather(*[run_due_once(api, self.sessions, telegram, now) for _ in range(2)])
+        self.assertEqual(len(telegram.sent), 1)
+        async with self.sessions() as session:
+            self.assertEqual(await session.scalar(text('SELECT count(*) FROM delivery_attempts')), 1)
+
     async def test_wrong_organization_is_rejected_before_schema_changes(self):
         async with self.engine.begin() as connection:
             await connection.execute(text('CREATE TABLE organization_identity (id INTEGER PRIMARY KEY, code TEXT NOT NULL)'))

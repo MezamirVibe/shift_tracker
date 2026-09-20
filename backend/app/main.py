@@ -1,4 +1,7 @@
 import json
+import asyncio
+import sys
+from contextlib import suppress
 import secrets
 import string
 import uuid
@@ -158,13 +161,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     async with SessionFactory() as session:
         await bind_database(session, settings.ORGANIZATION_CODE)
         await seed_roles(session)
-    yield
-    await engine.dispose()
+    from .telegram_delivery import worker
+    delivery_task = asyncio.create_task(worker(sys.modules[__name__])) if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_BOT_USERNAME else None
+    try:
+        yield
+    finally:
+        if delivery_task:
+            delivery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await delivery_task
+        await engine.dispose()
 
 
 app = FastAPI(
     title="Shift Tracker API",
-    version="1.2.0",
+    version="1.3.0",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -1224,6 +1235,7 @@ async def create_employee(
     user: User = Depends(require_permission("editEmployees")),
     session: AsyncSession = Depends(get_session),
 ) -> EmployeeOut:
+    await lock_employee_roster(session)
     await validate_employee_links(session, body)
     if user.role.scope_kind == ScopeKind.department and body.department_id != user.department_id:
         raise api_error(status.HTTP_403_FORBIDDEN, "Нельзя создавать сотрудника вне своего подразделения")
@@ -1251,6 +1263,7 @@ async def update_employee(
     user: User = Depends(require_permission("editEmployees")),
     session: AsyncSession = Depends(get_session),
 ) -> EmployeeOut:
+    await lock_employee_roster(session)
     item = await ensure_employee_in_scope(session, user, employee_id)
     await ensure_employee_history(session, item)
     changes = body.model_dump(exclude_unset=True)
@@ -1292,6 +1305,7 @@ async def delete_employee(
     user: User = Depends(require_permission("editEmployees")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    await lock_employee_roster(session)
     item = await ensure_employee_in_scope(session, user, employee_id)
     linked_users = await session.scalar(
         select(func.count()).select_from(User).where(User.employee_id == item.id, User.is_active.is_(True))
@@ -1378,6 +1392,11 @@ async def attendance_range(
                 value["closed"] = employee_id in locked_ids
     return result
 
+
+
+async def lock_employee_roster(session: AsyncSession) -> None:
+    if session.bind.dialect.name == "postgresql":
+        await session.execute(text("SELECT pg_advisory_xact_lock(193701, 3)"))
 
 
 async def lock_attendance_day(session: AsyncSession, day: date) -> None:
@@ -1536,3 +1555,9 @@ async def export_month_report(
     return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="timesheet-{year}-{month:02d}.xlsx"',
                              "Cache-Control": "no-store"})
+
+
+from .import_routes import register_import_routes
+register_import_routes(app)
+from .telegram_delivery import register_delivery_routes
+register_delivery_routes(app)

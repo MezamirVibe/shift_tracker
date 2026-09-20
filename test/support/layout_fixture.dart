@@ -121,6 +121,33 @@ class LayoutFixture extends HttpOverrides {
       ];
     }
     if (path == '/api/v1/preferences') return {'settings': <String, Object?>{}};
+    if (path == '/api/v1/reports/delivery') {
+      return {
+        'configured': false,
+        'bot_username': null,
+        'chat_id': null,
+        'chat_title': null,
+        'candidate_chat_id': null,
+        'candidate_title': null,
+        'enabled': false,
+        'next_run_at': null,
+        'last_status': null,
+        'last_run_at': null,
+        'settings': {
+          'enabled': false,
+          'cadence': 'monthly',
+          'weekday': 1,
+          'month_day': 1,
+          'hour': 9,
+          'minute': 0,
+          'timezone': 'Asia/Yekaterinburg',
+          'period': 'previous',
+          'department_id': null,
+          'group_id': null,
+          'include_unfinished': false
+        }
+      };
+    }
     if (path == '/api/v1/reports/month') {
       return {
         'days_in_month': 31,

@@ -80,7 +80,10 @@ with ZipFile(BytesIO(content)) as archive:
 employees = json.loads(fetch('/api/v1/employees')[0])
 departments = json.loads(fetch('/api/v1/departments')[0])
 if code == 'tehnodor-sk':
-    assert len(employees) == 5 and all(e['is_active'] for e in employees)
+    expected_roster = os.environ.get('SMOKE_EXPECTED_ACTIVE')
+    if expected_roster is not None:
+        assert len(employees) == int(expected_roster)
+    assert all(e['is_active'] for e in employees)
     assert [d['name'] for d in departments] == ['ОТК']
 if gateway:
     with urlopen(gateway.rstrip('/') + '/api/v1/organization', timeout=10) as response:

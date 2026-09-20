@@ -83,6 +83,12 @@ Future<void> mount(WidgetTester tester, FakeTimesheets service,
   await tester.pumpAndSettle();
 }
 
+Future<void> saveFromMenu(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Действия с табелем'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Сохранить Excel'));
+}
+
 void main() {
   test('mixed statuses and closed flags round-trip without losing hours', () {
     expect(
@@ -114,7 +120,7 @@ void main() {
     await tester.tap(find.text('Отдел А').last);
     await tester.pumpAndSettle();
     expect(find.text('Сотрудник Б'), findsNothing);
-    await tester.tap(find.text('Сохранить Excel'));
+    await saveFromMenu(tester);
     await tester.pumpAndSettle();
     expect(service.savedDepartment, 'А');
     expect(service.saves, 1);
@@ -125,13 +131,13 @@ void main() {
       (tester) async {
     final service = FakeTimesheets()..data = report(missing: 2, open: 3);
     await mount(tester, service);
-    await tester.tap(find.text('Сохранить Excel'));
+    await saveFromMenu(tester);
     await tester.pumpAndSettle();
     expect(find.text('Выгрузить незавершённый табель?'), findsOneWidget);
     await tester.tap(find.text('Вернуться'));
     await tester.pumpAndSettle();
     expect(service.saves, 0);
-    await tester.tap(find.text('Сохранить Excel'));
+    await saveFromMenu(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Выгрузить'));
     await tester.pumpAndSettle();
@@ -159,7 +165,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(service.requests.last, 7);
     service.saveError = Exception('Нет места');
-    await tester.tap(find.text('Сохранить Excel'));
+    await saveFromMenu(tester);
     await tester.pumpAndSettle();
     expect(find.textContaining('Не удалось сохранить табель'), findsOneWidget);
     expect(tester.takeException(), isNull);

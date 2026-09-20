@@ -23,8 +23,8 @@ void main() {
 
     expect(find.text('Череда'), findsOneWidget);
     expect(find.text('Главная'), findsOneWidget);
-    expect(find.text('Неделя'), findsOneWidget);
-    expect(find.text('Месяц'), findsOneWidget);
+    expect(find.text('График'), findsOneWidget);
+    expect(find.text('Месяц'), findsNothing);
     expect(find.text('Настройки'), findsOneWidget);
     expect(find.text('Содержимое'), findsOneWidget);
   });
@@ -47,11 +47,11 @@ void main() {
     );
 
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.byType(NavigationDestination), findsNWidgets(4));
+    expect(find.byType(NavigationDestination), findsNWidgets(2));
     expect(find.text('Главная'), findsOneWidget);
-    expect(find.text('Неделя'), findsOneWidget);
-    expect(find.text('Месяц'), findsOneWidget);
-    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('График'), findsOneWidget);
+    expect(find.text('Месяц'), findsNothing);
+    expect(find.byTooltip('Настройки'), findsOneWidget);
     expect(find.text('Ещё'), findsNothing);
     expect(find.text('Мобильное содержимое'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -79,12 +79,12 @@ void main() {
       ),
     );
 
-    expect(find.text('Неделя'), findsOneWidget);
-    expect(find.text('Месяц'), findsOneWidget);
+    expect(find.text('График'), findsOneWidget);
+    expect(find.text('Месяц'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('keeps settings visible and puts admin sections under more',
+  testWidgets('keeps daily work visible and one settings entry in the header',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -100,9 +100,9 @@ void main() {
         onTap: () {},
       ),
       NavItem(
-        label: 'Календарь',
-        icon: Icons.calendar_month,
-        route: '/calendar',
+        label: 'Табель',
+        icon: Icons.table_view,
+        route: '/timesheet',
         onTap: () {},
       ),
       NavItem(
@@ -131,15 +131,18 @@ void main() {
       ),
     );
 
-    expect(find.byType(NavigationDestination), findsNWidgets(5));
-    expect(find.text('Настройки'), findsOneWidget);
-    expect(find.text('Ещё'), findsOneWidget);
+    expect(find.byType(NavigationDestination), findsNWidgets(4));
+    expect(find.byTooltip('Настройки'), findsOneWidget);
+    expect(find.text('Табель'), findsOneWidget);
+    expect(find.text('Люди'), findsOneWidget);
+    expect(find.text('Ещё'), findsNothing);
+    expect(find.text('Опции'), findsNothing);
 
-    await tester.tap(find.text('Ещё'));
+    await tester.tap(find.byTooltip('Настройки'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Сотрудники'), findsOneWidget);
-    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('Люди'), findsOneWidget);
+    expect(find.text('Настройки'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 }

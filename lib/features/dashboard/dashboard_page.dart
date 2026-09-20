@@ -314,6 +314,37 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _content(bool isMobile) {
+    if (_employees.isEmpty &&
+        AuthService.instance.hasPerm(AppPermission.editEmployees)) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Center(
+            child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const SizedBox(height: 24),
+            Text('Начнём с сотрудников',
+                style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 12),
+            const Text(
+                'Добавьте первого сотрудника вручную или загрузите старый табель. Затем отмечайте часы в «Графике», а готовый Excel отправляйте из «Табеля».'),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+                onPressed: () => context.go('/employees'),
+                icon: const Icon(Icons.person_add_alt_1),
+                label: const Text('Добавить сотрудников')),
+            if (AuthService.instance.hasPerm(AppPermission.editAttendance)) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                  onPressed: () => context.push('/timesheet/import'),
+                  icon: const Icon(Icons.upload_file),
+                  label: const Text('Импортировать старый табель')),
+            ],
+          ]),
+        )),
+      );
+    }
     final user = AuthService.instance.currentUser;
     final firstName = user?.firstName.trim();
     final greetingName = (firstName == null || firstName.isEmpty)
@@ -538,7 +569,7 @@ class _DashboardPageState extends State<DashboardPage> {
           OutlinedButton.icon(
             onPressed: () => context.go('/schedule'),
             icon: const Icon(Icons.calendar_month_outlined),
-            label: const Text('Неделя'),
+            label: const Text('График'),
           ),
           if (canOpenEmployees)
             OutlinedButton.icon(

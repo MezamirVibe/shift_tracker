@@ -16,6 +16,8 @@ import '../features/employees/employee_details_page.dart' as emp_details;
 import '../features/employees/employees_page.dart' as emp;
 import '../features/preferences/preferences_page.dart' as preferences;
 import '../features/attendance/month_report_page.dart';
+import '../features/attendance/import_timesheet_page.dart';
+import '../features/attendance/delivery_page.dart';
 
 class AppRouter {
   static const String splash = '/splash';
@@ -75,6 +77,12 @@ class AppRouter {
         return null;
       },
       routes: [
+        GoRoute(
+            path: '/timesheet/import',
+            builder: (_, __) => const ImportTimesheetPage()),
+        GoRoute(
+            path: '/timesheet/delivery',
+            builder: (_, __) => const DeliveryPage()),
         GoRoute(
             path: '/organization',
             builder: (_, __) => const OrganizationPage()),

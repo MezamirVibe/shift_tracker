@@ -2051,116 +2051,117 @@ class _CalendarPageState extends State<CalendarPage> {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1100;
 
     return AdaptiveScaffold(
-      title: widget.fullView ? 'Календарь месяца' : 'График на неделю',
-      selectedRoute: widget.fullView ? '/calendar' : '/schedule',
-      actions: [
-        IconButton(
-          tooltip: 'Табель и выгрузка Excel',
-          icon: const Icon(Icons.table_view_outlined),
-          onPressed: () => context
-              .push('/timesheet?year=${_month.year}&month=${_month.month}'),
-        ),
-        IconButton(
-          tooltip: widget.fullView ? 'График смен' : 'Полный календарь',
-          icon: Icon(
-            widget.fullView
-                ? Icons.calendar_view_week_outlined
-                : Icons.calendar_month_outlined,
-          ),
-          onPressed: () => context.go(
-            widget.fullView
-                ? '/schedule?date=${_isoDate(_selectedScheduleDay)}'
-                : '/calendar?date=${_isoDate(_selectedScheduleDay)}',
+      title: 'График',
+      selectedRoute: '/schedule',
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, label: Text('Неделя')),
+              ButtonSegment(value: true, label: Text('Месяц')),
+            ],
+            selected: {widget.fullView},
+            onSelectionChanged: (value) => context.go(
+              '${value.single ? '/calendar' : '/schedule'}?date=${_isoDate(_selectedScheduleDay)}',
+            ),
           ),
         ),
-      ],
-      child: Padding(
-        padding: EdgeInsets.all(isPhone ? 8 : 16),
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : !widget.fullView
-                ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
-                : NestedScrollView(
-                    headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                      SliverToBoxAdapter(
-                          child: Column(children: [
-                        _monthHeader(compact: isPhone),
-                        const SizedBox(height: 8),
-                        _filtersBlock(isPhone),
-                        const SizedBox(height: 8),
-                        _calendarLegend(compact: isPhone),
-                        const SizedBox(height: 8),
-                        _weekHeader(),
-                        const SizedBox(height: 6),
-                      ])),
-                    ],
-                    body: PageView.builder(
-                      controller: _pageController,
-                      onPageChanged: (page) async {
-                        final m = _monthFromPage(page);
-                        setState(() => _month = m);
-                        await _loadAndRecalc(forMonth: m);
-                      },
-                      itemBuilder: (context, pageIndex) {
-                        final pageMonth = _monthFromPage(pageIndex);
-                        final days = _buildGridDays(pageMonth);
+        Expanded(
+            child: Padding(
+          padding: EdgeInsets.all(isPhone ? 8 : 16),
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : !widget.fullView
+                  ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
+                  : NestedScrollView(
+                      headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                        SliverToBoxAdapter(
+                            child: Column(children: [
+                          _monthHeader(compact: isPhone),
+                          const SizedBox(height: 8),
+                          _filtersBlock(isPhone),
+                          const SizedBox(height: 8),
+                          _calendarLegend(compact: isPhone),
+                          const SizedBox(height: 8),
+                          _weekHeader(),
+                          const SizedBox(height: 6),
+                        ])),
+                      ],
+                      body: PageView.builder(
+                        controller: _pageController,
+                        onPageChanged: (page) async {
+                          final m = _monthFromPage(page);
+                          setState(() {
+                            _month = m;
+                            if (_selectedScheduleDay.year != m.year ||
+                                _selectedScheduleDay.month != m.month) {
+                              _selectedScheduleDay = m;
+                            }
+                          });
+                          await _loadAndRecalc(forMonth: m);
+                        },
+                        itemBuilder: (context, pageIndex) {
+                          final pageMonth = _monthFromPage(pageIndex);
+                          final days = _buildGridDays(pageMonth);
 
-                        return LayoutBuilder(
-                          builder: (context, c) {
-                            const cross = 7;
-                            final spacing = isPhone ? 4.0 : 6.0;
-                            final cellHeight = _cellHeightFor(isPhone);
+                          return LayoutBuilder(
+                            builder: (context, c) {
+                              const cross = 7;
+                              final spacing = isPhone ? 4.0 : 6.0;
+                              final cellHeight = _cellHeightFor(isPhone);
 
-                            return SingleChildScrollView(
-                              child: GridView.builder(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                padding: const EdgeInsets.only(bottom: 12),
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: cross,
-                                  crossAxisSpacing: spacing,
-                                  mainAxisSpacing: spacing,
-                                  mainAxisExtent: cellHeight,
+                              return SingleChildScrollView(
+                                child: GridView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: cross,
+                                    crossAxisSpacing: spacing,
+                                    mainAxisSpacing: spacing,
+                                    mainAxisExtent: cellHeight,
+                                  ),
+                                  itemCount: days.length,
+                                  itemBuilder: (context, index) {
+                                    final day = days[index];
+                                    if (day == null) {
+                                      return const SizedBox.shrink();
+                                    }
+
+                                    final d0 = dateOnly(day);
+                                    final iso = _isoDate(d0);
+
+                                    final s = _summaryByDateIso[iso] ??
+                                        const _DaySummary(
+                                          planned: 0,
+                                          worked: 0,
+                                          absent: 0,
+                                          sick: 0,
+                                          vacation: 0,
+                                          closed: false,
+                                        );
+
+                                    return _DayCell(
+                                      day: day,
+                                      summary: s,
+                                      compact: isPhone,
+                                      personalKind: _isPersonalView
+                                          ? _personalKindFor(day)
+                                          : null,
+                                      onTap: () => _openDay(day),
+                                    );
+                                  },
                                 ),
-                                itemCount: days.length,
-                                itemBuilder: (context, index) {
-                                  final day = days[index];
-                                  if (day == null) {
-                                    return const SizedBox.shrink();
-                                  }
-
-                                  final d0 = dateOnly(day);
-                                  final iso = _isoDate(d0);
-
-                                  final s = _summaryByDateIso[iso] ??
-                                      const _DaySummary(
-                                        planned: 0,
-                                        worked: 0,
-                                        absent: 0,
-                                        sick: 0,
-                                        vacation: 0,
-                                        closed: false,
-                                      );
-
-                                  return _DayCell(
-                                    day: day,
-                                    summary: s,
-                                    compact: isPhone,
-                                    personalKind: _isPersonalView
-                                        ? _personalKindFor(day)
-                                        : null,
-                                    onTap: () => _openDay(day),
-                                  );
-                                },
-                              ),
-                            );
-                          },
-                        );
-                      },
+                              );
+                            },
+                          );
+                        },
+                      ),
                     ),
-                  ),
-      ),
+        )),
+      ]),
     );
   }
 }

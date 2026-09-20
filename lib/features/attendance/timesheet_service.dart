@@ -14,11 +14,40 @@ class TimesheetService {
   }
 
   Future<String?> save(
+          {required int year,
+          required int month,
+          String? departmentId,
+          String? groupId,
+          required Rect shareOrigin}) =>
+      _export(
+          year: year,
+          month: month,
+          departmentId: departmentId,
+          groupId: groupId,
+          shareOrigin: shareOrigin,
+          share: Platform.isAndroid || Platform.isIOS);
+
+  Future<String?> share(
+          {required int year,
+          required int month,
+          String? departmentId,
+          String? groupId,
+          required Rect shareOrigin}) =>
+      _export(
+          year: year,
+          month: month,
+          departmentId: departmentId,
+          groupId: groupId,
+          shareOrigin: shareOrigin,
+          share: true);
+
+  Future<String?> _export(
       {required int year,
       required int month,
       String? departmentId,
       String? groupId,
-      required Rect shareOrigin}) async {
+      required Rect shareOrigin,
+      required bool share}) async {
     final query = Uri(queryParameters: {
       'year': '$year',
       'month': '$month',
@@ -31,12 +60,12 @@ class TimesheetService {
     final name = 'Табель_${year}_${month.toString().padLeft(2, '0')}.xlsx';
     const mime =
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    if (Platform.isAndroid || Platform.isIOS) {
+    if (share && !Platform.isLinux) {
       final directory = await getTemporaryDirectory();
       final folder = await Directory('${directory.path}/timesheets')
           .create(recursive: true);
-      final file =
-          File('${folder.path}/${DateTime.now().microsecondsSinceEpoch}_$name');
+      final exportFolder = await folder.createTemp('share_');
+      final file = File('${exportFolder.path}/$name');
       await file.writeAsBytes(bytes, flush: true);
       final result = await Share.shareXFiles([XFile(file.path, mimeType: mime)],
           fileNameOverrides: [name],
