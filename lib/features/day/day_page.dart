@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../shared/formatters/work_duration_formatter.dart';
@@ -1367,6 +1368,17 @@ class _DayPageState extends State<DayPage> {
     final isPhone = MediaQuery.sizeOf(context).width < 680;
 
     return AdaptiveScaffold(
+      leading: IconButton(
+        tooltip: 'К графику',
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () {
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go('/calendar?date=${widget.dateIso}');
+          }
+        },
+      ),
       title: isPhone ? title : 'День: $title',
       selectedRoute: '/day/${widget.dateIso}',
       actions: [

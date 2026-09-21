@@ -176,7 +176,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Shift Tracker API",
-    version="1.4.0",
+    version="1.4.1",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -1461,6 +1461,32 @@ async def attendance_range(
                 value["closed"] = employee_id in locked_ids
     return result
 
+
+
+@app.get("/api/v1/self/schedule")
+async def self_schedule(
+    date_from: date, date_to: date,
+    user: User = Depends(require_permission("viewCalendar")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    # Calendar-only workers may read their own plan, never the staff directory or other facts.
+    if user.role.scope_kind != ScopeKind.self:
+        raise api_error(403, "Этот раздел предназначен для личного графика сотрудника")
+    if date_to < date_from or (date_to - date_from).days > 370:
+        raise api_error(422, "Недопустимый диапазон дат")
+    employee = await session.scalar(await scoped_employees(
+        session, select(Employee).where(Employee.is_active.is_(True)), user,
+    ))
+    if employee is None:
+        raise api_error(409, "Учётная запись не привязана к действующему сотруднику. Попросите администратора проверить привязку.")
+    payload = EmployeeOut.model_validate(employee).model_dump(mode="json")
+    position = await session.get(Position, employee.position_id) if employee.position_id else None
+    payload.pop("salary", None)
+    payload.pop("bonus", None)
+    payload["position_name"] = position.name if position else ""
+    can_attendance = has_permission(user, "viewAttendance")
+    facts = await attendance_range(date_from=date_from, date_to=date_to, user=user, session=session) if can_attendance else {}
+    return {"employee": payload, "attendance": facts, "can_view_attendance": can_attendance}
 
 
 async def lock_employee_roster(session: AsyncSession) -> None:

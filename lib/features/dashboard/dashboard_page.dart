@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/theme.dart';
+import '../../core/api_client.dart';
+import '../employees/personal_schedule_storage.dart';
 import '../../shared/formatters/work_duration_formatter.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../attendance/attendance_storage.dart';
@@ -83,14 +85,21 @@ class _DashboardPageState extends State<DashboardPage> {
       _error = null;
     });
     try {
+      final personal = PersonalScheduleStorage.applies
+          ? PersonalScheduleStorage.load(
+              DateTime(DateTime.now().year, DateTime.now().month, 1),
+              DateTime.now())
+          : null;
       final results = await Future.wait([
         _preferences.syncForCurrentUser(force: force),
-        _employeesStorage.load(force: force),
-        _attendanceStorage.loadRange(
-          DateTime(DateTime.now().year, DateTime.now().month, 1),
-          DateTime.now(),
-          force: force,
-        ),
+        personal?.then((data) => data.employees) ??
+            _employeesStorage.load(force: force),
+        personal?.then((data) => data.attendance) ??
+            _attendanceStorage.loadRange(
+              DateTime(DateTime.now().year, DateTime.now().month, 1),
+              DateTime.now(),
+              force: force,
+            ),
       ]);
       if (!mounted) return;
       final allEmployees = results[1] as List<EmployeeModel>;
@@ -104,11 +113,13 @@ class _DashboardPageState extends State<DashboardPage> {
         _attendance = results[2] as Map<String, dynamic>;
         _loading = false;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Не удалось загрузить данные главного экрана';
+        _error = error is ApiException
+            ? error.message
+            : 'Не удалось загрузить данные главного экрана. Проверьте соединение и повторите.';
       });
     }
   }

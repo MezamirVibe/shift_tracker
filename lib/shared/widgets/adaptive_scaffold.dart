@@ -25,6 +25,7 @@ class AdaptiveScaffold extends StatelessWidget {
   final List<NavItem>? items;
   final List<Widget> actions;
   final Widget child;
+  final Widget? leading;
 
   final Widget? floatingActionButton;
 
@@ -32,6 +33,7 @@ class AdaptiveScaffold extends StatelessWidget {
     super.key,
     required this.title,
     required this.child,
+    this.leading,
     this.selectedIndex,
     this.selectedRoute,
     this.items,
@@ -204,11 +206,12 @@ class AdaptiveScaffold extends StatelessWidget {
       return Scaffold(
         appBar: AppBar(
           title: Text(title),
-          leading: selectedRoute == '/settings' || selectedRoute == '/admin'
-              ? BackButton(
-                  onPressed: () =>
-                      context.go(selectedRoute == '/admin' ? '/settings' : '/'))
-              : null,
+          leading: leading ??
+              (selectedRoute == '/settings' || selectedRoute == '/admin'
+                  ? BackButton(
+                      onPressed: () => context
+                          .go(selectedRoute == '/admin' ? '/settings' : '/'))
+                  : null),
           actions: [
             ...actions,
             if (selectedRoute != '/settings')
@@ -380,6 +383,11 @@ class AdaptiveScaffold extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
+                      if (leading != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: leading!,
+                        ),
                       Expanded(
                         child: Text(
                           title,

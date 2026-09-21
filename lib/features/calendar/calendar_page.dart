@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../core/api_client.dart';
+import '../employees/personal_schedule_storage.dart';
 import '../../shared/formatters/work_duration_formatter.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../attendance/attendance_storage.dart';
@@ -78,6 +80,7 @@ class _CalendarPageState extends State<CalendarPage> {
   final _preferences = PreferencesService.instance;
 
   bool _loading = true;
+  String? _loadError;
 
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month, 1);
 
@@ -377,6 +380,13 @@ class _CalendarPageState extends State<CalendarPage> {
                     ),
               ),
               const SizedBox(height: 14),
+              if (!AuthService.instance.hasPerm(AppPermission.viewAttendance))
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    'Показан план. Просмотр фактических отметок не разрешён для вашей роли.',
+                  ),
+                ),
               if (planned) ...[
                 detail(
                   'План',
@@ -493,6 +503,7 @@ class _CalendarPageState extends State<CalendarPage> {
   }) async {
     final loadGeneration = ++_loadGeneration;
     final targetMonth = forMonth ?? _month;
+    setState(() => _loadError = null);
 
     if (_employeesVisible.isEmpty) {
       setState(() => _loading = true);
@@ -504,59 +515,79 @@ class _CalendarPageState extends State<CalendarPage> {
     final rangeTo = widget.fullView
         ? DateTime(targetMonth.year, targetMonth.month + 1, 0)
         : _weekStart.add(const Duration(days: 6));
-    final results = await Future.wait([
-      _preferences.syncForCurrentUser(force: force),
-      _employeesStorage.load(force: force),
-      _attendanceStorage.loadRange(
-        rangeFrom,
-        rangeTo,
-        force: force,
-      ),
-      _structureStorage.loadDepartments(force: force),
-      _structureStorage.loadGroups(force: force),
-    ]);
-    final employees = results[1] as List<EmployeeModel>;
-    final rawAttendance = results[2] as Map<String, dynamic>;
-    final deps = results[3] as List<DepartmentModel>;
-    final groups = results[4] as List<GroupModel>;
-    if (!mounted || loadGeneration != _loadGeneration) return;
-    deps.sort((a, b) => a.name.compareTo(b.name));
-    groups.sort((a, b) => a.name.compareTo(b.name));
+    try {
+      final personal = PersonalScheduleStorage.applies
+          ? PersonalScheduleStorage.load(rangeFrom, rangeTo)
+          : null;
+      final results = await Future.wait([
+        _preferences.syncForCurrentUser(force: force),
+        personal?.then((data) => data.employees) ??
+            _employeesStorage.load(force: force),
+        personal?.then((data) => data.attendance) ??
+            _attendanceStorage.loadRange(
+              rangeFrom,
+              rangeTo,
+              force: force,
+            ),
+        personal != null
+            ? Future.value(<DepartmentModel>[])
+            : _structureStorage.loadDepartments(force: force),
+        personal != null
+            ? Future.value(<GroupModel>[])
+            : _structureStorage.loadGroups(force: force),
+      ]);
+      final employees = results[1] as List<EmployeeModel>;
+      final rawAttendance = results[2] as Map<String, dynamic>;
+      final deps = results[3] as List<DepartmentModel>;
+      final groups = results[4] as List<GroupModel>;
+      if (!mounted || loadGeneration != _loadGeneration) return;
+      deps.sort((a, b) => a.name.compareTo(b.name));
+      groups.sort((a, b) => a.name.compareTo(b.name));
 
-    final visible = AuthService.instance
-        .filterEmployeesByScope(employees)
-        .where((employee) => _preferences.isGroupVisible(employee.groupId))
-        .toList();
-    final visibleGroups =
-        groups.where((group) => _preferences.isGroupVisible(group.id)).toList();
+      final visible = AuthService.instance
+          .filterEmployeesByScope(employees)
+          .where((employee) => _preferences.isGroupVisible(employee.groupId))
+          .toList();
+      final visibleGroups = groups
+          .where((group) => _preferences.isGroupVisible(group.id))
+          .toList();
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _month = DateTime(targetMonth.year, targetMonth.month, 1);
-      _employeesVisible = visible;
-      _departments = deps;
-      _groups = visibleGroups;
-    });
+      setState(() {
+        _month = DateTime(targetMonth.year, targetMonth.month, 1);
+        _employeesVisible = visible;
+        _departments = deps;
+        _groups = visibleGroups;
+      });
 
-    _applyRoleLocksToFilters();
+      _applyRoleLocksToFilters();
 
-    final summary = widget.fullView
-        ? _calcSummaryForMonth(
-            _month,
-            _applyFiltersWithinVisible(_employeesVisible),
-            rawAttendance,
-          )
-        : <String, _DaySummary>{};
+      final summary = widget.fullView
+          ? _calcSummaryForMonth(
+              _month,
+              _applyFiltersWithinVisible(_employeesVisible),
+              rawAttendance,
+            )
+          : <String, _DaySummary>{};
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _summaryByDateIso = summary;
-      _rawAttendance = rawAttendance;
-      _recordCache.clear();
-      _loading = false;
-    });
+      setState(() {
+        _summaryByDateIso = summary;
+        _rawAttendance = rawAttendance;
+        _recordCache.clear();
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted || loadGeneration != _loadGeneration) return;
+      setState(() {
+        _loading = false;
+        _loadError = error is ApiException
+            ? error.message
+            : 'Не удалось загрузить график. Проверьте соединение и повторите.';
+      });
+    }
   }
 
   Map<String, _DaySummary> _calcSummaryForMonth(
@@ -2072,94 +2103,111 @@ class _CalendarPageState extends State<CalendarPage> {
           padding: EdgeInsets.all(isPhone ? 8 : 16),
           child: _loading
               ? const Center(child: CircularProgressIndicator())
-              : !widget.fullView
-                  ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
-                  : NestedScrollView(
-                      headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                        SliverToBoxAdapter(
-                            child: Column(children: [
-                          _monthHeader(compact: isPhone),
-                          const SizedBox(height: 8),
-                          _filtersBlock(isPhone),
-                          const SizedBox(height: 8),
-                          _calendarLegend(compact: isPhone),
-                          const SizedBox(height: 8),
-                          _weekHeader(),
-                          const SizedBox(height: 6),
-                        ])),
-                      ],
-                      body: PageView.builder(
-                        controller: _pageController,
-                        onPageChanged: (page) async {
-                          final m = _monthFromPage(page);
-                          setState(() {
-                            _month = m;
-                            if (_selectedScheduleDay.year != m.year ||
-                                _selectedScheduleDay.month != m.month) {
-                              _selectedScheduleDay = m;
-                            }
-                          });
-                          await _loadAndRecalc(forMonth: m);
-                        },
-                        itemBuilder: (context, pageIndex) {
-                          final pageMonth = _monthFromPage(pageIndex);
-                          final days = _buildGridDays(pageMonth);
+              : _loadError != null
+                  ? Center(
+                      child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(_loadError!, textAlign: TextAlign.center),
+                              const SizedBox(height: 12),
+                              FilledButton(
+                                  onPressed: () => _loadAndRecalc(force: true),
+                                  child: const Text('Повторить')),
+                            ],
+                          )))
+                  : !widget.fullView
+                      ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
+                      : NestedScrollView(
+                          headerSliverBuilder: (context, innerBoxIsScrolled) =>
+                              [
+                            SliverToBoxAdapter(
+                                child: Column(children: [
+                              _monthHeader(compact: isPhone),
+                              const SizedBox(height: 8),
+                              _filtersBlock(isPhone),
+                              const SizedBox(height: 8),
+                              _calendarLegend(compact: isPhone),
+                              const SizedBox(height: 8),
+                              _weekHeader(),
+                              const SizedBox(height: 6),
+                            ])),
+                          ],
+                          body: PageView.builder(
+                            controller: _pageController,
+                            onPageChanged: (page) async {
+                              final m = _monthFromPage(page);
+                              setState(() {
+                                _month = m;
+                                if (_selectedScheduleDay.year != m.year ||
+                                    _selectedScheduleDay.month != m.month) {
+                                  _selectedScheduleDay = m;
+                                }
+                              });
+                              await _loadAndRecalc(forMonth: m);
+                            },
+                            itemBuilder: (context, pageIndex) {
+                              final pageMonth = _monthFromPage(pageIndex);
+                              final days = _buildGridDays(pageMonth);
 
-                          return LayoutBuilder(
-                            builder: (context, c) {
-                              const cross = 7;
-                              final spacing = isPhone ? 4.0 : 6.0;
-                              final cellHeight = _cellHeightFor(isPhone);
+                              return LayoutBuilder(
+                                builder: (context, c) {
+                                  const cross = 7;
+                                  final spacing = isPhone ? 4.0 : 6.0;
+                                  final cellHeight = _cellHeightFor(isPhone);
 
-                              return SingleChildScrollView(
-                                child: GridView.builder(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  padding: const EdgeInsets.only(bottom: 12),
-                                  gridDelegate:
-                                      SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: cross,
-                                    crossAxisSpacing: spacing,
-                                    mainAxisSpacing: spacing,
-                                    mainAxisExtent: cellHeight,
-                                  ),
-                                  itemCount: days.length,
-                                  itemBuilder: (context, index) {
-                                    final day = days[index];
-                                    if (day == null) {
-                                      return const SizedBox.shrink();
-                                    }
+                                  return SingleChildScrollView(
+                                    child: GridView.builder(
+                                      shrinkWrap: true,
+                                      physics:
+                                          const NeverScrollableScrollPhysics(),
+                                      padding:
+                                          const EdgeInsets.only(bottom: 12),
+                                      gridDelegate:
+                                          SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: cross,
+                                        crossAxisSpacing: spacing,
+                                        mainAxisSpacing: spacing,
+                                        mainAxisExtent: cellHeight,
+                                      ),
+                                      itemCount: days.length,
+                                      itemBuilder: (context, index) {
+                                        final day = days[index];
+                                        if (day == null) {
+                                          return const SizedBox.shrink();
+                                        }
 
-                                    final d0 = dateOnly(day);
-                                    final iso = _isoDate(d0);
+                                        final d0 = dateOnly(day);
+                                        final iso = _isoDate(d0);
 
-                                    final s = _summaryByDateIso[iso] ??
-                                        const _DaySummary(
-                                          planned: 0,
-                                          worked: 0,
-                                          absent: 0,
-                                          sick: 0,
-                                          vacation: 0,
-                                          closed: false,
+                                        final s = _summaryByDateIso[iso] ??
+                                            const _DaySummary(
+                                              planned: 0,
+                                              worked: 0,
+                                              absent: 0,
+                                              sick: 0,
+                                              vacation: 0,
+                                              closed: false,
+                                            );
+
+                                        return _DayCell(
+                                          day: day,
+                                          summary: s,
+                                          compact: isPhone,
+                                          personalKind: _isPersonalView
+                                              ? _personalKindFor(day)
+                                              : null,
+                                          onTap: () => _openDay(day),
                                         );
-
-                                    return _DayCell(
-                                      day: day,
-                                      summary: s,
-                                      compact: isPhone,
-                                      personalKind: _isPersonalView
-                                          ? _personalKindFor(day)
-                                          : null,
-                                      onTap: () => _openDay(day),
-                                    );
-                                  },
-                                ),
+                                      },
+                                    ),
+                                  );
+                                },
                               );
                             },
-                          );
-                        },
-                      ),
-                    ),
+                          ),
+                        ),
         )),
       ]),
     );

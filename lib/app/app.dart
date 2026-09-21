@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/auth_service.dart';
@@ -50,6 +51,9 @@ class _ShiftTrackerAppState extends State<ShiftTrackerApp> {
     return MaterialApp.router(
       title: 'Череда — график смен',
       debugShowCheckedModeBanner: false,
+      locale: const Locale('ru', 'RU'),
+      supportedLocales: const [Locale('ru', 'RU')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: theme,
       darkTheme: theme,
       themeMode: ThemeMode.light,

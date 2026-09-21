@@ -59,7 +59,8 @@ class PreferencesService extends ChangeNotifier {
     final result = <DashboardWidgetType>{
       DashboardWidgetType.nextShift,
       DashboardWidgetType.weekSchedule,
-      DashboardWidgetType.workedHours,
+      if (AuthService.instance.hasPerm(AppPermission.viewAttendance))
+        DashboardWidgetType.workedHours,
       DashboardWidgetType.quickActions,
       DashboardWidgetType.profile,
     };
