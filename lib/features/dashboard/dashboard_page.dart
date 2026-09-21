@@ -46,6 +46,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool _loading = true;
   String? _error;
+  int? _pendingRequests;
   List<EmployeeModel> _employees = const [];
   Map<String, dynamic> _attendance = const {};
   bool _onboardingCheckStarted = false;
@@ -88,7 +89,8 @@ class _DashboardPageState extends State<DashboardPage> {
       final personal = PersonalScheduleStorage.applies
           ? PersonalScheduleStorage.load(
               DateTime(DateTime.now().year, DateTime.now().month, 1),
-              DateTime.now())
+              DateTime.now(),
+            )
           : null;
       final results = await Future.wait([
         _preferences.syncForCurrentUser(force: force),
@@ -106,13 +108,23 @@ class _DashboardPageState extends State<DashboardPage> {
       setState(() {
         _employees = AuthService.instance
             .filterEmployeesByScope(allEmployees)
-            .where(
-              (employee) => _preferences.isGroupVisible(employee.groupId),
-            )
+            .where((employee) => _preferences.isGroupVisible(employee.groupId))
             .toList();
         _attendance = results[2] as Map<String, dynamic>;
         _loading = false;
       });
+      if (!PersonalScheduleStorage.applies &&
+          AuthService.instance.hasPerm(AppPermission.editAttendance)) {
+        try {
+          final requests = await ApiClient.instance.request(
+            'GET',
+            '/api/v1/hour-requests?status=pending',
+          ) as List;
+          if (mounted) setState(() => _pendingRequests = requests.length);
+        } catch (_) {
+          if (mounted) setState(() => _pendingRequests = null);
+        }
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -239,20 +251,21 @@ class _DashboardPageState extends State<DashboardPage> {
                             contentPadding: EdgeInsets.zero,
                             leading: const Icon(Icons.event_available_outlined),
                             title: Text(
-                              DateFormat('d MMMM, EEEE', 'ru_RU')
-                                  .format(entry.day),
+                              DateFormat(
+                                'd MMMM, EEEE',
+                                'ru_RU',
+                              ).format(entry.day),
                             ),
                             subtitle: Text(actualTime),
                             trailing: Text(
                               formatWorkDuration(entry.minutes),
-                              style:
-                                  Theme.of(sheetContext).textTheme.titleMedium,
+                              style: Theme.of(
+                                sheetContext,
+                              ).textTheme.titleMedium,
                             ),
                             onTap: () {
                               Navigator.of(sheetContext).pop();
-                              context.go(
-                                '/calendar?date=${_iso(entry.day)}',
-                              );
+                              context.go('/calendar?date=${_iso(entry.day)}');
                             },
                           );
                         },
@@ -330,30 +343,40 @@ class _DashboardPageState extends State<DashboardPage> {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Center(
-            child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const SizedBox(height: 24),
-            Text('Начнём с сотрудников',
-                style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 12),
-            const Text(
-                'Добавьте первого сотрудника вручную или загрузите старый табель. Затем отмечайте часы в «Графике», а готовый Excel отправляйте из «Табеля».'),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-                onPressed: () => context.go('/employees'),
-                icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Добавить сотрудников')),
-            if (AuthService.instance.hasPerm(AppPermission.editAttendance)) ...[
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                  onPressed: () => context.push('/timesheet/import'),
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('Импортировать старый табель')),
-            ],
-          ]),
-        )),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 24),
+                Text(
+                  'Начнём с сотрудников',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Добавьте первого сотрудника вручную или загрузите старый табель. Затем отмечайте часы в «Графике», а готовый Excel отправляйте из «Табеля».',
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: () => context.go('/employees'),
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: const Text('Добавить сотрудников'),
+                ),
+                if (AuthService.instance.hasPerm(
+                  AppPermission.editAttendance,
+                )) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => context.push('/timesheet/import'),
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Импортировать старый табель'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       );
     }
     final user = AuthService.instance.currentUser;
@@ -389,12 +412,38 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                 ),
                 const SizedBox(height: 22),
+                if (PersonalScheduleStorage.applies ||
+                    AuthService.instance.hasPerm(
+                      AppPermission.editAttendance,
+                    )) ...[
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.more_time),
+                      title: Text(
+                        PersonalScheduleStorage.applies
+                            ? 'Мои запросы часов'
+                            : 'Запросы часов сотрудников',
+                      ),
+                      subtitle: Text(
+                        PersonalScheduleStorage.applies
+                            ? 'Статусы запросов и ответы руководителя'
+                            : _pendingRequests == null
+                                ? 'Открыть список'
+                                : 'Ожидают решения: $_pendingRequests',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        await context.push('/hour-requests');
+                        if (mounted) await _load(force: true);
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 if (layout.isEmpty)
                   _EmptyDashboard(
-                    onCustomize: () => DashboardCustomizer.show(
-                      context,
-                      mobile: isMobile,
-                    ),
+                    onCustomize: () =>
+                        DashboardCustomizer.show(context, mobile: isMobile),
                   )
                 else
                   LayoutBuilder(
@@ -468,7 +517,8 @@ class _DashboardPageState extends State<DashboardPage> {
       title: 'Ближайшая смена',
       child: employee == null || next == null
           ? const Text(
-              'Привяжите учётную запись к сотруднику, чтобы видеть личный график.')
+              'Привяжите учётную запись к сотруднику, чтобы видеть личный график.',
+            )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -549,8 +599,10 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('$percent% заполнено',
-              style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            '$percent% заполнено',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           const SizedBox(height: 12),
           LinearProgressIndicator(value: _attendanceProgress, minHeight: 8),
           const SizedBox(height: 8),
@@ -671,8 +723,10 @@ class _DashboardCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 11),
                 Expanded(
-                  child: Text(title,
-                      style: Theme.of(context).textTheme.titleMedium),
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
               ],
             ),
@@ -722,8 +776,10 @@ class _MetricCard extends StatelessWidget {
                   children: [
                     Text(label, style: Theme.of(context).textTheme.bodyMedium),
                     const SizedBox(height: 4),
-                    Text(value,
-                        style: Theme.of(context).textTheme.headlineSmall),
+                    Text(
+                      value,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
                   ],
                 ),
               ),
@@ -788,8 +844,10 @@ class _EmptyDashboard extends StatelessWidget {
             children: [
               const Icon(Icons.dashboard_customize_outlined, size: 44),
               const SizedBox(height: 12),
-              Text('Главный экран пуст',
-                  style: Theme.of(context).textTheme.titleLarge),
+              Text(
+                'Главный экран пуст',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
               const SizedBox(height: 8),
               const Text('Выберите блоки, которые хотите видеть здесь.'),
               const SizedBox(height: 16),

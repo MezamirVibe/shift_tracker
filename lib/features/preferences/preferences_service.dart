@@ -9,6 +9,7 @@ import '../../core/api_client.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../auth/auth_storage.dart';
+import '../employees/personal_schedule_storage.dart';
 import 'user_preferences.dart';
 
 class PreferencesService extends ChangeNotifier {
@@ -59,7 +60,8 @@ class PreferencesService extends ChangeNotifier {
     final result = <DashboardWidgetType>{
       DashboardWidgetType.nextShift,
       DashboardWidgetType.weekSchedule,
-      if (AuthService.instance.hasPerm(AppPermission.viewAttendance))
+      if (PersonalScheduleStorage.applies ||
+          AuthService.instance.hasPerm(AppPermission.viewAttendance))
         DashboardWidgetType.workedHours,
       DashboardWidgetType.quickActions,
       DashboardWidgetType.profile,
@@ -143,17 +145,12 @@ class PreferencesService extends ChangeNotifier {
     }
 
     try {
-      final response = await ApiClient.instance.request(
-        'GET',
-        '/api/v1/preferences',
-      ) as Map<String, dynamic>;
+      final response = await ApiClient.instance
+          .request('GET', '/api/v1/preferences') as Map<String, dynamic>;
       if (!_ownsSync(user, generation)) return;
       final settings = response['settings'];
       if (settings is Map && settings.isNotEmpty) {
-        _preferences = UserPreferences.fromJson(
-          settings,
-          fallback: _defaults,
-        );
+        _preferences = UserPreferences.fromJson(settings, fallback: _defaults);
         await _writeCacheFor(scopedUser, _preferences);
       } else {
         _preferences = _defaults;

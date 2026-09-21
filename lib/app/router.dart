@@ -19,6 +19,7 @@ import '../features/preferences/preferences_page.dart' as preferences;
 import '../features/attendance/month_report_page.dart';
 import '../features/attendance/import_timesheet_page.dart';
 import '../features/attendance/delivery_page.dart';
+import '../features/attendance/hour_requests_page.dart';
 
 class AppRouter {
   static const String splash = '/splash';
@@ -80,6 +81,10 @@ class AppRouter {
       },
       routes: [
         GoRoute(
+          path: '/hour-requests',
+          builder: (_, __) => const HourRequestsPage(),
+        ),
+        GoRoute(
           path: '/register',
           builder: (_, __) => const RegistrationPage(),
         ),
@@ -101,10 +106,10 @@ class AppRouter {
             final now = DateTime.now();
             final year =
                 int.tryParse(state.uri.queryParameters['year'] ?? '') ??
-                now.year;
+                    now.year;
             final month =
                 int.tryParse(state.uri.queryParameters['month'] ?? '') ??
-                now.month;
+                    now.month;
             return MonthReportPage(
               year: year.clamp(2000, 2100),
               month: month.clamp(1, 12),

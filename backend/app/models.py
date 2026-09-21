@@ -258,6 +258,26 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class HourRequest(Base):
+    __tablename__ = "hour_requests"
+    __table_args__ = (
+        CheckConstraint("additional_minutes > 0 AND additional_minutes <= 1440"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'cancelled')"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), index=True)
+    requester_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    additional_minutes: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(1000))
+    baseline: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    review_comment: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 

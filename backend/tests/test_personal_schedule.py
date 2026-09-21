@@ -26,7 +26,7 @@ class PersonalScheduleTests(unittest.IsolatedAsyncioTestCase):
     async def get_schedule(self, query="date_from=2026-08-01&date_to=2026-08-31"):
         return await self.t.client.get(f"/api/v1/self/schedule?{query}")
 
-    async def test_calendar_only_reads_own_plan_without_facts_or_money(self):
+    async def test_calendar_only_reads_own_plan_and_facts_without_money_or_other_people(self):
         response = await self.get_schedule()
         self.assertEqual(response.status_code, 200, response.text)
         data = response.json()
@@ -34,8 +34,9 @@ class PersonalScheduleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["employee"]["schedule_start_date"], "2026-01-01")
         self.assertNotIn("salary", data["employee"])
         self.assertNotIn("bonus", data["employee"])
-        self.assertEqual(data["attendance"], {})
-        self.assertFalse(data["can_view_attendance"])
+        self.assertEqual(data["attendance"]["2026-08-03"][str(self.t.a.id)]["workedMinutes"], 123)
+        self.assertNotIn(str(self.t.b.id), str(data))
+        self.assertTrue(data["can_view_attendance"])
         for path in ("employees", "attendance?date_from=2026-08-01&date_to=2026-08-31"):
             response = await self.t.client.get(f"/api/v1/{path}")
             self.assertEqual(response.status_code, 403)

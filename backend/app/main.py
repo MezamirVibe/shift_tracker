@@ -176,7 +176,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Shift Tracker API",
-    version="1.4.1",
+    version="1.5.0",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -1469,7 +1469,7 @@ async def self_schedule(
     user: User = Depends(require_permission("viewCalendar")),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    # Calendar-only workers may read their own plan, never the staff directory or other facts.
+    # Every personal calendar includes its owner's facts, never the staff directory.
     if user.role.scope_kind != ScopeKind.self:
         raise api_error(403, "Этот раздел предназначен для личного графика сотрудника")
     if date_to < date_from or (date_to - date_from).days > 370:
@@ -1484,9 +1484,8 @@ async def self_schedule(
     payload.pop("salary", None)
     payload.pop("bonus", None)
     payload["position_name"] = position.name if position else ""
-    can_attendance = has_permission(user, "viewAttendance")
-    facts = await attendance_range(date_from=date_from, date_to=date_to, user=user, session=session) if can_attendance else {}
-    return {"employee": payload, "attendance": facts, "can_view_attendance": can_attendance}
+    facts = await attendance_range(date_from=date_from, date_to=date_to, user=user, session=session)
+    return {"employee": payload, "attendance": facts, "can_view_attendance": True}
 
 
 async def lock_employee_roster(session: AsyncSession) -> None:
@@ -1656,3 +1655,5 @@ from .import_routes import register_import_routes
 register_import_routes(app)
 from .telegram_delivery import register_delivery_routes
 register_delivery_routes(app)
+from .hour_requests import register_hour_request_routes
+register_hour_request_routes(app)

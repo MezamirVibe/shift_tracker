@@ -16,6 +16,8 @@ import '../employees/schedule_utils.dart';
 import '../day/attendance_deviation.dart';
 import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
+import '../attendance/hour_requests_page.dart';
+import 'personal_week_view.dart';
 
 class _DaySummary {
   final int planned;
@@ -50,24 +52,13 @@ class _DaySummary {
   bool get hasUnexpectedOutputWhenNoPlan => planned == 0 && worked > 0;
 }
 
-enum _PersonalDayKind {
-  workShift,
-  worked,
-  vacation,
-  sick,
-  absent,
-  dayOff,
-}
+enum _PersonalDayKind { workShift, worked, vacation, sick, absent, dayOff }
 
 class CalendarPage extends StatefulWidget {
   final bool fullView;
   final DateTime? initialDate;
 
-  const CalendarPage({
-    super.key,
-    this.fullView = false,
-    this.initialDate,
-  });
+  const CalendarPage({super.key, this.fullView = false, this.initialDate});
 
   @override
   State<CalendarPage> createState() => _CalendarPageState();
@@ -96,9 +87,9 @@ class _CalendarPageState extends State<CalendarPage> {
   Map<String, _DaySummary> _summaryByDateIso = {};
   Map<String, dynamic> _rawAttendance = {};
   final Map<String, AttendanceRecord?> _recordCache = {};
-  DateTime _weekStart = dateOnly(DateTime.now()).subtract(
-    Duration(days: DateTime.now().weekday - DateTime.monday),
-  );
+  DateTime _weekStart = dateOnly(
+    DateTime.now(),
+  ).subtract(Duration(days: DateTime.now().weekday - DateTime.monday));
   DateTime _selectedScheduleDay = dateOnly(DateTime.now());
 
   late final PageController _pageController;
@@ -380,13 +371,13 @@ class _CalendarPageState extends State<CalendarPage> {
                     ),
               ),
               const SizedBox(height: 14),
-              if (!AuthService.instance.hasPerm(AppPermission.viewAttendance))
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    'Показан план. Просмотр фактических отметок не разрешён для вашей роли.',
-                  ),
-                ),
+              detail(
+                record?.closed == true ? 'Закрыто часов' : 'Учтено часов',
+                formatWorkDuration(workedMinutes),
+                icon: record?.closed == true
+                    ? Icons.lock_outline
+                    : Icons.schedule,
+              ),
               if (planned) ...[
                 detail(
                   'План',
@@ -425,6 +416,17 @@ class _CalendarPageState extends State<CalendarPage> {
               if (record?.comment?.trim().isNotEmpty == true)
                 detail('Комментарий', record!.comment!.trim()),
               const SizedBox(height: 16),
+              if (!day.isAfter(dateOnly(DateTime.now()))) ...[
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    _requestHours(day);
+                  },
+                  icon: const Icon(Icons.more_time),
+                  label: const Text('Запросить добавление часов'),
+                ),
+                const SizedBox(height: 8),
+              ],
               FilledButton.icon(
                 onPressed: () {
                   Navigator.of(sheetContext).pop();
@@ -439,6 +441,43 @@ class _CalendarPageState extends State<CalendarPage> {
       },
     );
   }
+
+  Future<void> _requestHours(DateTime day) async {
+    if (_employeesVisible.isEmpty) return;
+    final employee = _employeesVisible.first;
+    final record = _recordFor(day, employee.id);
+    final minutes = record?.hasWorked == true
+        ? record?.workedMinutes ?? employee.paidShiftHours * 60
+        : 0;
+    if (await showHourRequestDialog(context, day: day, baseMinutes: minutes) &&
+        mounted) {
+      await context.push('/hour-requests');
+      if (mounted) await _loadAndRecalc(force: true);
+    }
+  }
+
+  Widget _personalWeek() => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: PersonalWeekView(
+            employee: _employeesVisible.first,
+            attendance: _rawAttendance,
+            weekStart: _weekStart,
+            selectedDay: _selectedScheduleDay,
+            onSelect: (day) =>
+                setState(() => _selectedScheduleDay = dateOnly(day)),
+            onMoveWeek: _moveWeek,
+            onToday: _jumpToToday,
+            onDetails: () => _showPersonalDayDetails(_selectedScheduleDay),
+            onRequest: () => _requestHours(_selectedScheduleDay),
+            onRequests: () async {
+              await context.push('/hour-requests');
+              if (mounted) await _loadAndRecalc(force: true);
+            },
+            onRefresh: () => _loadAndRecalc(force: true),
+          ),
+        ),
+      );
 
   void _applyRoleLocksToFilters() {
     final u = AuthService.instance.currentUser;
@@ -497,10 +536,7 @@ class _CalendarPageState extends State<CalendarPage> {
     return out.toList();
   }
 
-  Future<void> _loadAndRecalc({
-    DateTime? forMonth,
-    bool force = false,
-  }) async {
+  Future<void> _loadAndRecalc({DateTime? forMonth, bool force = false}) async {
     final loadGeneration = ++_loadGeneration;
     final targetMonth = forMonth ?? _month;
     setState(() => _loadError = null);
@@ -524,11 +560,7 @@ class _CalendarPageState extends State<CalendarPage> {
         personal?.then((data) => data.employees) ??
             _employeesStorage.load(force: force),
         personal?.then((data) => data.attendance) ??
-            _attendanceStorage.loadRange(
-              rangeFrom,
-              rangeTo,
-              force: force,
-            ),
+            _attendanceStorage.loadRange(rangeFrom, rangeTo, force: force),
         personal != null
             ? Future.value(<DepartmentModel>[])
             : _structureStorage.loadDepartments(force: force),
@@ -691,11 +723,7 @@ class _CalendarPageState extends State<CalendarPage> {
   void _recalculateFromLoaded() {
     if (!widget.fullView) return;
     final filtered = _applyFiltersWithinVisible(_employeesVisible);
-    final summary = _calcSummaryForMonth(
-      _month,
-      filtered,
-      _rawAttendance,
-    );
+    final summary = _calcSummaryForMonth(_month, filtered, _rawAttendance);
     setState(() => _summaryByDateIso = summary);
   }
 
@@ -709,8 +737,9 @@ class _CalendarPageState extends State<CalendarPage> {
     Iterable<EmployeeModel> employees = _employeesVisible;
     final departmentId = _selectedDepartmentId;
     if (departmentId != null) {
-      employees =
-          employees.where((employee) => employee.departmentId == departmentId);
+      employees = employees.where(
+        (employee) => employee.departmentId == departmentId,
+      );
     }
     final groupId = _selectedGroupId;
     if (groupId != null) {
@@ -829,14 +858,20 @@ class _CalendarPageState extends State<CalendarPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Все подразделения',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      'Все подразделения',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   ..._departments.map(
                     (d) => DropdownMenuItem<String?>(
                       value: d.id,
-                      child: Text(d.name,
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        d.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                 ],
@@ -865,14 +900,20 @@ class _CalendarPageState extends State<CalendarPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Все группы',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      'Все группы',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   ...groups.map(
                     (g) => DropdownMenuItem<String?>(
                       value: g.id,
-                      child: Text(g.name,
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        g.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                 ],
@@ -902,8 +943,11 @@ class _CalendarPageState extends State<CalendarPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Все должности',
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      'Все должности',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   for (final position in _availablePositions)
                     DropdownMenuItem<String?>(
@@ -926,10 +970,7 @@ class _CalendarPageState extends State<CalendarPage> {
                 if (isPhone && _mobileFiltersExpanded) {
                   setState(() => _mobileFiltersExpanded = false);
                 }
-                await _loadAndRecalc(
-                  forMonth: _month,
-                  force: true,
-                );
+                await _loadAndRecalc(forMonth: _month, force: true);
               },
               icon: const Icon(Icons.refresh),
               label: const Text('Обновить'),
@@ -942,10 +983,7 @@ class _CalendarPageState extends State<CalendarPage> {
     if (!isPhone) {
       return Card(
         margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: content,
-        ),
+        child: Padding(padding: const EdgeInsets.all(12), child: content),
       );
     }
 
@@ -1079,10 +1117,7 @@ class _CalendarPageState extends State<CalendarPage> {
       );
     }
 
-    return Card(
-      margin: EdgeInsets.zero,
-      child: content,
-    );
+    return Card(margin: EdgeInsets.zero, child: content);
   }
 
   Widget _scheduleLegend() {
@@ -1104,8 +1139,10 @@ class _CalendarPageState extends State<CalendarPage> {
             child: Icon(icon, size: 14, color: foreground),
           ),
           const SizedBox(width: 7),
-          Text('$title — $description',
-              style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            '$title — $description',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       );
     }
@@ -1206,8 +1243,9 @@ class _CalendarPageState extends State<CalendarPage> {
       _recordCache[cacheKey] = null;
       return null;
     }
-    final record =
-        AttendanceRecord.fromJson(Map<String, dynamic>.from(rawRecord));
+    final record = AttendanceRecord.fromJson(
+      Map<String, dynamic>.from(rawRecord),
+    );
     _recordCache[cacheKey] = record;
     return record;
   }
@@ -1216,8 +1254,9 @@ class _CalendarPageState extends State<CalendarPage> {
     final weekdayOffset = _selectedScheduleDay.weekday - DateTime.monday;
     setState(() {
       _weekStart = _weekStart.add(Duration(days: delta * 7));
-      _selectedScheduleDay =
-          _weekStart.add(Duration(days: weekdayOffset.clamp(0, 6)));
+      _selectedScheduleDay = _weekStart.add(
+        Duration(days: weekdayOffset.clamp(0, 6)),
+      );
     });
     final targetMonth = DateTime(_weekStart.year, _weekStart.month, 1);
     _loadAndRecalc(forMonth: targetMonth);
@@ -1260,7 +1299,7 @@ class _CalendarPageState extends State<CalendarPage> {
   Widget _desktopSchedule() {
     final employees = _applyFiltersWithinVisible(_employeesVisible);
     final days = [
-      for (var i = 0; i < 7; i++) _weekStart.add(Duration(days: i))
+      for (var i = 0; i < 7; i++) _weekStart.add(Duration(days: i)),
     ];
     var planned = 0;
     var worked = 0;
@@ -1308,165 +1347,177 @@ class _CalendarPageState extends State<CalendarPage> {
     return NestedScrollView(
       headerSliverBuilder: (context, innerBoxIsScrolled) => [
         SliverToBoxAdapter(
-            child: Column(children: [
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            runSpacing: 8,
+          child: Column(
             children: [
-              IconButton(
-                tooltip: 'Предыдущая неделя',
-                onPressed: () => _moveWeek(-1),
-                icon: const Icon(Icons.chevron_left),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  IconButton(
+                    tooltip: 'Предыдущая неделя',
+                    onPressed: () => _moveWeek(-1),
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      child: Text(
+                        '${_weekStart.day.toString().padLeft(2, '0')}.${_weekStart.month.toString().padLeft(2, '0')} – '
+                        '${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}.${end.year}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Следующая неделя',
+                    onPressed: () => _moveWeek(1),
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                  if (!_isPersonalView) ...[
+                    OutlinedButton.icon(
+                      onPressed: () => context.go('/employees'),
+                      icon: const Icon(Icons.edit_calendar_outlined),
+                      label: const Text('Настроить графики'),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  OutlinedButton.icon(
+                    onPressed: _isPersonalView
+                        ? _jumpToToday
+                        : () => _openDay(DateTime.now()),
+                    icon: const Icon(Icons.today_outlined),
+                    label: const Text('Сегодня'),
+                  ),
+                ],
               ),
-              Card(
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              if (!_isPersonalView) ...[
+                const SizedBox(height: 12),
+                _filtersBlock(false),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
                   child: Text(
-                    '${_weekStart.day.toString().padLeft(2, '0')}.${_weekStart.month.toString().padLeft(2, '0')} – '
-                    '${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}.${end.year}',
+                    'Показатели за $selectedLabel',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-              ),
-              IconButton(
-                tooltip: 'Следующая неделя',
-                onPressed: () => _moveWeek(1),
-                icon: const Icon(Icons.chevron_right),
-              ),
-              if (!_isPersonalView) ...[
-                OutlinedButton.icon(
-                  onPressed: () => context.go('/employees'),
-                  icon: const Icon(Icons.edit_calendar_outlined),
-                  label: const Text('Настроить графики'),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    _desktopStat(
+                      icon: Icons.badge_outlined,
+                      label: 'План на смену',
+                      value: '$planned',
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    _desktopStat(
+                      icon: Icons.how_to_reg_outlined,
+                      label: 'Фактически вышли',
+                      value: '$worked',
+                      color: Colors.green,
+                    ),
+                    const SizedBox(width: 10),
+                    _desktopStat(
+                      icon: Icons.beach_access_outlined,
+                      label: 'Отсутствуют',
+                      value: '$away',
+                      color: Theme.of(context).colorScheme.tertiary,
+                    ),
+                    const SizedBox(width: 10),
+                    _desktopStat(
+                      icon: Icons.warning_amber_rounded,
+                      label: 'Не заполнено',
+                      value: '$missing',
+                      color: Colors.orange,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
               ],
-              OutlinedButton.icon(
-                onPressed: _isPersonalView
-                    ? _jumpToToday
-                    : () => _openDay(DateTime.now()),
-                icon: const Icon(Icons.today_outlined),
-                label: const Text('Сегодня'),
-              ),
+              const SizedBox(height: 12),
+              _scheduleLegend(),
+              const SizedBox(height: 10),
             ],
           ),
-          if (!_isPersonalView) ...[
-            const SizedBox(height: 12),
-            _filtersBlock(false),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Показатели за $selectedLabel',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                _desktopStat(
-                  icon: Icons.badge_outlined,
-                  label: 'План на смену',
-                  value: '$planned',
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 10),
-                _desktopStat(
-                  icon: Icons.how_to_reg_outlined,
-                  label: 'Фактически вышли',
-                  value: '$worked',
-                  color: Colors.green,
-                ),
-                const SizedBox(width: 10),
-                _desktopStat(
-                  icon: Icons.beach_access_outlined,
-                  label: 'Отсутствуют',
-                  value: '$away',
-                  color: Theme.of(context).colorScheme.tertiary,
-                ),
-                const SizedBox(width: 10),
-                _desktopStat(
-                  icon: Icons.warning_amber_rounded,
-                  label: 'Не заполнено',
-                  value: '$missing',
-                  color: Colors.orange,
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 12),
-          _scheduleLegend(),
-          const SizedBox(height: 10),
-        ])),
+        ),
       ],
       body: Card(
         clipBehavior: Clip.antiAlias,
         child: CustomScrollView(
           slivers: [
             SliverToBoxAdapter(
-                child: Container(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 220,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 16),
-                      child: Text(_isPersonalView ? 'Мой график' : 'Сотрудник',
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
+              child: Container(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 220,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 16),
+                        child: Text(
+                          _isPersonalView ? 'Мой график' : 'Сотрудник',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     ),
-                  ),
-                  for (final day in days)
-                    Expanded(
-                      child: Material(
-                        color: dateOnly(day) == _selectedScheduleDay
-                            ? Theme.of(context).colorScheme.primaryContainer
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        child: InkWell(
-                          onTap: () => setState(
-                            () => _selectedScheduleDay = dateOnly(day),
-                          ),
+                    for (final day in days)
+                      Expanded(
+                        child: Material(
+                          color: dateOnly(day) == _selectedScheduleDay
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: Column(
-                              children: [
-                                Text(
-                                  const [
-                                    'Пн',
-                                    'Вт',
-                                    'Ср',
-                                    'Чт',
-                                    'Пт',
-                                    'Сб',
-                                    'Вс'
-                                  ][day.weekday - 1],
-                                  style:
-                                      Theme.of(context).textTheme.labelMedium,
-                                ),
-                                Text(
-                                  '${day.day}',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium,
-                                ),
-                              ],
+                          child: InkWell(
+                            onTap: () => setState(
+                              () => _selectedScheduleDay = dateOnly(day),
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Column(
+                                children: [
+                                  Text(
+                                    const [
+                                      'Пн',
+                                      'Вт',
+                                      'Ср',
+                                      'Чт',
+                                      'Пт',
+                                      'Сб',
+                                      'Вс',
+                                    ][day.weekday - 1],
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.labelMedium,
+                                  ),
+                                  Text(
+                                    '${day.day}',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            )),
+            ),
             employees.isEmpty
                 ? const SliverFillRemaining(
                     hasScrollBody: false,
                     child: Center(
-                        child: Text('Нет сотрудников по выбранным фильтрам')))
+                      child: Text('Нет сотрудников по выбранным фильтрам'),
+                    ),
+                  )
                 : SliverList.separated(
                     itemCount: employees.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
@@ -1485,13 +1536,15 @@ class _CalendarPageState extends State<CalendarPage> {
                                       context.push('/employee/${employee.id}'),
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 14),
+                                      horizontal: 14,
+                                    ),
                                     child: Row(
                                       children: [
                                         CircleAvatar(
                                           radius: 18,
                                           child: Text(
-                                              _initials(employee.fullName)),
+                                            _initials(employee.fullName),
+                                          ),
                                         ),
                                         const SizedBox(width: 10),
                                         Expanded(
@@ -1505,17 +1558,17 @@ class _CalendarPageState extends State<CalendarPage> {
                                                 employee.fullName,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .labelLarge,
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.labelLarge,
                                               ),
                                               Text(
                                                 employee.position,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodySmall,
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.bodySmall,
                                               ),
                                             ],
                                           ),
@@ -1523,9 +1576,9 @@ class _CalendarPageState extends State<CalendarPage> {
                                         Icon(
                                           Icons.chevron_right,
                                           size: 18,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
                                         ),
                                       ],
                                     ),
@@ -1651,10 +1704,9 @@ class _CalendarPageState extends State<CalendarPage> {
         foreground =
             planned ? Theme.of(context).colorScheme.primary : colors.neutral;
         background = planned
-            ? Theme.of(context)
-                .colorScheme
-                .primaryContainer
-                .withValues(alpha: 0.65)
+            ? Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.65)
             : colors.neutralContainer;
         if (_isPersonalView) {
           details = planned
@@ -1779,10 +1831,7 @@ class _CalendarPageState extends State<CalendarPage> {
     final end = days.last;
     final scheme = Theme.of(context).colorScheme;
     return RefreshIndicator(
-      onRefresh: () => _loadAndRecalc(
-        forMonth: _month,
-        force: true,
-      ),
+      onRefresh: () => _loadAndRecalc(forMonth: _month, force: true),
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         itemCount: selectedEmployees.length + 1,
@@ -1832,8 +1881,9 @@ class _CalendarPageState extends State<CalendarPage> {
                           for (final day in days)
                             Expanded(
                               child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 2),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 2,
+                                ),
                                 child: Material(
                                   color: dateOnly(day) == _selectedScheduleDay
                                       ? scheme.primaryContainer
@@ -1847,7 +1897,8 @@ class _CalendarPageState extends State<CalendarPage> {
                                     borderRadius: BorderRadius.circular(10),
                                     child: Padding(
                                       padding: const EdgeInsets.symmetric(
-                                          vertical: 7),
+                                        vertical: 7,
+                                      ),
                                       child: Column(
                                         children: [
                                           Text(
@@ -1860,15 +1911,15 @@ class _CalendarPageState extends State<CalendarPage> {
                                               'Сб',
                                               'Вс',
                                             ][day.weekday - 1],
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .labelSmall,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.labelSmall,
                                           ),
                                           Text(
                                             '${day.day}',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .labelLarge,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.labelLarge,
                                           ),
                                         ],
                                       ),
@@ -2025,10 +2076,9 @@ class _CalendarPageState extends State<CalendarPage> {
         foreground =
             planned ? Theme.of(context).colorScheme.primary : colors.neutral;
         background = planned
-            ? Theme.of(context)
-                .colorScheme
-                .primaryContainer
-                .withValues(alpha: 0.65)
+            ? Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.65)
             : colors.neutralContainer;
         break;
     }
@@ -2039,7 +2089,9 @@ class _CalendarPageState extends State<CalendarPage> {
         borderRadius: BorderRadius.circular(9),
         child: Container(
           decoration: BoxDecoration(
-              color: background, borderRadius: BorderRadius.circular(9)),
+            color: background,
+            borderRadius: BorderRadius.circular(9),
+          ),
           alignment: Alignment.center,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -2059,8 +2111,10 @@ class _CalendarPageState extends State<CalendarPage> {
                 ),
               ),
               if (subtitle.isNotEmpty)
-                Text(subtitle,
-                    style: TextStyle(color: foreground, fontSize: 11)),
+                Text(
+                  subtitle,
+                  style: TextStyle(color: foreground, fontSize: 11),
+                ),
             ],
           ),
         ),
@@ -2084,132 +2138,175 @@ class _CalendarPageState extends State<CalendarPage> {
     return AdaptiveScaffold(
       title: 'График',
       selectedRoute: '/schedule',
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: false, label: Text('Неделя')),
-              ButtonSegment(value: true, label: Text('Месяц')),
-            ],
-            selected: {widget.fullView},
-            onSelectionChanged: (value) => context.go(
-              '${value.single ? '/calendar' : '/schedule'}?date=${_isoDate(_selectedScheduleDay)}',
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('Неделя')),
+                ButtonSegment(value: true, label: Text('Месяц')),
+              ],
+              selected: {widget.fullView},
+              onSelectionChanged: (value) => context.go(
+                '${value.single ? '/calendar' : '/schedule'}?date=${_isoDate(_selectedScheduleDay)}',
+              ),
             ),
           ),
-        ),
-        Expanded(
+          Expanded(
             child: Padding(
-          padding: EdgeInsets.all(isPhone ? 8 : 16),
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _loadError != null
-                  ? Center(
-                      child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(_loadError!, textAlign: TextAlign.center),
-                              const SizedBox(height: 12),
-                              FilledButton(
+              padding: EdgeInsets.all(isPhone ? 8 : 16),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _loadError != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_loadError!, textAlign: TextAlign.center),
+                                const SizedBox(height: 12),
+                                FilledButton(
                                   onPressed: () => _loadAndRecalc(force: true),
-                                  child: const Text('Повторить')),
-                            ],
-                          )))
-                  : !widget.fullView
-                      ? (isDesktop ? _desktopSchedule() : _mobileSchedule())
-                      : NestedScrollView(
-                          headerSliverBuilder: (context, innerBoxIsScrolled) =>
-                              [
-                            SliverToBoxAdapter(
-                                child: Column(children: [
-                              _monthHeader(compact: isPhone),
-                              const SizedBox(height: 8),
-                              _filtersBlock(isPhone),
-                              const SizedBox(height: 8),
-                              _calendarLegend(compact: isPhone),
-                              const SizedBox(height: 8),
-                              _weekHeader(),
-                              const SizedBox(height: 6),
-                            ])),
-                          ],
-                          body: PageView.builder(
-                            controller: _pageController,
-                            onPageChanged: (page) async {
-                              final m = _monthFromPage(page);
-                              setState(() {
-                                _month = m;
-                                if (_selectedScheduleDay.year != m.year ||
-                                    _selectedScheduleDay.month != m.month) {
-                                  _selectedScheduleDay = m;
-                                }
-                              });
-                              await _loadAndRecalc(forMonth: m);
-                            },
-                            itemBuilder: (context, pageIndex) {
-                              final pageMonth = _monthFromPage(pageIndex);
-                              final days = _buildGridDays(pageMonth);
+                                  child: const Text('Повторить'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : !widget.fullView
+                          ? (_isPersonalView && _employeesVisible.isNotEmpty
+                              ? _personalWeek()
+                              : isDesktop
+                                  ? _desktopSchedule()
+                                  : _mobileSchedule())
+                          : NestedScrollView(
+                              headerSliverBuilder:
+                                  (context, innerBoxIsScrolled) => [
+                                SliverToBoxAdapter(
+                                  child: Column(
+                                    children: [
+                                      _monthHeader(compact: isPhone),
+                                      const SizedBox(height: 8),
+                                      _filtersBlock(isPhone),
+                                      const SizedBox(height: 8),
+                                      _calendarLegend(compact: isPhone),
+                                      if (_isPersonalView)
+                                        TextButton.icon(
+                                          onPressed: () =>
+                                              context.push('/hour-requests'),
+                                          icon: const Icon(Icons.outgoing_mail),
+                                          label: const Text(
+                                              'Мои запросы и ответы'),
+                                        ),
+                                      const SizedBox(height: 8),
+                                      _weekHeader(),
+                                      const SizedBox(height: 6),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              body: PageView.builder(
+                                controller: _pageController,
+                                onPageChanged: (page) async {
+                                  final m = _monthFromPage(page);
+                                  setState(() {
+                                    _month = m;
+                                    if (_selectedScheduleDay.year != m.year ||
+                                        _selectedScheduleDay.month != m.month) {
+                                      _selectedScheduleDay = m;
+                                    }
+                                  });
+                                  await _loadAndRecalc(forMonth: m);
+                                },
+                                itemBuilder: (context, pageIndex) {
+                                  final pageMonth = _monthFromPage(pageIndex);
+                                  final days = _buildGridDays(pageMonth);
 
-                              return LayoutBuilder(
-                                builder: (context, c) {
-                                  const cross = 7;
-                                  final spacing = isPhone ? 4.0 : 6.0;
-                                  final cellHeight = _cellHeightFor(isPhone);
+                                  return LayoutBuilder(
+                                    builder: (context, c) {
+                                      const cross = 7;
+                                      final spacing = isPhone ? 4.0 : 6.0;
+                                      final cellHeight =
+                                          _cellHeightFor(isPhone);
 
-                                  return SingleChildScrollView(
-                                    child: GridView.builder(
-                                      shrinkWrap: true,
-                                      physics:
-                                          const NeverScrollableScrollPhysics(),
-                                      padding:
-                                          const EdgeInsets.only(bottom: 12),
-                                      gridDelegate:
-                                          SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: cross,
-                                        crossAxisSpacing: spacing,
-                                        mainAxisSpacing: spacing,
-                                        mainAxisExtent: cellHeight,
-                                      ),
-                                      itemCount: days.length,
-                                      itemBuilder: (context, index) {
-                                        final day = days[index];
-                                        if (day == null) {
-                                          return const SizedBox.shrink();
-                                        }
+                                      return SingleChildScrollView(
+                                        child: GridView.builder(
+                                          shrinkWrap: true,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          padding:
+                                              const EdgeInsets.only(bottom: 12),
+                                          gridDelegate:
+                                              SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: cross,
+                                            crossAxisSpacing: spacing,
+                                            mainAxisSpacing: spacing,
+                                            mainAxisExtent: cellHeight,
+                                          ),
+                                          itemCount: days.length,
+                                          itemBuilder: (context, index) {
+                                            final day = days[index];
+                                            if (day == null) {
+                                              return const SizedBox.shrink();
+                                            }
 
-                                        final d0 = dateOnly(day);
-                                        final iso = _isoDate(d0);
+                                            final d0 = dateOnly(day);
+                                            final iso = _isoDate(d0);
 
-                                        final s = _summaryByDateIso[iso] ??
-                                            const _DaySummary(
-                                              planned: 0,
-                                              worked: 0,
-                                              absent: 0,
-                                              sick: 0,
-                                              vacation: 0,
-                                              closed: false,
+                                            final s = _summaryByDateIso[iso] ??
+                                                const _DaySummary(
+                                                  planned: 0,
+                                                  worked: 0,
+                                                  absent: 0,
+                                                  sick: 0,
+                                                  vacation: 0,
+                                                  closed: false,
+                                                );
+
+                                            return _DayCell(
+                                              day: day,
+                                              summary: s,
+                                              compact: isPhone,
+                                              personalKind: _isPersonalView
+                                                  ? _personalKindFor(day)
+                                                  : null,
+                                              personalHours: _isPersonalView &&
+                                                      _employeesVisible
+                                                          .isNotEmpty &&
+                                                      _recordFor(
+                                                            day,
+                                                            _employeesVisible
+                                                                .first.id,
+                                                          )?.hasWorked ==
+                                                          true
+                                                  ? formatWorkDuration(
+                                                      _recordFor(
+                                                            day,
+                                                            _employeesVisible
+                                                                .first.id,
+                                                          )?.workedMinutes ??
+                                                          _employeesVisible
+                                                                  .first
+                                                                  .paidShiftHours *
+                                                              60,
+                                                    )
+                                                  : null,
+                                              onTap: () => _openDay(day),
                                             );
-
-                                        return _DayCell(
-                                          day: day,
-                                          summary: s,
-                                          compact: isPhone,
-                                          personalKind: _isPersonalView
-                                              ? _personalKindFor(day)
-                                              : null,
-                                          onTap: () => _openDay(day),
-                                        );
-                                      },
-                                    ),
+                                          },
+                                        ),
+                                      );
+                                    },
                                   );
                                 },
-                              );
-                            },
-                          ),
-                        ),
-        )),
-      ]),
+                              ),
+                            ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2220,6 +2317,7 @@ class _DayCell extends StatelessWidget {
   final VoidCallback onTap;
   final bool compact;
   final _PersonalDayKind? personalKind;
+  final String? personalHours;
 
   const _DayCell({
     required this.day,
@@ -2227,6 +2325,7 @@ class _DayCell extends StatelessWidget {
     required this.onTap,
     required this.compact,
     this.personalKind,
+    this.personalHours,
   });
 
   @override
@@ -2243,18 +2342,21 @@ class _DayCell extends StatelessWidget {
         : summary.completionRatio >= 1
             ? colors.success
             : scheme.primary;
-    final personalLabel = switch (personalKind) {
-      _PersonalDayKind.workShift => 'Смена',
-      _PersonalDayKind.worked => 'Вышел',
-      _PersonalDayKind.vacation => 'Отпуск',
-      _PersonalDayKind.sick => 'Больн.',
-      _PersonalDayKind.absent => 'Неявка',
-      _PersonalDayKind.dayOff => 'Выходн.',
-      null => null,
-    };
+    final personalLabel = personalHours ??
+        switch (personalKind) {
+          _PersonalDayKind.workShift => 'Смена',
+          _PersonalDayKind.worked => 'Вышел',
+          _PersonalDayKind.vacation => 'Отпуск',
+          _PersonalDayKind.sick => 'Больн.',
+          _PersonalDayKind.absent => 'Неявка',
+          _PersonalDayKind.dayOff => 'Выходн.',
+          null => null,
+        };
     final fillColor = switch (personalKind) {
       _PersonalDayKind.workShift => scheme.primary,
-      _PersonalDayKind.worked => colors.success,
+      _PersonalDayKind.worked => Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF6EE7B7)
+          : colors.success,
       _PersonalDayKind.vacation => colors.vacation,
       _PersonalDayKind.sick => colors.sick,
       _PersonalDayKind.absent => scheme.error,
@@ -2269,12 +2371,11 @@ class _DayCell extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: scheme.surface,
+          color: personalKind == null
+              ? scheme.surface
+              : fillColor.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            width: isToday ? 2 : 1,
-            color: borderColor,
-          ),
+          border: Border.all(width: isToday ? 2 : 1, color: borderColor),
         ),
         child: Stack(
           children: [
@@ -2327,21 +2428,19 @@ class _DayCell extends StatelessWidget {
                         Row(
                           children: [
                             Expanded(
-                                child: FittedBox(
-                                    fit: BoxFit.scaleDown,
-                                    alignment: Alignment.centerLeft,
-                                    child: Text(
-                                      '${day.day}',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelMedium,
-                                    ))),
-                            if (summary.closed)
-                              Icon(
-                                Icons.lock,
-                                size: 11,
-                                color: colors.warning,
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '${day.day}',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.labelMedium,
+                                ),
                               ),
+                            ),
+                            if (summary.closed)
+                              Icon(Icons.lock, size: 11, color: colors.warning),
                           ],
                         ),
                         const Spacer(),
@@ -2379,11 +2478,8 @@ class _DayCell extends StatelessWidget {
                                 ),
                                 const Spacer(),
                                 if (summary.closed)
-                                  Icon(
-                                    Icons.lock,
-                                    size: 14,
-                                    color: colors.warning,
-                                  ),
+                                  Icon(Icons.lock,
+                                      size: 14, color: colors.warning),
                               ],
                             ),
                             const Spacer(),
@@ -2426,18 +2522,18 @@ class _DayCell extends StatelessWidget {
                                 ),
                                 const Spacer(),
                                 if (summary.closed)
-                                  Icon(
-                                    Icons.lock,
-                                    size: 14,
-                                    color: colors.warning,
-                                  ),
+                                  Icon(Icons.lock,
+                                      size: 14, color: colors.warning),
                               ],
                             ),
                             const Spacer(),
                             Row(
                               children: [
-                                Icon(Icons.groups_2_outlined,
-                                    size: 17, color: fillColor),
+                                Icon(
+                                  Icons.groups_2_outlined,
+                                  size: 17,
+                                  color: fillColor,
+                                ),
                                 const SizedBox(width: 5),
                                 Text(
                                   '${summary.worked} / ${summary.planned}',
