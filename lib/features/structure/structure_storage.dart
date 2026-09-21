@@ -6,17 +6,15 @@ class DepartmentModel {
 
   const DepartmentModel({required this.id, required this.name});
 
-  DepartmentModel copyWith({String? name}) => DepartmentModel(
-        id: id,
-        name: name ?? this.name,
-      );
+  DepartmentModel copyWith({String? name}) =>
+      DepartmentModel(id: id, name: name ?? this.name);
 
   Map<String, dynamic> toJson() => {'id': id, 'name': name};
 
   static DepartmentModel fromJson(Map json) => DepartmentModel(
-        id: json['id'] as String,
-        name: (json['name'] as String?) ?? '',
-      );
+    id: json['id'] as String,
+    name: (json['name'] as String?) ?? '',
+  );
 }
 
 class GroupModel {
@@ -31,25 +29,50 @@ class GroupModel {
   });
 
   GroupModel copyWith({String? departmentId, String? name}) => GroupModel(
-        id: id,
-        departmentId: departmentId ?? this.departmentId,
-        name: name ?? this.name,
-      );
+    id: id,
+    departmentId: departmentId ?? this.departmentId,
+    name: name ?? this.name,
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'departmentId': departmentId,
-        'name': name,
-      };
+    'id': id,
+    'departmentId': departmentId,
+    'name': name,
+  };
 
   static GroupModel fromJson(Map json) => GroupModel(
-        id: json['id'] as String,
-        departmentId: (json['departmentId'] as String?) ?? '',
-        name: (json['name'] as String?) ?? '',
-      );
+    id: json['id'] as String,
+    departmentId: (json['departmentId'] as String?) ?? '',
+    name: (json['name'] as String?) ?? '',
+  );
 }
 
 class StructureStorage {
+  Future<void> deleteDepartment(String id) async {
+    await ApiClient.instance.request(
+      'DELETE',
+      '/api/v1/departments/$id?detach_members=true',
+    );
+    _invalidateStructure();
+  }
+
+  Future<void> deleteGroup(String id) async {
+    await ApiClient.instance.request(
+      'DELETE',
+      '/api/v1/groups/$id?detach_members=true',
+    );
+    _invalidateStructure();
+  }
+
+  void _invalidateStructure() {
+    _departmentsCache = null;
+    _departmentsCachedAt = null;
+    _departmentsInFlight = null;
+    _groupsCache = null;
+    _groupsCachedAt = null;
+    _groupsInFlight = null;
+  }
+
   static const _cacheLifetime = Duration(minutes: 5);
   static List<DepartmentModel>? _departmentsCache;
   static DateTime? _departmentsCachedAt;
@@ -106,14 +129,16 @@ class StructureStorage {
     return data.whereType<Map>().map((item) {
       final json = Map<String, dynamic>.from(item);
       return DepartmentModel(
-          id: json['id'] as String, name: json['name'] as String);
+        id: json['id'] as String,
+        name: json['name'] as String,
+      );
     }).toList();
   }
 
   Future<void> saveDepartments(List<DepartmentModel> items) async {
     final epoch = ApiClient.instance.sessionEpoch;
     final existing = {
-      for (final item in await loadDepartments()) item.id: item
+      for (final item in await loadDepartments()) item.id: item,
     };
     final wanted = {for (final item in items) item.id: item};
     for (final item in items) {

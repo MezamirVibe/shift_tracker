@@ -157,7 +157,12 @@ class RegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_historical_editor_keeps_old_schedule_and_can_correct_former_employee(self):
         await self.t.mark('2026-08-03', minutes=360)
         await self.t.client.patch(f'/api/v1/employees/{self.t.a.id}', json={'shift_hours': 12})
-        await self.t.client.delete(f'/api/v1/employees/{self.t.a.id}')
+        # Exercise a legacy backup's history, not the new permanent-delete endpoint.
+        async with self.t.sessions() as session:
+            employee = await session.get(Employee, self.t.a.id)
+            employee.is_active = False
+            await remember_employee(session, employee, date.today())
+            await session.commit()
         result = await self.t.client.get('/api/v1/employees?on_date=2026-08-03')
         row = next(r for r in result.json() if r['id'] == str(self.t.a.id))
         self.assertEqual(row['shift_hours'], 9)

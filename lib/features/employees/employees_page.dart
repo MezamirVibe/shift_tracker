@@ -59,7 +59,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         _search = _searchCtrl.text.trim().toLowerCase();
       });
     });
-    _loadAll();
+    _loadAll(force: true);
   }
 
   @override
@@ -106,8 +106,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
         .filterEmployeesByScope(employees)
         .where((employee) => _preferences.isGroupVisible(employee.groupId))
         .toList();
-    final visibleGroups =
-        groups.where((group) => _preferences.isGroupVisible(group.id)).toList();
+    final visibleGroups = groups
+        .where((group) => _preferences.isGroupVisible(group.id))
+        .toList();
 
     if (!mounted) return;
 
@@ -299,9 +300,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final draft = await showDialog<EmployeeDraft>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const EmployeeEditorDialog(
-        showAccessFields: true,
-      ),
+      builder: (context) => const EmployeeEditorDialog(showAccessFields: true),
     );
 
     if (!mounted || draft == null) return;
@@ -339,7 +338,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
     if (!mounted) return;
 
-    final roleName = AuthService.instance.roleById(result.user.roleId)?.name ??
+    final roleName =
+        AuthService.instance.roleById(result.user.roleId)?.name ??
         result.user.roleId;
 
     await _showCredentialsDialog(
@@ -483,23 +483,29 @@ class _EmployeesPageState extends State<EmployeesPage> {
                         items: [
                           const DropdownMenuItem<String?>(
                             value: null,
-                            child: Text('Все подразделения',
-                                overflow: TextOverflow.ellipsis, maxLines: 1),
+                            child: Text(
+                              'Все подразделения',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
                           ),
                           ..._departments.map(
                             (d) => DropdownMenuItem<String?>(
                               value: d.id as String?,
-                              child: Text(d.name as String,
-                                  overflow: TextOverflow.ellipsis, maxLines: 1),
+                              child: Text(
+                                d.name as String,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
                             ),
                           ),
                         ],
                         onChanged: _filtersLockedByRole
                             ? null
                             : (v) => setState(() {
-                                  _selectedDepartmentId = v;
-                                  _selectedGroupId = null;
-                                }),
+                                _selectedDepartmentId = v;
+                                _selectedGroupId = null;
+                              }),
                       ),
                     ),
                     SizedBox(
@@ -515,22 +521,28 @@ class _EmployeesPageState extends State<EmployeesPage> {
                         items: [
                           const DropdownMenuItem<String?>(
                             value: null,
-                            child: Text('Все группы',
-                                overflow: TextOverflow.ellipsis, maxLines: 1),
+                            child: Text(
+                              'Все группы',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
                           ),
                           ...groups.map(
                             (g) => DropdownMenuItem<String?>(
                               value: g.id as String?,
-                              child: Text(g.name as String,
-                                  overflow: TextOverflow.ellipsis, maxLines: 1),
+                              child: Text(
+                                g.name as String,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
                             ),
                           ),
                         ],
                         onChanged: _filtersLockedByRole
                             ? null
                             : (_selectedDepartmentId == null)
-                                ? null
-                                : (v) => setState(() => _selectedGroupId = v),
+                            ? null
+                            : (v) => setState(() => _selectedGroupId = v),
                       ),
                     ),
                     FilledButton.tonalIcon(
@@ -563,10 +575,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Сотрудники',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text('Сотрудники', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
               'Карточки сотрудников, структура, должности и доступ в приложение.',
@@ -585,9 +594,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
             if (_canEditEmployees &&
                 AuthService.instance.hasPerm(AppPermission.editAttendance))
               TextButton.icon(
-                  onPressed: () => context.push('/timesheet/import'),
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('Импортировать старый табель')),
+                onPressed: () => context.push('/timesheet/import'),
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Импортировать старый табель'),
+              ),
           ],
         ),
       ),
@@ -598,10 +608,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final text = noBinding
         ? 'Нет данных из-за отсутствия привязки.\nПопросите настроить доступ в админке.'
         : (_employeesAll.isEmpty
-            ? (_canAddEmployees
-                ? 'Список пока пуст.\nДобавьте сотрудника вручную или импортируйте старый табель.'
-                : 'Список сотрудников пока пуст.')
-            : 'По текущим фильтрам и поиску сотрудников не найдено.');
+              ? (_canAddEmployees
+                    ? 'Список пока пуст.\nДобавьте сотрудника вручную или импортируйте старый табель.'
+                    : 'Список сотрудников пока пуст.')
+              : 'По текущим фильтрам и поиску сотрудников не найдено.');
 
     return Center(
       child: Padding(
@@ -673,10 +683,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 ],
               ),
               const SizedBox(height: 4),
-              Text(
-                e.position,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
+              Text(e.position, style: Theme.of(context).textTheme.bodyMedium),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -704,7 +711,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     }
     final result = await context.push<Map>('/employee/${employee.id}');
     if (!mounted) return;
-    if (result != null) await _loadAll();
+    if (result != null) await _loadAll(force: true);
   }
 
   Widget _desktopList(List<EmployeeModel> employees, bool canEdit) {
@@ -780,68 +787,77 @@ class _EmployeesPageState extends State<EmployeesPage> {
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: SingleChildScrollView(
-            child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 32,
-                  child: Text(
-                    _initials(employee.fullName),
-                    style: Theme.of(context).textTheme.titleLarge,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 32,
+                    child: Text(
+                      _initials(employee.fullName),
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(employee.fullName,
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 3),
-                      Text(employee.position.isEmpty
-                          ? 'Должность не указана'
-                          : employee.position),
-                    ],
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          employee.fullName,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          employee.position.isEmpty
+                              ? 'Должность не указана'
+                              : employee.position,
+                        ),
+                      ],
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Chip(
+                avatar: Icon(
+                  worksToday
+                      ? Icons.check_circle_outline
+                      : Icons.weekend_outlined,
+                  size: 18,
+                  color: statusColor,
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Chip(
-              avatar: Icon(
-                worksToday
-                    ? Icons.check_circle_outline
-                    : Icons.weekend_outlined,
-                size: 18,
-                color: statusColor,
+                label: Text(
+                  worksToday ? 'Сегодня по графику' : 'Сегодня выходной',
+                ),
               ),
-              label:
-                  Text(worksToday ? 'Сегодня по графику' : 'Сегодня выходной'),
-            ),
-            const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 10),
-            _DetailLine(
-                label: 'Подразделение', value: _depName(employee.departmentId)),
-            _DetailLine(label: 'Группа', value: _groupName(employee.groupId)),
-            _DetailLine(label: 'Рабочий график', value: schedule),
-            _DetailLine(label: 'Смена', value: '${employee.shiftHours} ч'),
-            _DetailLine(label: 'Перерыв', value: '${employee.breakHours} ч'),
-            _DetailLine(label: 'Логин', value: linked?.login ?? 'Не создан'),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed:
-                    canEdit ? () => _openEmployee(employee!, canEdit) : null,
-                icon: const Icon(Icons.edit_outlined),
-                label: const Text('Редактировать'),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 10),
+              _DetailLine(
+                label: 'Подразделение',
+                value: _depName(employee.departmentId),
               ),
-            ),
-          ],
-        )),
+              _DetailLine(label: 'Группа', value: _groupName(employee.groupId)),
+              _DetailLine(label: 'Рабочий график', value: schedule),
+              _DetailLine(label: 'Смена', value: '${employee.shiftHours} ч'),
+              _DetailLine(label: 'Перерыв', value: '${employee.breakHours} ч'),
+              _DetailLine(label: 'Логин', value: linked?.login ?? 'Не создан'),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: canEdit
+                      ? () => _openEmployee(employee!, canEdit)
+                      : null,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Редактировать'),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -865,9 +881,11 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1100;
 
     final u = AuthService.instance.currentUser;
-    final currentRole =
-        u == null ? null : AuthService.instance.roleById(u.roleId);
-    final noBinding = u != null &&
+    final currentRole = u == null
+        ? null
+        : AuthService.instance.roleById(u.roleId);
+    final noBinding =
+        u != null &&
         !_isSuperAdmin &&
         currentRole != null &&
         ((currentRole.scopeKind == ScopeKind.department &&
@@ -900,83 +918,80 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 ),
               )
             : _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _employeesAll.isEmpty
-                    ? SingleChildScrollView(
-                        child: Column(children: [
-                        _emptyState(noBinding),
-                        if (_canEditEmployees &&
-                            AuthService.instance
-                                .hasPerm(AppPermission.editAttendance))
-                          TextButton.icon(
-                              onPressed: () =>
-                                  context.push('/timesheet/import'),
-                              icon: const Icon(Icons.upload_file),
-                              label: const Text('Импортировать старый табель')),
-                      ]))
-                    : isDesktop
-                        ? NestedScrollView(
-                            headerSliverBuilder:
-                                (context, innerBoxIsScrolled) => [
-                              SliverToBoxAdapter(
-                                  child: Column(children: [
-                                _heroCard(false),
-                                const SizedBox(height: 12),
-                                _scopeHint(),
-                                if (showBindingWarning) ...[
-                                  const SizedBox(height: 12),
-                                  const _MissingScopeWarning(),
-                                ],
-                                const SizedBox(height: 12),
-                                _filtersCard(),
-                                const SizedBox(height: 12),
-                              ])),
-                            ],
-                            body: list.isEmpty
-                                ? _emptyState(noBinding)
-                                : Row(
-                                    children: [
-                                      Expanded(
-                                        flex: 7,
-                                        child: _desktopList(list, canEdit),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      SizedBox(
-                                        width: 360,
-                                        child: _employeePreview(canEdit),
-                                      ),
-                                    ],
-                                  ),
-                          )
-                        : ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            children: [
-                              _heroCard(isPhone),
-                              const SizedBox(height: 12),
-                              _scopeHint(),
-                              if (showBindingWarning) ...[
-                                const SizedBox(height: 12),
-                                const _MissingScopeWarning(),
-                              ],
-                              const SizedBox(height: 12),
-                              _filtersCard(),
-                              const SizedBox(height: 12),
-                              if (list.isEmpty)
-                                SizedBox(
-                                  height: 240,
-                                  child: _emptyState(noBinding),
-                                )
-                              else
-                                for (var index = 0;
-                                    index < list.length;
-                                    index++) ...[
-                                  _employeeTile(list[index], canEdit),
-                                  if (index != list.length - 1)
-                                    const SizedBox(height: 10),
-                                ],
-                              const SizedBox(height: 12),
-                            ],
+            ? const Center(child: CircularProgressIndicator())
+            : _employeesAll.isEmpty
+            ? SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _emptyState(noBinding),
+                    if (_canEditEmployees &&
+                        AuthService.instance.hasPerm(
+                          AppPermission.editAttendance,
+                        ))
+                      TextButton.icon(
+                        onPressed: () => context.push('/timesheet/import'),
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('Импортировать старый табель'),
+                      ),
+                  ],
+                ),
+              )
+            : isDesktop
+            ? NestedScrollView(
+                headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                  SliverToBoxAdapter(
+                    child: Column(
+                      children: [
+                        _heroCard(false),
+                        const SizedBox(height: 12),
+                        _scopeHint(),
+                        if (showBindingWarning) ...[
+                          const SizedBox(height: 12),
+                          const _MissingScopeWarning(),
+                        ],
+                        const SizedBox(height: 12),
+                        _filtersCard(),
+                        const SizedBox(height: 12),
+                      ],
+                    ),
+                  ),
+                ],
+                body: list.isEmpty
+                    ? _emptyState(noBinding)
+                    : Row(
+                        children: [
+                          Expanded(flex: 7, child: _desktopList(list, canEdit)),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            width: 360,
+                            child: _employeePreview(canEdit),
                           ),
+                        ],
+                      ),
+              )
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  _heroCard(isPhone),
+                  const SizedBox(height: 12),
+                  _scopeHint(),
+                  if (showBindingWarning) ...[
+                    const SizedBox(height: 12),
+                    const _MissingScopeWarning(),
+                  ],
+                  const SizedBox(height: 12),
+                  _filtersCard(),
+                  const SizedBox(height: 12),
+                  if (list.isEmpty)
+                    SizedBox(height: 240, child: _emptyState(noBinding))
+                  else
+                    for (var index = 0; index < list.length; index++) ...[
+                      _employeeTile(list[index], canEdit),
+                      if (index != list.length - 1) const SizedBox(height: 10),
+                    ],
+                  const SizedBox(height: 12),
+                ],
+              ),
       ),
     );
   }
@@ -1040,20 +1055,28 @@ class _EmployeeTableRow extends StatelessWidget {
                 const SizedBox(width: 10),
               ],
               Expanded(
-                  child: Text(name,
-                      overflow: TextOverflow.ellipsis, style: style)),
+                child: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: style,
+                ),
+              ),
             ],
           ),
         ),
         Expanded(
-            flex: 3,
-            child:
-                Text(position, overflow: TextOverflow.ellipsis, style: style)),
+          flex: 3,
+          child: Text(position, overflow: TextOverflow.ellipsis, style: style),
+        ),
         Expanded(flex: 2, child: Text(schedule, style: style)),
         Expanded(
-            flex: 3,
-            child: Text(department,
-                overflow: TextOverflow.ellipsis, style: style)),
+          flex: 3,
+          child: Text(
+            department,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
       ],
     );
   }
@@ -1075,7 +1098,8 @@ class _DetailLine extends StatelessWidget {
             child: Text(
               label,
               style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
           Expanded(child: Text(value, textAlign: TextAlign.right)),

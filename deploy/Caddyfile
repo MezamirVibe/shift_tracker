@@ -1,5 +1,9 @@
 api.mezamir.com {
 	encode zstd gzip
+	@registration path /api/v1/registration /api/v1/registration/status /o/*/api/v1/registration /o/*/api/v1/registration/status
+	request_body @registration {
+		max_size 16KB
+	}
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"

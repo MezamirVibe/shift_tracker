@@ -735,7 +735,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
                                   Theme.of(context).colorScheme.error,
                             ),
                             icon: const Icon(Icons.person_off_outlined),
-                            label: const Text('Уволить сотрудника'),
+                            label: const Text('Удалить сотрудника'),
                           ),
                         ),
                       ],

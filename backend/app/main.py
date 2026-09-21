@@ -29,6 +29,7 @@ from .models import (
     Base,
     Department,
     Employee,
+    EmployeeHistory,
     FactStatus,
     Group,
     Position,
@@ -175,7 +176,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Shift Tracker API",
-    version="1.3.0",
+    version="1.4.0",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -207,6 +208,10 @@ async def check_organization(request, call_next):
 @app.get("/api/v1/organization")
 async def organization_info() -> dict:
     return {"code": settings.ORGANIZATION_CODE, "name": settings.ORGANIZATION_NAME}
+
+
+from .registration import register_routes as register_registration_routes
+register_registration_routes(app)
 
 
 def api_error(code: int, detail: str) -> HTTPException:
@@ -1001,23 +1006,67 @@ async def update_department(
     return item
 
 
+async def detach_structure_members(
+    session: AsyncSession, user: User, group_ids: list[uuid.UUID],
+    department_id: uuid.UUID | None, detach_members: bool,
+) -> None:
+    """Keep history intact; removal never deletes employees or broadens user access."""
+    hidden = set(await admin_hidden_group_ids(session, user.id))
+    if hidden.intersection(group_ids):
+        raise api_error(403, "В подразделении есть недоступные вам группы")
+    employee_filter = Employee.group_id.in_(group_ids)
+    user_filter = User.group_id.in_(group_ids)
+    if department_id is not None:
+        employee_filter = or_(employee_filter, Employee.department_id == department_id)
+        user_filter = or_(user_filter, User.department_id == department_id)
+    accounts = list((await session.scalars(select(User).where(user_filter).with_for_update())).all())
+    active_accounts = sum(account.is_active for account in accounts)
+    if active_accounts:
+        raise api_error(409, f"К структуре привязаны действующие учётные записи: {active_accounts}. "
+                        "Администратору нужно изменить их область доступа или отключить их в разделе «Пользователи».")
+    staff = list((await session.scalars(select(Employee).where(employee_filter).with_for_update())).all())
+    if not detach_members and any(employee.is_active for employee in staff):
+        raise api_error(409, "Есть действующие сотрудники. Подтвердите удаление структуры без удаления людей "
+                        "в новой версии приложения или сначала перенесите сотрудников.")
+    for employee in staff:
+        await ensure_employee_history(session, employee)
+        employee.group_id = None
+        if department_id is not None:
+            employee.department_id = None
+        if employee.is_active:
+            await remember_employee(session, employee, date.today())
+    for account in accounts:
+        account.group_id = None
+        if department_id is not None:
+            account.department_id = None
+    await session.flush()
+
+
 @app.delete("/api/v1/departments/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_department(
     department_id: uuid.UUID,
+    detach_members: bool = False,
     user: User = Depends(require_permission("editEmployees")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     require_department_scope(user, department_id)
+    await lock_employee_roster(session)
     item = await session.get(Department, department_id)
     if item is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    await audit(session, actor=user, action="delete", entity_type="department", entity_id=str(item.id))
+    group_ids = list((await session.scalars(select(Group.id).where(Group.department_id == item.id))).all())
+    if group_ids and not detach_members:
+        raise api_error(409, "В подразделении есть группы. Подтвердите удаление подразделения вместе с группами или перенесите их.")
+    await detach_structure_members(session, user, group_ids, item.id, detach_members)
+    await session.execute(delete(Group).where(Group.id.in_(group_ids)))
+    await audit(session, actor=user, action="delete", entity_type="department", entity_id=str(item.id),
+                details={"employees_preserved": True, "removed_groups": len(group_ids)})
     try:
         await session.delete(item)
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise api_error(status.HTTP_409_CONFLICT, "Подразделение используется") from None
+        raise api_error(status.HTTP_409_CONFLICT, "Привязки подразделения изменились. Обновите структуру и повторите удаление.") from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1100,20 +1149,23 @@ async def update_group(
 @app.delete("/api/v1/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: uuid.UUID,
+    detach_members: bool = False,
     user: User = Depends(require_permission("editEmployees")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    await lock_employee_roster(session)
     item = await session.get(Group, group_id)
     if item is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     await require_group_scope(session, user, item)
+    await detach_structure_members(session, user, [item.id], None, detach_members)
     await audit(session, actor=user, action="delete", entity_type="group", entity_id=str(item.id))
     try:
         await session.delete(item)
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise api_error(status.HTTP_409_CONFLICT, "Группа используется") from None
+        raise api_error(status.HTTP_409_CONFLICT, "Привязки группы изменились. Обновите структуру и повторите удаление.") from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1302,20 +1354,37 @@ async def update_employee(
 @app.delete("/api/v1/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_employee(
     employee_id: uuid.UUID,
+    permanent: bool = False,
+    disable_linked_account: bool = False,
     user: User = Depends(require_permission("editEmployees")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    if not permanent:
+        raise api_error(409, "Удаление теперь удаляет карточку и все её часы. Обновите приложение и подтвердите «Удалить навсегда».")
     await lock_employee_roster(session)
-    item = await ensure_employee_in_scope(session, user, employee_id)
-    linked_users = await session.scalar(
-        select(func.count()).select_from(User).where(User.employee_id == item.id, User.is_active.is_(True))
-    )
+    item = await session.scalar(await scoped_employees(session, select(Employee).where(Employee.id == employee_id), user))
+    if item is None:
+        raise api_error(404, "Сотрудник не найден")
+    linked_users = list((await session.scalars(select(User).where(
+        User.employee_id == item.id, User.is_active.is_(True)).with_for_update())).all())
     if linked_users:
-        raise api_error(status.HTTP_409_CONFLICT, "Сотрудник связан с активной учётной записью")
-    await ensure_employee_history(session, item)
-    item.is_active = False
-    await remember_employee(session, item, date.today())
-    await audit(session, actor=user, action="deactivate", entity_type="employee", entity_id=str(item.id))
+        if not disable_linked_account:
+            raise api_error(409, "У сотрудника есть действующий вход. Администратор может подтвердить его отключение при удалении сотрудника.")
+        require_super_admin(user)
+        if any(account.id == user.id or account.role_id == "super_admin" for account in linked_users):
+            raise api_error(409, "Нельзя отключить собственную учётную запись или суперадминистратора. Сначала измените привязку сотрудника в разделе «Пользователи».")
+        for account in linked_users:
+            account.is_active = False
+            await revoke_sessions(session, account)
+            await audit(session, actor=user, action="deactivate", entity_type="user", entity_id=str(account.id))
+    # Deletion is explicit and permanent; history of unrelated employees is untouched.
+    await session.execute(update(User).where(User.employee_id == item.id).values(employee_id=None))
+    await session.execute(delete(AttendanceRecord).where(AttendanceRecord.employee_id == item.id))
+    await session.execute(delete(AttendanceLock).where(AttendanceLock.employee_id == item.id))
+    await session.execute(delete(EmployeeHistory).where(EmployeeHistory.employee_id == item.id))
+    await audit(session, actor=user, action="delete", entity_type="employee", entity_id=str(item.id),
+                details={"attendance_deleted": True})
+    await session.delete(item)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -57,8 +57,9 @@ class ApiClient {
       final raw = await _storage.read(key: _organizationKey);
       _checkEpoch(epoch);
       if (raw != null) {
-        _organization =
-            Organization.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+        _organization = Organization.fromJson(
+          jsonDecode(raw) as Map<String, dynamic>,
+        );
       }
     } catch (_) {
       if (epoch == _sessionEpoch) _organization = null;
@@ -73,19 +74,27 @@ class ApiClient {
       throw ApiException(400, error.message);
     }
     if (!Organization.codePattern.hasMatch(code)) {
-      throw const ApiException(400,
-          'Код организации: латинские буквы, цифры и дефис, от 2 до 48 символов.');
+      throw const ApiException(
+        400,
+        'Код организации: латинские буквы, цифры и дефис, от 2 до 48 символов.',
+      );
     }
     if (hasSession) {
       throw const ApiException(409, 'Сначала выйдите из текущего аккаунта.');
     }
     final epoch = _sessionEpoch;
-    final data = await request('GET', '/api/v1/organization',
-        authenticated: false, discoveryCode: code) as Map<String, dynamic>;
+    final data = await request(
+      'GET',
+      '/api/v1/organization',
+      authenticated: false,
+      discoveryCode: code,
+    ) as Map<String, dynamic>;
     final selected = Organization.fromJson(data);
     if (selected.code != code) {
       throw const ApiException(
-          409, 'Сервер вернул другую организацию. Вход отменён.');
+        409,
+        'Сервер вернул другую организацию. Вход отменён.',
+      );
     }
     _checkEpoch(epoch);
     final clearing = clearSession();
@@ -95,7 +104,9 @@ class ApiClient {
     _organization = selected;
     _sessionEpoch++;
     await _storage.write(
-        key: _organizationKey, value: jsonEncode(selected.toJson()));
+      key: _organizationKey,
+      value: jsonEncode(selected.toJson()),
+    );
     return selected;
   }
 
@@ -104,7 +115,9 @@ class ApiClient {
     await logout();
     if (!identical(previous, _organization) || hasSession) {
       throw const ApiException(
-          409, 'Сессия уже изменилась. Повторите действие.');
+        409,
+        'Сессия уже изменилась. Повторите действие.',
+      );
     }
     _organization = null;
     _sessionEpoch++;
@@ -114,7 +127,9 @@ class ApiClient {
   void _checkEpoch(int epoch) {
     if (epoch != _sessionEpoch) {
       throw const ApiException(
-          409, 'Организация или пользователь изменились. Повторите действие.');
+        409,
+        'Организация или пользователь изменились. Повторите действие.',
+      );
     }
   }
 
@@ -147,9 +162,13 @@ class ApiClient {
     // Snapshot keys/values now and serialize writes: a slow old login must not
     // resurrect tokens after logout or write into the next organization's keys.
     final pending = _storageQueue.then((_) async {
-      await Future.wait(values.entries.map((entry) => entry.value == null
-          ? _storage.delete(key: entry.key)
-          : _storage.write(key: entry.key, value: entry.value)));
+      await Future.wait(
+        values.entries.map(
+          (entry) => entry.value == null
+              ? _storage.delete(key: entry.key)
+              : _storage.write(key: entry.key, value: entry.value),
+        ),
+      );
     });
     _storageQueue = pending.catchError((Object _) {});
     return pending;
@@ -182,7 +201,9 @@ class ApiClient {
   Future<void> _saveLoginPreference(String login, bool remember) async {
     await Future.wait([
       _storage.write(
-          key: _scopedKey(_rememberLoginKey), value: remember.toString()),
+        key: _scopedKey(_rememberLoginKey),
+        value: remember.toString(),
+      ),
       _storage.write(key: _scopedKey(_savedLoginKey), value: login.trim()),
     ]);
   }
@@ -295,8 +316,10 @@ class ApiClient {
   Future<void> _acceptTokenPair(Map<String, dynamic> pair) async {
     final info = pair['organization'];
     if (info is! Map || info['code'] != _organization?.code) {
-      throw const ApiException(409,
-          'Сессия относится к другой организации или сервер требует обновления.');
+      throw const ApiException(
+        409,
+        'Сессия относится к другой организации или сервер требует обновления.',
+      );
     }
     _accessToken = pair['access_token'] as String;
     _refreshToken = pair['refresh_token'] as String;
@@ -362,6 +385,81 @@ class ApiClient {
     bool retryAfterRefresh = true,
     bool binary = false,
     String? discoveryCode,
+  }) =>
+      _request(
+        method,
+        path,
+        body: body,
+        authenticated: authenticated,
+        retryAfterRefresh: retryAfterRefresh,
+        binary: binary,
+        discoveryCode: discoveryCode,
+      );
+
+  String get _registrationKey =>
+      '${base64Url.encode(utf8.encode(baseUrl))}_pending_registration';
+
+  Future<void> savePendingRegistration(Map<String, dynamic>? ticket) =>
+      ticket == null
+          ? _storage.delete(key: _registrationKey)
+          : _storage.write(key: _registrationKey, value: jsonEncode(ticket));
+
+  Future<Map<String, dynamic>?> pendingRegistration() async {
+    final raw = await _storage.read(key: _registrationKey);
+    return raw == null
+        ? null
+        : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+  }
+
+  Future<Map<String, dynamic>> registerOrganization(
+    Map<String, dynamic> body, {
+    bool status = false,
+  }) async {
+    if (hasSession) {
+      throw const ApiException(409, 'Сначала выйдите из текущего аккаунта.');
+    }
+    final epoch = _sessionEpoch;
+    final request = await _http.openUrl(
+      'POST',
+      Uri.parse('$baseUrl/api/v1/registration${status ? '/status' : ''}'),
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(body));
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    final raw = await utf8.decoder
+        .bind(response)
+        .join()
+        .timeout(const Duration(seconds: 30));
+    _checkEpoch(epoch);
+    dynamic data;
+    try {
+      data = jsonDecode(raw);
+    } catch (_) {
+      throw const ApiException(
+        503,
+        'Регистрация временно недоступна. Попробуйте позже.',
+      );
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final detail = data is Map ? data['detail'] : null;
+      throw ApiException(
+        response.statusCode,
+        detail is String
+            ? detail
+            : 'Проверьте название, логин и пароль (не менее 12 символов).',
+      );
+    }
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  Future<dynamic> _request(
+    String method,
+    String path, {
+    Object? body,
+    bool authenticated = true,
+    bool retryAfterRefresh = true,
+    bool binary = false,
+    String? discoveryCode,
   }) async {
     if (discoveryCode != null &&
         (authenticated ||
@@ -416,8 +514,10 @@ class ApiClient {
     }
 
     _checkEpoch(epoch);
-    final request =
-        await _http.openUrl(method, Uri.parse('$baseUrl/o/$selectedCode$path'));
+    final request = await _http.openUrl(
+      method,
+      Uri.parse('$baseUrl/o/$selectedCode$path'),
+    );
     _checkEpoch(epoch);
     request.headers.set('X-Organization-Code', selectedCode);
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
@@ -433,14 +533,17 @@ class ApiClient {
     }
 
     final response = await request.close().timeout(const Duration(seconds: 20));
-    final bytes = await consolidateHttpClientResponseBytes(response)
-        .timeout(const Duration(seconds: 30));
+    final bytes = await consolidateHttpClientResponseBytes(
+      response,
+    ).timeout(const Duration(seconds: 30));
     _checkEpoch(epoch);
     if (response.statusCode >= 200 &&
         response.statusCode < 300 &&
         response.headers.value('X-Organization-Code') != selectedCode) {
       throw const ApiException(
-          409, 'Не удалось подтвердить организацию сервера. Вход отменён.');
+        409,
+        'Не удалось подтвердить организацию сервера. Вход отменён.',
+      );
     }
     if (binary && response.statusCode >= 200 && response.statusCode < 300) {
       return bytes;
@@ -491,8 +594,9 @@ class ApiClient {
     try {
       final parts = token.split('.');
       if (parts.length != 3) return null;
-      final payload =
-          utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+      final payload = utf8.decode(
+        base64Url.decode(base64Url.normalize(parts[1])),
+      );
       final decoded = jsonDecode(payload);
       if (decoded is! Map || decoded['exp'] is! num) return null;
       return DateTime.fromMillisecondsSinceEpoch(

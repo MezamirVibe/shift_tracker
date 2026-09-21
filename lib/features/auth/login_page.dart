@@ -93,17 +93,20 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 12),
                 if (ApiClient.instance.organization != null) ...[
-                  Text(ApiClient.instance.organization!.name,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.titleMedium),
+                  Text(
+                    ApiClient.instance.organization!.name,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   TextButton(
-                      onPressed: _busy
-                          ? null
-                          : () async {
-                              await AuthService.instance.changeOrganization();
-                              if (context.mounted) context.go('/organization');
-                            },
-                      child: const Text('Другая организация')),
+                    onPressed: _busy
+                        ? null
+                        : () async {
+                            await AuthService.instance.changeOrganization();
+                            if (context.mounted) context.go('/organization');
+                          },
+                    child: const Text('Другая организация'),
+                  ),
                 ],
                 TextField(
                   controller: _login,
@@ -122,11 +125,11 @@ class _LoginPageState extends State<LoginPage> {
                     labelText: 'Пароль',
                     border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
-                      tooltip:
-                          _showPassword ? 'Скрыть пароль' : 'Показать пароль',
-                      onPressed: () => setState(
-                        () => _showPassword = !_showPassword,
-                      ),
+                      tooltip: _showPassword
+                          ? 'Скрыть пароль'
+                          : 'Показать пароль',
+                      onPressed: () =>
+                          setState(() => _showPassword = !_showPassword),
                       icon: Icon(
                         _showPassword
                             ? Icons.visibility_off_outlined
@@ -146,9 +149,7 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   onChanged: _busy
                       ? null
-                      : (value) => setState(
-                            () => _rememberMe = value ?? true,
-                          ),
+                      : (value) => setState(() => _rememberMe = value ?? true),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
@@ -167,6 +168,10 @@ class _LoginPageState extends State<LoginPage> {
                     onPressed: _busy ? null : _doLogin,
                     child: Text(_busy ? 'Входим...' : 'Войти'),
                   ),
+                ),
+                TextButton(
+                  onPressed: _busy ? null : () => context.go('/register'),
+                  child: const Text('Создать новую организацию'),
                 ),
               ],
             ),

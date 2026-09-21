@@ -24,10 +24,10 @@ ScheduleType scheduleTypeFromString(String? s) {
 String scheduleTypeToString(ScheduleType t) => t.name;
 
 String scheduleTypeLabel(ScheduleType type) => switch (type) {
-      ScheduleType.twoTwo => '2/2',
-      ScheduleType.fiveTwo => '5/2',
-      ScheduleType.custom => 'Произвольный',
-    };
+  ScheduleType.twoTwo => '2/2',
+  ScheduleType.fiveTwo => '5/2',
+  ScheduleType.custom => 'Произвольный',
+};
 
 class EmployeeModel {
   final String id;
@@ -88,8 +88,9 @@ class EmployeeModel {
       positionId: positionId ?? this.positionId,
       salary: salary ?? this.salary,
       bonus: bonus ?? this.bonus,
-      departmentId:
-          clearDepartment ? null : (departmentId ?? this.departmentId),
+      departmentId: clearDepartment
+          ? null
+          : (departmentId ?? this.departmentId),
       groupId: clearGroup ? null : (groupId ?? this.groupId),
       scheduleType: scheduleType ?? this.scheduleType,
       scheduleStartDate: scheduleStartDate ?? this.scheduleStartDate,
@@ -102,29 +103,30 @@ class EmployeeModel {
   int get paidShiftHours => (shiftHours - breakHours).clamp(0, 24);
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'fullName': fullName,
-        'position': position,
-        'positionId': positionId,
-        'salary': salary,
-        'bonus': bonus,
+    'id': id,
+    'fullName': fullName,
+    'position': position,
+    'positionId': positionId,
+    'salary': salary,
+    'bonus': bonus,
 
-        // structure
-        'departmentId': departmentId,
-        'groupId': groupId,
+    // structure
+    'departmentId': departmentId,
+    'groupId': groupId,
 
-        // schedule
-        'scheduleType': scheduleTypeToString(scheduleType),
-        'scheduleStartDate': scheduleStartDate.toIso8601String(),
-        'shiftHours': shiftHours,
-        'breakHours': breakHours,
-        'customWorkdays': customWorkdays,
-      };
+    // schedule
+    'scheduleType': scheduleTypeToString(scheduleType),
+    'scheduleStartDate': scheduleStartDate.toIso8601String(),
+    'shiftHours': shiftHours,
+    'breakHours': breakHours,
+    'customWorkdays': customWorkdays,
+  };
 
   static EmployeeModel fromJson(Map json) {
     // миграция графика
-    final scheduleType =
-        scheduleTypeFromString(json['scheduleType'] as String?);
+    final scheduleType = scheduleTypeFromString(
+      json['scheduleType'] as String?,
+    );
 
     DateTime startDate;
     final startRaw = json['scheduleStartDate'];
@@ -134,11 +136,14 @@ class EmployeeModel {
       startDate = DateTime.now();
     }
 
-    final shiftHours =
-        (json['shiftHours'] is num) ? (json['shiftHours'] as num).toInt() : 12;
-    final breakHours =
-        (json['breakHours'] is num) ? (json['breakHours'] as num).toInt() : 1;
-    final customWorkdays = (json['customWorkdays'] as List?)
+    final shiftHours = (json['shiftHours'] is num)
+        ? (json['shiftHours'] as num).toInt()
+        : 12;
+    final breakHours = (json['breakHours'] is num)
+        ? (json['breakHours'] as num).toInt()
+        : 1;
+    final customWorkdays =
+        (json['customWorkdays'] as List?)
             ?.whereType<num>()
             .map((day) => day.toInt())
             .toList() ??
@@ -199,18 +204,20 @@ class EmployeesStorage {
     final request = _loadRemote();
     _loadInFlight = request;
     _inFlightUserId = userId;
-    return request.then((loaded) {
-      if (_cacheUserId == userId && identical(_loadInFlight, request)) {
-        _cachedEmployees = List<EmployeeModel>.unmodifiable(loaded);
-        _cachedAt = DateTime.now();
-      }
-      return List<EmployeeModel>.of(loaded);
-    }).whenComplete(() {
-      if (identical(_loadInFlight, request)) {
-        _loadInFlight = null;
-        _inFlightUserId = null;
-      }
-    });
+    return request
+        .then((loaded) {
+          if (_cacheUserId == userId && identical(_loadInFlight, request)) {
+            _cachedEmployees = List<EmployeeModel>.unmodifiable(loaded);
+            _cachedAt = DateTime.now();
+          }
+          return List<EmployeeModel>.of(loaded);
+        })
+        .whenComplete(() {
+          if (identical(_loadInFlight, request)) {
+            _loadInFlight = null;
+            _inFlightUserId = null;
+          }
+        });
   }
 
   // Historical rosters must never share the current-employee cache.
@@ -221,10 +228,11 @@ class EmployeesStorage {
     final api = ApiClient.instance;
     final results = await Future.wait([
       api.request(
-          'GET',
-          onDate == null
-              ? '/api/v1/employees'
-              : '/api/v1/employees?on_date=$onDate'),
+        'GET',
+        onDate == null
+            ? '/api/v1/employees'
+            : '/api/v1/employees?on_date=$onDate',
+      ),
       PositionsStorage().loadPositions(),
     ]);
     final positions = <String, String>{};
@@ -237,7 +245,8 @@ class EmployeesStorage {
       return EmployeeModel(
         id: json['id'] as String,
         fullName: json['full_name'] as String,
-        position: (json['position_name'] as String?) ??
+        position:
+            (json['position_name'] as String?) ??
             (positionId == null ? '' : (positions[positionId] ?? '')),
         positionId: positionId,
         salary: (json['salary'] as num).toInt(),
@@ -245,11 +254,13 @@ class EmployeesStorage {
         departmentId: json['department_id'] as String?,
         groupId: json['group_id'] as String?,
         scheduleType: scheduleTypeFromString(json['schedule_type'] as String?),
-        scheduleStartDate:
-            DateTime.parse(json['schedule_start_date'] as String),
+        scheduleStartDate: DateTime.parse(
+          json['schedule_start_date'] as String,
+        ),
         shiftHours: (json['shift_hours'] as num).toInt(),
         breakHours: (json['break_hours'] as num).toInt(),
-        customWorkdays: (json['custom_workdays'] as List?)
+        customWorkdays:
+            (json['custom_workdays'] as List?)
                 ?.whereType<num>()
                 .map((day) => day.toInt())
                 .toList() ??
@@ -293,8 +304,10 @@ class EmployeesStorage {
       'department_id': employee.departmentId,
       'group_id': employee.groupId,
       'schedule_type': scheduleTypeToString(employee.scheduleType),
-      'schedule_start_date':
-          employee.scheduleStartDate.toIso8601String().split('T').first,
+      'schedule_start_date': employee.scheduleStartDate
+          .toIso8601String()
+          .split('T')
+          .first,
       'shift_hours': employee.shiftHours,
       'break_hours': employee.breakHours,
       'custom_workdays': employee.customWorkdays,
@@ -338,8 +351,10 @@ class EmployeesStorage {
       '/api/v1/employees/$employeeId',
       body: {
         'schedule_type': scheduleTypeToString(scheduleType),
-        'schedule_start_date':
-            scheduleStartDate.toIso8601String().split('T').first,
+        'schedule_start_date': scheduleStartDate
+            .toIso8601String()
+            .split('T')
+            .first,
         'shift_hours': shiftHours,
         'break_hours': breakHours,
         'custom_workdays': customWorkdays,
@@ -348,10 +363,13 @@ class EmployeesStorage {
     _invalidateCache();
   }
 
-  Future<void> deactivate(String employeeId) async {
+  Future<void> deactivate(
+    String employeeId, {
+    bool disableLinkedAccount = false,
+  }) async {
     await ApiClient.instance.request(
       'DELETE',
-      '/api/v1/employees/$employeeId',
+      '/api/v1/employees/$employeeId?permanent=true&disable_linked_account=$disableLinkedAccount',
     );
     _invalidateCache();
   }
@@ -361,6 +379,8 @@ class EmployeesStorage {
   void _invalidateCache() {
     _cachedEmployees = null;
     _cachedAt = null;
+    _loadInFlight = null;
+    _inFlightUserId = null;
   }
 
   Future<void> save(List<EmployeeModel> employees) async {
@@ -400,8 +420,10 @@ class EmployeesStorage {
         'department_id': employee.departmentId,
         'group_id': employee.groupId,
         'schedule_type': scheduleTypeToString(employee.scheduleType),
-        'schedule_start_date':
-            employee.scheduleStartDate.toIso8601String().split('T').first,
+        'schedule_start_date': employee.scheduleStartDate
+            .toIso8601String()
+            .split('T')
+            .first,
         'shift_hours': employee.shiftHours,
         'break_hours': employee.breakHours,
         'custom_workdays': employee.customWorkdays,

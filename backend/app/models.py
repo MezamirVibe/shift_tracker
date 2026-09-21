@@ -272,6 +272,22 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class OrganizationRegistration(Base):
+    """Control-plane jobs only; never a shared employee database."""
+    __tablename__ = "organization_registrations"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    secret_hash: Mapped[str] = mapped_column(String(64))
+    code: Mapped[str] = mapped_column(String(48), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    owner_login: Mapped[str] = mapped_column(String(120))
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ReportDelivery(Base):
     """One explicitly configured recipient/schedule per user, within their tenant."""
     __tablename__ = "report_deliveries"

@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     ORGANIZATION_CODE: str = Field(default="tehnodor-sk", pattern=r"^[a-z0-9][a-z0-9-]{1,47}$")
     ORGANIZATION_NAME: str = Field(default='ООО «Технодор СК»', min_length=1, max_length=200)
     TELEGRAM_BOT_TOKEN: str = ""
+    PUBLIC_REGISTRATION: bool = False
+    REGISTRATION_MAX_ORGANIZATIONS: int = Field(default=10, ge=1, le=100)
+    REGISTRATION_PER_IP_DAY: int = Field(default=2, ge=1, le=20)
     TELEGRAM_BOT_USERNAME: str = Field(default="", pattern=r"^$|^[A-Za-z0-9_]{5,32}$")
 
     @property

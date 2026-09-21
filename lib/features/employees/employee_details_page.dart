@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/extensions/iterable_x.dart';
+import '../../core/api_client.dart';
 import '../auth/auth_service.dart';
 import '../auth/auth_storage.dart';
 import '../structure/structure_storage.dart';
@@ -15,10 +16,7 @@ import 'schedule_utils.dart';
 class EmployeeDetailsPage extends StatefulWidget {
   final String id;
 
-  const EmployeeDetailsPage({
-    super.key,
-    required this.id,
-  });
+  const EmployeeDetailsPage({super.key, required this.id});
 
   @override
   State<EmployeeDetailsPage> createState() => _EmployeeDetailsPageState();
@@ -26,13 +24,16 @@ class EmployeeDetailsPage extends StatefulWidget {
 
 class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabController =
-      TabController(length: 4, vsync: this);
+  late final TabController _tabController = TabController(
+    length: 4,
+    vsync: this,
+  );
 
   final _storage = EmployeesStorage();
   final _structureStorage = StructureStorage();
 
   bool _loading = true;
+  bool _deleting = false;
 
   String _fullName = '';
   String _position = '';
@@ -56,7 +57,8 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     int shiftHours,
     int breakHours,
     List<int> customWorkdays,
-  })? _pendingSchedule;
+  })?
+  _pendingSchedule;
 
   UserAccount? _linkedUser;
 
@@ -122,9 +124,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       if (!mounted) return;
       await _loadEmployee();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось сохранить: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Не удалось сохранить: $error')));
     }
   }
 
@@ -165,21 +167,23 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     if (pending == null) return;
     _pendingSchedule = null;
 
-    _scheduleSaveQueue = _scheduleSaveQueue.then((_) async {
-      await _storage.updateSchedule(
-        employeeId: widget.id,
-        scheduleType: pending.type,
-        scheduleStartDate: pending.start,
-        shiftHours: pending.shiftHours,
-        breakHours: pending.breakHours,
-        customWorkdays: pending.customWorkdays,
-      );
-    }).catchError((Object error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось сохранить график: $error')),
-      );
-    });
+    _scheduleSaveQueue = _scheduleSaveQueue
+        .then((_) async {
+          await _storage.updateSchedule(
+            employeeId: widget.id,
+            scheduleType: pending.type,
+            scheduleStartDate: pending.start,
+            shiftHours: pending.shiftHours,
+            breakHours: pending.breakHours,
+            customWorkdays: pending.customWorkdays,
+          );
+        })
+        .catchError((Object error) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось сохранить график: $error')),
+          );
+        });
   }
 
   Future<void> _edit() async {
@@ -236,31 +240,72 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
   }
 
   Future<void> _fire() async {
+    if (_deleting) return;
+    final epoch = ApiClient.instance.sessionEpoch;
+    var disableAccount = false;
+    final canDisableAccount = AuthService.instance.isCurrentUserSuperAdmin;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        scrollable: true,
-        title: const Text('Уволить сотрудника?'),
-        content: Text('Уволить "$_fullName"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Отмена'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, updateDialog) => AlertDialog(
+          scrollable: true,
+          title: const Text('Удалить сотрудника навсегда?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Будут удалены карточка «$_fullName» и все её часы и отметки во всех месяцах. Отменить удаление в приложении нельзя.',
+              ),
+              if (canDisableAccount)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: disableAccount,
+                  onChanged: (value) =>
+                      updateDialog(() => disableAccount = value ?? false),
+                  title: const Text(
+                    'Также отключить личный вход сотрудника, если он есть',
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+            ],
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Уволить'),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Удалить навсегда'),
+            ),
+          ],
+        ),
       ),
     );
 
     if (ok != true) return;
 
-    await _storage.deactivate(widget.id);
-
     if (!mounted) return;
-    context.pop(<String, dynamic>{'deleted': true});
+    setState(() => _deleting = true);
+    try {
+      ApiClient.instance.checkSessionEpoch(epoch);
+      await _storage.deactivate(
+        widget.id,
+        disableLinkedAccount: disableAccount,
+      );
+      if (mounted) context.pop(<String, dynamic>{'deleted': true});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Не удалось удалить: $error'),
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
   }
 
   Future<void> _resetPassword() async {
@@ -291,9 +336,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
             const SizedBox(height: 12),
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                'Пароль показывается только сейчас.',
-              ),
+              child: Text('Пароль показывается только сейчас.'),
             ),
           ],
         ),
@@ -380,15 +423,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              _fullName,
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
+            Text(_fullName, style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 6),
-            Text(
-              _position,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text(_position, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -430,9 +467,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
 
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (_fullName.isEmpty) {
@@ -464,9 +499,9 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
               ? EdgeInsets.zero
               : const EdgeInsets.symmetric(horizontal: 16),
           labelStyle: isPhone
-              ? Theme.of(context).textTheme.labelSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  )
+              ? Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w700)
               : null,
           tabs: [
             const Tab(text: 'График'),
@@ -479,11 +514,16 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           SliverToBoxAdapter(
-              child: Padding(
-            padding: EdgeInsets.fromLTRB(
-                isPhone ? 8 : 12, isPhone ? 8 : 12, isPhone ? 8 : 12, 0),
-            child: _heroCard(isPhone),
-          )),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                isPhone ? 8 : 12,
+                isPhone ? 8 : 12,
+                isPhone ? 8 : 12,
+                0,
+              ),
+              child: _heroCard(isPhone),
+            ),
+          ),
         ],
         body: TabBarView(
           controller: _tabController,
@@ -706,14 +746,20 @@ class _StructureTabState extends State<_StructureTab> {
                   items: [
                     const DropdownMenuItem(
                       value: null,
-                      child: Text('— не выбрано —',
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        '— не выбрано —',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     ..._deps.map(
                       (d) => DropdownMenuItem<String?>(
                         value: d.id as String,
-                        child: Text(d.name as String,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          d.name as String,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ),
                   ],
@@ -737,10 +783,7 @@ class _StructureTabState extends State<_StructureTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Группа',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+                Text('Группа', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 6),
                 Text(
                   'Выбери группу внутри подразделения.',
@@ -757,14 +800,20 @@ class _StructureTabState extends State<_StructureTab> {
                   items: [
                     const DropdownMenuItem(
                       value: null,
-                      child: Text('— не выбрано —',
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        '— не выбрано —',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     ...groups.map(
                       (g) => DropdownMenuItem<String?>(
                         value: g.id as String,
-                        child: Text(g.name as String,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          g.name as String,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ),
                   ],
@@ -797,7 +846,8 @@ class _ScheduleTab extends StatelessWidget {
     int shiftHours,
     int breakHours,
     List<int> customWorkdays,
-  ) onChanged;
+  )
+  onChanged;
 
   const _ScheduleTab({
     required this.scheduleType,
@@ -858,18 +908,27 @@ class _ScheduleTab extends StatelessWidget {
                   items: const [
                     DropdownMenuItem(
                       value: ScheduleType.twoTwo,
-                      child: Text('2/2',
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        '2/2',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     DropdownMenuItem(
                       value: ScheduleType.fiveTwo,
-                      child: Text('5/2',
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        '5/2',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     DropdownMenuItem(
                       value: ScheduleType.custom,
-                      child: Text('Произвольный',
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        'Произвольный',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                   onChanged: (v) {
@@ -890,36 +949,37 @@ class _ScheduleTab extends StatelessWidget {
                     child: Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: const [
-                        (1, 'Пн'),
-                        (2, 'Вт'),
-                        (3, 'Ср'),
-                        (4, 'Чт'),
-                        (5, 'Пт'),
-                        (6, 'Сб'),
-                        (7, 'Вс'),
-                      ].map((item) {
-                        return FilterChip(
-                          label: Text(item.$2),
-                          selected: customWorkdays.contains(item.$1),
-                          onSelected: (selected) {
-                            final next = [...customWorkdays];
-                            if (selected) {
-                              next.add(item.$1);
-                            } else if (next.length > 1) {
-                              next.remove(item.$1);
-                            }
-                            next.sort();
-                            onChanged(
-                              scheduleType,
-                              startDate,
-                              shiftHours,
-                              breakHours,
-                              next,
+                      children:
+                          const [
+                            (1, 'Пн'),
+                            (2, 'Вт'),
+                            (3, 'Ср'),
+                            (4, 'Чт'),
+                            (5, 'Пт'),
+                            (6, 'Сб'),
+                            (7, 'Вс'),
+                          ].map((item) {
+                            return FilterChip(
+                              label: Text(item.$2),
+                              selected: customWorkdays.contains(item.$1),
+                              onSelected: (selected) {
+                                final next = [...customWorkdays];
+                                if (selected) {
+                                  next.add(item.$1);
+                                } else if (next.length > 1) {
+                                  next.remove(item.$1);
+                                }
+                                next.sort();
+                                onChanged(
+                                  scheduleType,
+                                  startDate,
+                                  shiftHours,
+                                  breakHours,
+                                  next,
+                                );
+                              },
                             );
-                          },
-                        );
-                      }).toList(),
+                          }).toList(),
                     ),
                   ),
                 ],
@@ -972,8 +1032,11 @@ class _ScheduleTab extends StatelessWidget {
                     24,
                     (index) => DropdownMenuItem(
                       value: index + 1,
-                      child: Text('${index + 1} ч',
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        '${index + 1} ч',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                   onChanged: (v) {
@@ -1001,8 +1064,11 @@ class _ScheduleTab extends StatelessWidget {
                     shiftHours,
                     (i) => DropdownMenuItem<int>(
                       value: i,
-                      child: Text('$i час(а)',
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        '$i час(а)',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                   onChanged: (v) {

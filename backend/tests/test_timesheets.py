@@ -125,8 +125,12 @@ class TimesheetTests(unittest.IsolatedAsyncioTestCase):
         before = await self.report()
         response = await self.client.patch(f"/api/v1/employees/{self.a.id}", json={"shift_hours": 12})
         self.assertEqual(response.status_code, 200, response.text)
-        response = await self.client.delete(f"/api/v1/employees/{self.a.id}")
-        self.assertEqual(response.status_code, 204, response.text)
+        # Legacy inactive records may still exist in restored backups. Public deletion is permanent.
+        async with self.sessions() as session:
+            employee = await session.get(Employee, self.a.id)
+            employee.is_active = False
+            await remember_employee(session, employee, date.today())
+            await session.commit()
         after = await self.report()
         self.assertEqual(after["total_minutes"], 480)
         self.assertEqual(after["rows"][0]["planned_days"], before["rows"][0]["planned_days"])

@@ -1,6 +1,7 @@
 import 'package:go_router/go_router.dart';
 import '../core/api_client.dart';
 import '../features/auth/organization_page.dart';
+import '../features/auth/registration_page.dart';
 
 import '../features/auth/auth_models.dart';
 import '../features/auth/auth_service.dart';
@@ -45,6 +46,7 @@ class AppRouter {
         if (!auth.initialized) {
           return loc == splash ? null : splash;
         }
+        if (loc == '/register') return auth.isLoggedIn ? dashboardPath : null;
         if (ApiClient.instance.organization == null) {
           return loc == '/organization' ? null : '/organization';
         }
@@ -78,44 +80,44 @@ class AppRouter {
       },
       routes: [
         GoRoute(
-            path: '/timesheet/import',
-            builder: (_, __) => const ImportTimesheetPage()),
+          path: '/register',
+          builder: (_, __) => const RegistrationPage(),
+        ),
         GoRoute(
-            path: '/timesheet/delivery',
-            builder: (_, __) => const DeliveryPage()),
+          path: '/timesheet/import',
+          builder: (_, __) => const ImportTimesheetPage(),
+        ),
         GoRoute(
-            path: '/organization',
-            builder: (_, __) => const OrganizationPage()),
+          path: '/timesheet/delivery',
+          builder: (_, __) => const DeliveryPage(),
+        ),
+        GoRoute(
+          path: '/organization',
+          builder: (_, __) => const OrganizationPage(),
+        ),
         GoRoute(
           path: '/timesheet',
           builder: (_, state) {
             final now = DateTime.now();
             final year =
                 int.tryParse(state.uri.queryParameters['year'] ?? '') ??
-                    now.year;
+                now.year;
             final month =
                 int.tryParse(state.uri.queryParameters['month'] ?? '') ??
-                    now.month;
+                now.month;
             return MonthReportPage(
-                year: year.clamp(2000, 2100), month: month.clamp(1, 12));
+              year: year.clamp(2000, 2100),
+              month: month.clamp(1, 12),
+            );
           },
         ),
-        GoRoute(
-          path: splash,
-          builder: (_, __) => const SplashPage(),
-        ),
-        GoRoute(
-          path: login,
-          builder: (_, __) => const LoginPage(),
-        ),
+        GoRoute(path: splash, builder: (_, __) => const SplashPage()),
+        GoRoute(path: login, builder: (_, __) => const LoginPage()),
         GoRoute(
           path: bootstrap,
           builder: (_, __) => const BootstrapAdminPage(),
         ),
-        GoRoute(
-          path: admin,
-          builder: (_, __) => const adm.AdminPage(),
-        ),
+        GoRoute(path: admin, builder: (_, __) => const adm.AdminPage()),
         GoRoute(
           path: dashboardPath,
           builder: (_, __) => const dashboard.DashboardPage(),
@@ -148,10 +150,7 @@ class AppRouter {
             return day.DayPage(dateIso: dateStr);
           },
         ),
-        GoRoute(
-          path: employees,
-          builder: (_, __) => const emp.EmployeesPage(),
-        ),
+        GoRoute(path: employees, builder: (_, __) => const emp.EmployeesPage()),
         GoRoute(
           path: '$employee/:id',
           builder: (_, state) {
