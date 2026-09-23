@@ -9,6 +9,7 @@ import '../auth/auth_service.dart';
 import '../auth/qr_connection.dart';
 import '../dashboard/dashboard_customizer.dart';
 import '../onboarding/onboarding_page.dart';
+import '../updates/app_update_dialog.dart';
 import 'preferences_service.dart';
 
 class PreferencesPage extends StatefulWidget {
@@ -202,6 +203,8 @@ class _PreferencesPageState extends State<PreferencesPage> {
                   ),
                   const SizedBox(height: 20),
                 ],
+                const AppUpdateTile(),
+                const SizedBox(height: 16),
                 Card(
                   child: ExpansionTile(
                     leading: const Icon(Icons.tune),

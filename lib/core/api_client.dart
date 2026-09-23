@@ -41,6 +41,7 @@ class ApiClient {
   Organization? get organization => _organization;
   int _sessionEpoch = 0;
   Future<void> _storageQueue = Future<void>.value();
+  int _pendingSessionWrites = 0;
   int get sessionEpoch => _sessionEpoch;
   String get cacheNamespace =>
       '${base64Url.encode(utf8.encode(baseUrl)).replaceAll('=', '')}_${_organization?.code ?? 'unselected'}';
@@ -161,6 +162,7 @@ class ApiClient {
     };
     // Snapshot keys/values now and serialize writes: a slow old login must not
     // resurrect tokens after logout or write into the next organization's keys.
+    _pendingSessionWrites++;
     final pending = _storageQueue.then((_) async {
       await Future.wait(
         values.entries.map(
@@ -169,7 +171,7 @@ class ApiClient {
               : _storage.write(key: entry.key, value: entry.value),
         ),
       );
-    });
+    }).whenComplete(() => _pendingSessionWrites--);
     _storageQueue = pending.catchError((Object _) {});
     return pending;
   }
@@ -199,13 +201,18 @@ class ApiClient {
   }
 
   Future<void> _saveLoginPreference(String login, bool remember) async {
-    await Future.wait([
-      _storage.write(
-        key: _scopedKey(_rememberLoginKey),
-        value: remember.toString(),
-      ),
-      _storage.write(key: _scopedKey(_savedLoginKey), value: login.trim()),
-    ]);
+    _pendingSessionWrites++;
+    try {
+      await Future.wait([
+        _storage.write(
+          key: _scopedKey(_rememberLoginKey),
+          value: remember.toString(),
+        ),
+        _storage.write(key: _scopedKey(_savedLoginKey), value: login.trim()),
+      ]);
+    } finally {
+      _pendingSessionWrites--;
+    }
   }
 
   Future<Map<String, dynamic>> login(
@@ -377,6 +384,24 @@ class ApiClient {
     }
   }
 
+  int _pendingWrites = 0;
+  int _pendingRequests = 0;
+  bool _appUpdateStarting = false;
+  bool get hasPendingWrites =>
+      _pendingWrites > 0 ||
+      _pendingSessionWrites > 0 ||
+      _refreshInFlight != null;
+
+  bool beginAppUpdate() {
+    if (hasPendingWrites || _pendingRequests > 0 || _appUpdateStarting) {
+      return false;
+    }
+    _appUpdateStarting = true;
+    return true;
+  }
+
+  void endAppUpdate() => _appUpdateStarting = false;
+
   Future<dynamic> request(
     String method,
     String path, {
@@ -385,8 +410,17 @@ class ApiClient {
     bool retryAfterRefresh = true,
     bool binary = false,
     String? discoveryCode,
-  }) =>
-      _request(
+  }) async {
+    final writing =
+        method.toUpperCase() != 'GET' && method.toUpperCase() != 'HEAD';
+    if (_appUpdateStarting) {
+      throw const ApiException(
+          409, 'Подождите завершения подготовки обновления.');
+    }
+    if (writing) _pendingWrites++;
+    _pendingRequests++;
+    try {
+      return await _request(
         method,
         path,
         body: body,
@@ -395,6 +429,11 @@ class ApiClient {
         binary: binary,
         discoveryCode: discoveryCode,
       );
+    } finally {
+      if (writing) _pendingWrites--;
+      _pendingRequests--;
+    }
+  }
 
   String get _registrationKey =>
       '${base64Url.encode(utf8.encode(baseUrl))}_pending_registration';
