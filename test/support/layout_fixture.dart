@@ -194,6 +194,16 @@ class LayoutFixture extends HttpOverrides {
           }
       };
     }
+    if (path == '/api/v1/hour-requests/page') {
+      return {'items': [], 'next_cursor': null, 'pending_count': 0};
+    }
+    if (path == '/api/v1/hour-requests/summary') {
+      return {'pending_count': 0, 'recent_responses': []};
+    }
+    if (path == '/api/v1/attendance/history') {
+      return {'items': [], 'next_cursor': null};
+    }
+    if (path == '/api/v1/attendance/action-days') return {'days': []};
     if (path.startsWith('/api/v1/attendance/') && method != 'GET') return null;
     if (path == '/api/v1/auth/logout') return null;
     unhandled.add('$method $path');

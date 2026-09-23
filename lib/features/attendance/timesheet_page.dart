@@ -54,10 +54,27 @@ class _MonthReportPageState extends State<MonthReportPage> {
       if (!mounted || request != _requestId) return;
       setState(() {
         _report = result;
-        if (!_allRows.any((r) => r['department_id'] == _department)) {
+        if (_allRows
+                    .map((r) => r['department_id'])
+                    .whereType<String>()
+                    .toSet()
+                    .length <=
+                1 ||
+            !_allRows.any((r) => r['department_id'] == _department)) {
           _department = null;
         }
-        if (!_allRows.any((r) => r['group_id'] == _group)) _group = null;
+        if (_allRows
+                    .where((r) =>
+                        _department == null ||
+                        r['department_id'] == _department)
+                    .map((r) => r['group_id'])
+                    .whereType<String>()
+                    .toSet()
+                    .length <=
+                1 ||
+            !_allRows.any((r) => r['group_id'] == _group)) {
+          _group = null;
+        }
       });
     } catch (error) {
       if (!mounted || request != _requestId) return;

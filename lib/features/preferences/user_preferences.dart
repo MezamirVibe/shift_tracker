@@ -14,7 +14,7 @@ extension DashboardWidgetTypeX on DashboardWidgetType {
   String get label => switch (this) {
         DashboardWidgetType.nextShift => 'Ближайшая смена',
         DashboardWidgetType.weekSchedule => 'График на неделю',
-        DashboardWidgetType.workedHours => 'Часы за месяц',
+        DashboardWidgetType.workedHours => 'Закрытые часы за месяц',
         DashboardWidgetType.teamToday => 'Команда сегодня',
         DashboardWidgetType.attendanceProgress => 'Заполнение табеля',
         DashboardWidgetType.quickActions => 'Быстрые действия',
@@ -25,7 +25,8 @@ extension DashboardWidgetTypeX on DashboardWidgetType {
         DashboardWidgetType.nextShift =>
           'Дата и продолжительность ближайшей плановой смены',
         DashboardWidgetType.weekSchedule => 'Рабочие и выходные дни недели',
-        DashboardWidgetType.workedHours => 'Фактически учтённые часы за месяц',
+        DashboardWidgetType.workedHours =>
+          'Учтённые часы только за закрытые дни',
         DashboardWidgetType.teamToday => 'Сколько сотрудников работает сегодня',
         DashboardWidgetType.attendanceProgress =>
           'Соотношение плана и заполненных фактов',

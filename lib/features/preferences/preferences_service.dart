@@ -58,13 +58,12 @@ class PreferencesService extends ChangeNotifier {
 
   Set<DashboardWidgetType> get allowedWidgets {
     final result = <DashboardWidgetType>{
-      DashboardWidgetType.nextShift,
-      DashboardWidgetType.weekSchedule,
-      if (PersonalScheduleStorage.applies ||
-          AuthService.instance.hasPerm(AppPermission.viewAttendance))
+      if (AuthService.instance.currentUser?.employeeId != null)
+        DashboardWidgetType.nextShift,
+      if (AuthService.instance.currentUser?.employeeId != null &&
+          (PersonalScheduleStorage.applies ||
+              AuthService.instance.hasPerm(AppPermission.viewAttendance)))
         DashboardWidgetType.workedHours,
-      DashboardWidgetType.quickActions,
-      DashboardWidgetType.profile,
     };
     if (_showTeamWidgets) {
       result.addAll({
@@ -214,9 +213,25 @@ class PreferencesService extends ChangeNotifier {
   }) async {
     final allowed = allowedWidgets;
     final clean = items.where((item) => allowed.contains(item.type)).toList();
+    // Older layouts contain retired widgets. Keep those preferences intact,
+    // even when the compact editor only exposes the current role's widgets.
+    final previous =
+        mobile ? _preferences.mobileWidgets : _preferences.desktopWidgets;
+    final updated = clean.iterator;
+    final merged = <DashboardWidgetPreference>[];
+    for (final item in previous) {
+      if (!allowed.contains(item.type)) {
+        merged.add(item);
+      } else if (updated.moveNext()) {
+        merged.add(updated.current);
+      }
+    }
+    while (updated.moveNext()) {
+      merged.add(updated.current);
+    }
     _preferences = mobile
-        ? _preferences.copyWith(mobileWidgets: clean)
-        : _preferences.copyWith(desktopWidgets: clean);
+        ? _preferences.copyWith(mobileWidgets: merged)
+        : _preferences.copyWith(desktopWidgets: merged);
     notifyListeners();
     await _save();
   }

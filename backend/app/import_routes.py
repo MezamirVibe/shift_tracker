@@ -201,7 +201,8 @@ def register_import_routes(app):
                 if snapshot is None:
                     raise HTTPException(409, "Область доступа изменилась; проверьте файл заново")
                 await api.save_attendance_record(session, user, day,
-                    employee_id, AttendanceRecordIn(fact=FactStatus(mark["fact"]), worked_minutes=mark["worked_minutes"]), snapshot)
+                    employee_id, AttendanceRecordIn(fact=FactStatus(mark["fact"]), worked_minutes=mark["worked_minutes"]),
+                    snapshot, audit_action="import", audit_reason="Импорт табеля")
                 written += 1
         await api.audit(session, actor=user, action="import_timesheet", entity_type="timesheet",
                         entity_id=f"{body.year}-{body.month:02d}", details={"created": created, "marks": written,

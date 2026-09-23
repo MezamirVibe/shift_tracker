@@ -202,135 +202,158 @@ class _PreferencesPageState extends State<PreferencesPage> {
                   ),
                   const SizedBox(height: 20),
                 ],
-                Text('Внешний вид',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 6),
-                Text(
-                  'Тема применяется сразу и сохраняется для вашей учётной записи.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                ),
-                const SizedBox(height: 14),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth < 680
-                        ? constraints.maxWidth
-                        : (constraints.maxWidth - 24) / 3;
-                    return Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        for (final choice in AppThemeChoice.values)
-                          SizedBox(
-                            width: width,
-                            child: _ThemeChoiceCard(
-                              choice: choice,
-                              selected: _preferences.theme == choice,
-                              onTap: () => _preferences.setTheme(choice),
-                            ),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 28),
-                Text('Главный экран',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 12),
                 Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Выберите виджеты, их порядок и размеры отдельно для компьютера и телефона.',
-                        ),
-                        const SizedBox(height: 14),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            FilledButton.tonalIcon(
-                              onPressed: () => DashboardCustomizer.show(
-                                context,
-                                mobile: false,
-                              ),
-                              icon: const Icon(Icons.desktop_windows_outlined),
-                              label: const Text('Настроить для компьютера'),
+                  child: ExpansionTile(
+                    leading: const Icon(Icons.tune),
+                    title: const Text('Дополнительные настройки'),
+                    subtitle:
+                        const Text('Оформление, главный экран и обучение'),
+                    childrenPadding: const EdgeInsets.all(16),
+                    expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Внешний вид',
+                          style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Тема применяется сразу и сохраняется для вашей учётной записи.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
                             ),
-                            FilledButton.tonalIcon(
-                              onPressed: () => DashboardCustomizer.show(
-                                context,
-                                mobile: true,
-                              ),
-                              icon: const Icon(Icons.smartphone_outlined),
-                              label: const Text('Настроить для телефона'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 28),
-                Text('Обучение и помощь',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 6),
-                Text(
-                  'Повторите знакомство с приложением и основными действиями для вашей роли.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        CircleAvatar(
-                          backgroundColor:
-                              Theme.of(context).colorScheme.primaryContainer,
-                          child: Icon(
-                            Icons.school_outlined,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
+                      const SizedBox(height: 14),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final width = constraints.maxWidth < 680
+                              ? constraints.maxWidth
+                              : (constraints.maxWidth - 24) / 3;
+                          return Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              for (final choice in AppThemeChoice.values)
+                                SizedBox(
+                                  width: width,
+                                  child: _ThemeChoiceCard(
+                                    choice: choice,
+                                    selected: _preferences.theme == choice,
+                                    onTap: () => _preferences.setTheme(choice),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 28),
+                      Text('Главный экран',
+                          style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: 12),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                trainingTitle,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                isEmployeeTraining
-                                    ? 'Как читать личный график, различать смены, выходные и отсутствия.'
-                                    : 'Как найти смену, отметить факт, учесть отклонения и закрыть день.',
+                              const Text(
+                                'Выберите виджеты, их порядок и размеры отдельно для компьютера и телефона.',
                               ),
                               const SizedBox(height: 14),
-                              FilledButton.tonalIcon(
-                                onPressed: () => OnboardingPage.show(
-                                  context,
-                                  replay: true,
-                                ),
-                                icon: const Icon(Icons.replay),
-                                label: const Text('Пройти обучение заново'),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: [
+                                  FilledButton.tonalIcon(
+                                    onPressed: () => DashboardCustomizer.show(
+                                      context,
+                                      mobile: false,
+                                    ),
+                                    icon: const Icon(
+                                        Icons.desktop_windows_outlined),
+                                    label:
+                                        const Text('Настроить для компьютера'),
+                                  ),
+                                  FilledButton.tonalIcon(
+                                    onPressed: () => DashboardCustomizer.show(
+                                      context,
+                                      mobile: true,
+                                    ),
+                                    icon: const Icon(Icons.smartphone_outlined),
+                                    label: const Text('Настроить для телефона'),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 28),
+                      Text('Обучение и помощь',
+                          style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Повторите знакомство с приложением и основными действиями для вашей роли.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 12),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                backgroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .primaryContainer,
+                                child: Icon(
+                                  Icons.school_outlined,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      trainingTitle,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      isEmployeeTraining
+                                          ? 'Как читать личный график, различать смены, выходные и отсутствия.'
+                                          : 'Как найти смену, отметить факт, учесть отклонения и закрыть день.',
+                                    ),
+                                    const SizedBox(height: 14),
+                                    FilledButton.tonalIcon(
+                                      onPressed: () => OnboardingPage.show(
+                                        context,
+                                        replay: true,
+                                      ),
+                                      icon: const Icon(Icons.replay),
+                                      label:
+                                          const Text('Пройти обучение заново'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 16),
                 Text('Учётная запись',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 12),

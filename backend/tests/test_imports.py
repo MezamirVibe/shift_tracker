@@ -115,6 +115,15 @@ class ImportApiTests(unittest.IsolatedAsyncioTestCase):
             employee = await session.scalar(select(Employee).where(Employee.full_name == 'Новый Иван Иванович'))
             self.assertEqual(employee.department_id, self.t.dep_a.id)
             self.assertEqual(employee.salary, 0)
+            employee_id = employee.id
+        history = await self.t.client.get(f'/api/v1/attendance/history?employee_id={employee_id}')
+        self.assertEqual(history.status_code, 200, history.text)
+        events = history.json()['items']
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['action'], 'import')
+        self.assertFalse(events[0]['before']['exists'])
+        self.assertEqual(events[0]['after']['minutes'], 660)
+        self.assertEqual(events[0]['reason'], 'Импорт табеля')
 
     async def test_old_marks_and_closed_days_never_overwritten(self):
         self.body['file_base64'] = base64.b64encode(fixture_file('Сотрудник А')).decode()

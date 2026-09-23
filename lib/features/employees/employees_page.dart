@@ -106,9 +106,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
         .filterEmployeesByScope(employees)
         .where((employee) => _preferences.isGroupVisible(employee.groupId))
         .toList();
-    final visibleGroups = groups
-        .where((group) => _preferences.isGroupVisible(group.id))
-        .toList();
+    final visibleGroups =
+        groups.where((group) => _preferences.isGroupVisible(group.id)).toList();
 
     if (!mounted) return;
 
@@ -198,7 +197,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   List<dynamic> get _groupsForSelectedDepartment {
     final depId = _selectedDepartmentId;
-    if (depId == null) return const [];
+    if (depId == null) return _groups;
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
@@ -338,8 +337,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
     if (!mounted) return;
 
-    final roleName =
-        AuthService.instance.roleById(result.user.roleId)?.name ??
+    final roleName = AuthService.instance.roleById(result.user.roleId)?.name ??
         result.user.roleId;
 
     await _showCredentialsDialog(
@@ -470,81 +468,81 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   spacing: 12,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    SizedBox(
-                      width: filterWidth,
-                      child: DropdownButtonFormField<String?>(
-                        itemHeight: null,
-                        initialValue: _selectedDepartmentId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Подразделение',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          const DropdownMenuItem<String?>(
-                            value: null,
-                            child: Text(
-                              'Все подразделения',
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                            ),
+                    if (!_filtersLockedByRole && _departments.length > 1)
+                      SizedBox(
+                        width: filterWidth,
+                        child: DropdownButtonFormField<String?>(
+                          itemHeight: null,
+                          initialValue: _selectedDepartmentId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Подразделение',
+                            border: OutlineInputBorder(),
                           ),
-                          ..._departments.map(
-                            (d) => DropdownMenuItem<String?>(
-                              value: d.id as String?,
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
                               child: Text(
-                                d.name as String,
+                                'Все подразделения',
                                 overflow: TextOverflow.ellipsis,
                                 maxLines: 1,
                               ),
                             ),
-                          ),
-                        ],
-                        onChanged: _filtersLockedByRole
-                            ? null
-                            : (v) => setState(() {
-                                _selectedDepartmentId = v;
-                                _selectedGroupId = null;
-                              }),
-                      ),
-                    ),
-                    SizedBox(
-                      width: filterWidth,
-                      child: DropdownButtonFormField<String?>(
-                        itemHeight: null,
-                        initialValue: _selectedGroupId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Группа',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          const DropdownMenuItem<String?>(
-                            value: null,
-                            child: Text(
-                              'Все группы',
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
+                            ..._departments.map(
+                              (d) => DropdownMenuItem<String?>(
+                                value: d.id as String?,
+                                child: Text(
+                                  d.name as String,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
                             ),
+                          ],
+                          onChanged: _filtersLockedByRole
+                              ? null
+                              : (v) => setState(() {
+                                    _selectedDepartmentId = v;
+                                    _selectedGroupId = null;
+                                  }),
+                        ),
+                      ),
+                    if (!_filtersLockedByRole && groups.length > 1)
+                      SizedBox(
+                        width: filterWidth,
+                        child: DropdownButtonFormField<String?>(
+                          itemHeight: null,
+                          initialValue: _selectedGroupId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Группа',
+                            border: OutlineInputBorder(),
                           ),
-                          ...groups.map(
-                            (g) => DropdownMenuItem<String?>(
-                              value: g.id as String?,
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
                               child: Text(
-                                g.name as String,
+                                'Все группы',
                                 overflow: TextOverflow.ellipsis,
                                 maxLines: 1,
                               ),
                             ),
-                          ),
-                        ],
-                        onChanged: _filtersLockedByRole
-                            ? null
-                            : (_selectedDepartmentId == null)
-                            ? null
-                            : (v) => setState(() => _selectedGroupId = v),
+                            ...groups.map(
+                              (g) => DropdownMenuItem<String?>(
+                                value: g.id as String?,
+                                child: Text(
+                                  g.name as String,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                            ),
+                          ],
+                          onChanged: _filtersLockedByRole
+                              ? null
+                              : (v) => setState(() => _selectedGroupId = v),
+                        ),
                       ),
-                    ),
                     FilledButton.tonalIcon(
                       onPressed: () => _loadAll(force: true),
                       icon: const Icon(Icons.refresh),
@@ -608,10 +606,10 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final text = noBinding
         ? 'Нет данных из-за отсутствия привязки.\nПопросите настроить доступ в админке.'
         : (_employeesAll.isEmpty
-              ? (_canAddEmployees
-                    ? 'Список пока пуст.\nДобавьте сотрудника вручную или импортируйте старый табель.'
-                    : 'Список сотрудников пока пуст.')
-              : 'По текущим фильтрам и поиску сотрудников не найдено.');
+            ? (_canAddEmployees
+                ? 'Список пока пуст.\nДобавьте сотрудника вручную или импортируйте старый табель.'
+                : 'Список сотрудников пока пуст.')
+            : 'По текущим фильтрам и поиску сотрудников не найдено.');
 
     return Center(
       child: Padding(
@@ -848,9 +846,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: canEdit
-                      ? () => _openEmployee(employee!, canEdit)
-                      : null,
+                  onPressed:
+                      canEdit ? () => _openEmployee(employee!, canEdit) : null,
                   icon: const Icon(Icons.edit_outlined),
                   label: const Text('Редактировать'),
                 ),
@@ -881,11 +878,9 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1100;
 
     final u = AuthService.instance.currentUser;
-    final currentRole = u == null
-        ? null
-        : AuthService.instance.roleById(u.roleId);
-    final noBinding =
-        u != null &&
+    final currentRole =
+        u == null ? null : AuthService.instance.roleById(u.roleId);
+    final noBinding = u != null &&
         !_isSuperAdmin &&
         currentRole != null &&
         ((currentRole.scopeKind == ScopeKind.department &&
@@ -918,80 +913,89 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 ),
               )
             : _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _employeesAll.isEmpty
-            ? SingleChildScrollView(
-                child: Column(
-                  children: [
-                    _emptyState(noBinding),
-                    if (_canEditEmployees &&
-                        AuthService.instance.hasPerm(
-                          AppPermission.editAttendance,
-                        ))
-                      TextButton.icon(
-                        onPressed: () => context.push('/timesheet/import'),
-                        icon: const Icon(Icons.upload_file),
-                        label: const Text('Импортировать старый табель'),
-                      ),
-                  ],
-                ),
-              )
-            : isDesktop
-            ? NestedScrollView(
-                headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                  SliverToBoxAdapter(
-                    child: Column(
-                      children: [
-                        _heroCard(false),
-                        const SizedBox(height: 12),
-                        _scopeHint(),
-                        if (showBindingWarning) ...[
-                          const SizedBox(height: 12),
-                          const _MissingScopeWarning(),
-                        ],
-                        const SizedBox(height: 12),
-                        _filtersCard(),
-                        const SizedBox(height: 12),
-                      ],
-                    ),
-                  ),
-                ],
-                body: list.isEmpty
-                    ? _emptyState(noBinding)
-                    : Row(
-                        children: [
-                          Expanded(flex: 7, child: _desktopList(list, canEdit)),
-                          const SizedBox(width: 12),
-                          SizedBox(
-                            width: 360,
-                            child: _employeePreview(canEdit),
+                ? const Center(child: CircularProgressIndicator())
+                : _employeesAll.isEmpty
+                    ? SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _emptyState(noBinding),
+                            if (_canEditEmployees &&
+                                AuthService.instance.hasPerm(
+                                  AppPermission.editAttendance,
+                                ))
+                              TextButton.icon(
+                                onPressed: () =>
+                                    context.push('/timesheet/import'),
+                                icon: const Icon(Icons.upload_file),
+                                label:
+                                    const Text('Импортировать старый табель'),
+                              ),
+                          ],
+                        ),
+                      )
+                    : isDesktop
+                        ? NestedScrollView(
+                            headerSliverBuilder:
+                                (context, innerBoxIsScrolled) => [
+                              SliverToBoxAdapter(
+                                child: Column(
+                                  children: [
+                                    _heroCard(false),
+                                    const SizedBox(height: 12),
+                                    _scopeHint(),
+                                    if (showBindingWarning) ...[
+                                      const SizedBox(height: 12),
+                                      const _MissingScopeWarning(),
+                                    ],
+                                    const SizedBox(height: 12),
+                                    _filtersCard(),
+                                    const SizedBox(height: 12),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            body: list.isEmpty
+                                ? _emptyState(noBinding)
+                                : Row(
+                                    children: [
+                                      Expanded(
+                                          flex: 7,
+                                          child: _desktopList(list, canEdit)),
+                                      const SizedBox(width: 12),
+                                      SizedBox(
+                                        width: 360,
+                                        child: _employeePreview(canEdit),
+                                      ),
+                                    ],
+                                  ),
+                          )
+                        : ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              _heroCard(isPhone),
+                              const SizedBox(height: 12),
+                              _scopeHint(),
+                              if (showBindingWarning) ...[
+                                const SizedBox(height: 12),
+                                const _MissingScopeWarning(),
+                              ],
+                              const SizedBox(height: 12),
+                              _filtersCard(),
+                              const SizedBox(height: 12),
+                              if (list.isEmpty)
+                                SizedBox(
+                                    height: 240, child: _emptyState(noBinding))
+                              else
+                                for (var index = 0;
+                                    index < list.length;
+                                    index++) ...[
+                                  _employeeTile(list[index], canEdit),
+                                  if (index != list.length - 1)
+                                    const SizedBox(height: 10),
+                                ],
+                              const SizedBox(height: 12),
+                            ],
                           ),
-                        ],
-                      ),
-              )
-            : ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  _heroCard(isPhone),
-                  const SizedBox(height: 12),
-                  _scopeHint(),
-                  if (showBindingWarning) ...[
-                    const SizedBox(height: 12),
-                    const _MissingScopeWarning(),
-                  ],
-                  const SizedBox(height: 12),
-                  _filtersCard(),
-                  const SizedBox(height: 12),
-                  if (list.isEmpty)
-                    SizedBox(height: 240, child: _emptyState(noBinding))
-                  else
-                    for (var index = 0; index < list.length; index++) ...[
-                      _employeeTile(list[index], canEdit),
-                      if (index != list.length - 1) const SizedBox(height: 10),
-                    ],
-                  const SizedBox(height: 12),
-                ],
-              ),
       ),
     );
   }

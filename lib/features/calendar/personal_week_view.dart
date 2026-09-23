@@ -4,6 +4,7 @@ import '../../shared/formatters/work_duration_formatter.dart';
 import '../attendance/attendance_storage.dart';
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
+import 'personal_day_card.dart';
 
 class PersonalWeekView extends StatelessWidget {
   final EmployeeModel employee;
@@ -61,7 +62,9 @@ class PersonalWeekView extends StatelessWidget {
         background: colors.successContainer,
         icon: record!.closed ? Icons.lock_outline : Icons.check_circle_outline,
         short: formatWorkDuration(_minutes(record)),
-        label: record.closed ? 'Часы закрыты' : 'Часы учтены, день открыт',
+        label: record.closed
+            ? 'Учтено · День закрыт'
+            : 'Учтено · День ещё не закрыт',
       );
     }
     if (record != null && record.fact != FactStatus.none) {
@@ -107,8 +110,6 @@ class PersonalWeekView extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final days = List.generate(7, (i) => weekStart.add(Duration(days: i)));
     final record = _record(selectedDay);
-    final planned = _planned(selectedDay);
-    final style = _style(context, selectedDay);
     final closedMinutes = days.fold<int>(
       0,
       (sum, day) =>
@@ -257,14 +258,14 @@ class PersonalWeekView extends StatelessWidget {
                     spacing: 12,
                     runSpacing: 8,
                     children: [
-                      legend(scheme.primary, 'Смена по плану'),
-                      legend(context.shiftColors.success, 'Учтённые часы'),
+                      legend(scheme.primary, 'По плану'),
+                      legend(context.shiftColors.success, 'Учтено'),
                       legend(context.shiftColors.neutral, 'Выходной'),
                     ],
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Рамка — выбранный день. Замок — часы закрыты.',
+                    'Рамка — выбранный день. Замок — день закрыт.',
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -277,63 +278,12 @@ class PersonalWeekView extends StatelessWidget {
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: 12),
-          Card(
-            margin: EdgeInsets.zero,
-            color: style.background,
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    '${_date(selectedDay)}.${selectedDay.year}',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    style.label,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleLarge?.copyWith(color: style.color),
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    record?.closed == true
-                        ? 'Закрыто: ${formatWorkDuration(_minutes(record))}'
-                        : record?.fact != null &&
-                                record?.fact != FactStatus.none
-                            ? 'Учтено: ${formatWorkDuration(_minutes(record))}'
-                            : 'Часы ещё не закрыты',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  if (record != null && !record.closed)
-                    const Text('День пока не закрыт руководителем'),
-                  const SizedBox(height: 8),
-                  Text(
-                    planned
-                        ? 'По плану: ${formatWorkDuration(employee.paidShiftHours * 60)} (перерыв вычтен)'
-                        : 'Смена на этот день не запланирована',
-                  ),
-                  if (record?.actualStart != null)
-                    Text(
-                      'Фактическое время: ${record!.actualStart}–${record.actualEnd}',
-                    ),
-                  if (record?.comment?.isNotEmpty == true)
-                    Text('Комментарий: ${record!.comment}'),
-                  const SizedBox(height: 16),
-                  if (!dateOnly(selectedDay).isAfter(dateOnly(DateTime.now())))
-                    FilledButton.icon(
-                      onPressed: onRequest,
-                      icon: const Icon(Icons.more_time),
-                      label: const Text('Запросить добавление часов'),
-                    ),
-                  TextButton(
-                    onPressed: onDetails,
-                    child: const Text('Подробности дня'),
-                  ),
-                ],
-              ),
-            ),
+          PersonalDayCard(
+            employee: employee,
+            day: selectedDay,
+            record: record,
+            onRequest: onRequest,
+            onRequests: onRequests,
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(

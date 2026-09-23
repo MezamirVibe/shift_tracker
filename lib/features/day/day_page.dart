@@ -1237,7 +1237,8 @@ class _DayPageState extends State<DayPage> {
   Widget _employeesList(bool canEditNow) {
     final visible = _filteredPlanned;
     final isPhone = MediaQuery.sizeOf(context).width < 680;
-    if (!_groupByGroup) {
+    if (!_groupByGroup ||
+        _planned.map((employee) => employee.groupId).toSet().length <= 1) {
       return ListView.separated(
         itemCount: visible.length,
         separatorBuilder: (_, __) => const Divider(height: 1),
@@ -1694,8 +1695,11 @@ class _DayPageState extends State<DayPage> {
                                           search,
                                           const SizedBox(height: 10),
                                           status,
-                                          const SizedBox(height: 10),
-                                          position,
+                                          if (_availablePositions.length >
+                                              1) ...[
+                                            const SizedBox(height: 10),
+                                            position,
+                                          ],
                                         ],
                                       );
                                     }
@@ -1704,8 +1708,10 @@ class _DayPageState extends State<DayPage> {
                                         Expanded(child: search),
                                         const SizedBox(width: 10),
                                         SizedBox(width: 220, child: status),
-                                        const SizedBox(width: 10),
-                                        SizedBox(width: 260, child: position),
+                                        if (_availablePositions.length > 1) ...[
+                                          const SizedBox(width: 10),
+                                          SizedBox(width: 260, child: position),
+                                        ],
                                       ],
                                     );
                                   },
@@ -1760,33 +1766,47 @@ class _DayPageState extends State<DayPage> {
                                           ),
                                         ),
                                       ),
-                                    FilterChip(
-                                      avatar: const Icon(
-                                          Icons.groups_2_outlined,
-                                          size: 18),
-                                      label: Text(
-                                        isPhone
-                                            ? 'По группам'
-                                            : 'Разделить по группам',
+                                    if (_planned
+                                            .map((employee) => employee.groupId)
+                                            .toSet()
+                                            .length >
+                                        1)
+                                      FilterChip(
+                                        avatar: const Icon(
+                                            Icons.groups_2_outlined,
+                                            size: 18),
+                                        label: Text(
+                                          isPhone
+                                              ? 'По группам'
+                                              : 'Разделить по группам',
+                                        ),
+                                        selected: _groupByGroup,
+                                        onSelected: (value) => setState(
+                                            () => _groupByGroup = value),
                                       ),
-                                      selected: _groupByGroup,
-                                      onSelected: (value) =>
-                                          setState(() => _groupByGroup = value),
-                                    ),
-                                    OutlinedButton.icon(
-                                      onPressed: _manageGroupVisibility,
-                                      icon: const Icon(
-                                          Icons.visibility_off_outlined),
-                                      label: Text(
-                                        _preferences.hiddenGroupIds.isEmpty
-                                            ? (isPhone
-                                                ? 'Видимость'
-                                                : 'Видимость групп')
-                                            : (isPhone
-                                                ? 'Скрыто: ${_preferences.hiddenGroupIds.length}'
-                                                : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}'),
+                                    if (_groups
+                                                .where((group) => _scopeGroupIds
+                                                    .contains(group.id))
+                                                .length >
+                                            1 ||
+                                        _groups.any((group) =>
+                                            _scopeGroupIds.contains(group.id) &&
+                                            _preferences.hiddenGroupIds
+                                                .contains(group.id)))
+                                      OutlinedButton.icon(
+                                        onPressed: _manageGroupVisibility,
+                                        icon: const Icon(
+                                            Icons.visibility_off_outlined),
+                                        label: Text(
+                                          _preferences.hiddenGroupIds.isEmpty
+                                              ? (isPhone
+                                                  ? 'Видимость'
+                                                  : 'Видимость групп')
+                                              : (isPhone
+                                                  ? 'Скрыто: ${_preferences.hiddenGroupIds.length}'
+                                                  : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}'),
+                                        ),
                                       ),
-                                    ),
                                     Text('Показано: $visibleCount'),
                                   ],
                                 ),

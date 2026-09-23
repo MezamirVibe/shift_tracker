@@ -8,6 +8,7 @@ import '../../shared/extensions/iterable_x.dart';
 import '../../core/api_client.dart';
 import '../auth/auth_service.dart';
 import '../auth/auth_storage.dart';
+import '../attendance/attendance_history_view.dart';
 import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
@@ -57,8 +58,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     int shiftHours,
     int breakHours,
     List<int> customWorkdays,
-  })?
-  _pendingSchedule;
+  })? _pendingSchedule;
 
   UserAccount? _linkedUser;
 
@@ -167,23 +167,21 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
     if (pending == null) return;
     _pendingSchedule = null;
 
-    _scheduleSaveQueue = _scheduleSaveQueue
-        .then((_) async {
-          await _storage.updateSchedule(
-            employeeId: widget.id,
-            scheduleType: pending.type,
-            scheduleStartDate: pending.start,
-            shiftHours: pending.shiftHours,
-            breakHours: pending.breakHours,
-            customWorkdays: pending.customWorkdays,
-          );
-        })
-        .catchError((Object error) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось сохранить график: $error')),
-          );
-        });
+    _scheduleSaveQueue = _scheduleSaveQueue.then((_) async {
+      await _storage.updateSchedule(
+        employeeId: widget.id,
+        scheduleType: pending.type,
+        scheduleStartDate: pending.start,
+        shiftHours: pending.shiftHours,
+        breakHours: pending.breakHours,
+        customWorkdays: pending.customWorkdays,
+      );
+    }).catchError((Object error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить график: $error')),
+      );
+    });
   }
 
   Future<void> _edit() async {
@@ -560,7 +558,7 @@ class _EmployeeDetailsPageState extends State<EmployeeDetailsPage>
                   : AuthService.instance.roleById(_linkedUser!.roleId)?.name,
               onResetPassword: _resetPassword,
             ),
-            const _HistoryTab(),
+            AttendanceHistoryView(employeeId: widget.id),
           ],
         ),
       ),
@@ -846,8 +844,7 @@ class _ScheduleTab extends StatelessWidget {
     int shiftHours,
     int breakHours,
     List<int> customWorkdays,
-  )
-  onChanged;
+  ) onChanged;
 
   const _ScheduleTab({
     required this.scheduleType,
@@ -949,37 +946,36 @@ class _ScheduleTab extends StatelessWidget {
                     child: Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children:
-                          const [
-                            (1, 'Пн'),
-                            (2, 'Вт'),
-                            (3, 'Ср'),
-                            (4, 'Чт'),
-                            (5, 'Пт'),
-                            (6, 'Сб'),
-                            (7, 'Вс'),
-                          ].map((item) {
-                            return FilterChip(
-                              label: Text(item.$2),
-                              selected: customWorkdays.contains(item.$1),
-                              onSelected: (selected) {
-                                final next = [...customWorkdays];
-                                if (selected) {
-                                  next.add(item.$1);
-                                } else if (next.length > 1) {
-                                  next.remove(item.$1);
-                                }
-                                next.sort();
-                                onChanged(
-                                  scheduleType,
-                                  startDate,
-                                  shiftHours,
-                                  breakHours,
-                                  next,
-                                );
-                              },
+                      children: const [
+                        (1, 'Пн'),
+                        (2, 'Вт'),
+                        (3, 'Ср'),
+                        (4, 'Чт'),
+                        (5, 'Пт'),
+                        (6, 'Сб'),
+                        (7, 'Вс'),
+                      ].map((item) {
+                        return FilterChip(
+                          label: Text(item.$2),
+                          selected: customWorkdays.contains(item.$1),
+                          onSelected: (selected) {
+                            final next = [...customWorkdays];
+                            if (selected) {
+                              next.add(item.$1);
+                            } else if (next.length > 1) {
+                              next.remove(item.$1);
+                            }
+                            next.sort();
+                            onChanged(
+                              scheduleType,
+                              startDate,
+                              shiftHours,
+                              breakHours,
+                              next,
                             );
-                          }).toList(),
+                          },
+                        );
+                      }).toList(),
                     ),
                   ),
                 ],
@@ -1131,24 +1127,6 @@ class _ScheduleTab extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _HistoryTab extends StatelessWidget {
-  const _HistoryTab();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          'История изменений появится позже.',
-          style: Theme.of(context).textTheme.titleMedium,
-          textAlign: TextAlign.center,
-        ),
-      ),
     );
   }
 }

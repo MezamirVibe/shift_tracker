@@ -1,4 +1,5 @@
 import 'package:go_router/go_router.dart';
+import 'route_observer.dart';
 import '../core/api_client.dart';
 import '../features/auth/organization_page.dart';
 import '../features/auth/registration_page.dart';
@@ -39,6 +40,7 @@ class AppRouter {
     final auth = AuthService.instance;
 
     return GoRouter(
+      observers: [appRouteObserver],
       initialLocation: splash,
       refreshListenable: auth,
       redirect: (_, state) {

@@ -176,7 +176,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Shift Tracker API",
-    version="1.5.0",
+    version="1.6.0",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -1506,12 +1506,15 @@ async def lock_attendance_day(session: AsyncSession, day: date) -> None:
 
 async def save_attendance_record(session: AsyncSession, user: User, day: date,
                                  employee_id: uuid.UUID, body: AttendanceRecordIn,
-                                 snapshot: dict | None = None) -> AttendanceRecord:
+                                 snapshot: dict | None = None, *,
+                                 audit_action: str = "manual", audit_reason: str | None = None) -> AttendanceRecord:
+    from .attendance_audit import attendance_snapshot, record_change
     if snapshot is None:
         snapshot = (await attendance_employees(session, user, day, {employee_id}))[employee_id]
     if await session.get(AttendanceLock, (day, employee_id)) is not None:
         raise api_error(409, "День для этого сотрудника закрыт")
     record = await session.get(AttendanceRecord, (day, employee_id))
+    before = attendance_snapshot(record)
     if record is None:
         record = AttendanceRecord(day=day, employee_id=employee_id)
         session.add(record)
@@ -1526,6 +1529,8 @@ async def save_attendance_record(session: AsyncSession, user: User, day: date,
     record.actual_start = body.actual_start
     record.actual_end = body.actual_end
     record.updated_by_id = user.id
+    await record_change(session, user, day, employee_id, before, attendance_snapshot(record),
+                        action=audit_action, reason=audit_reason or record.comment)
     return record
 
 
@@ -1555,7 +1560,8 @@ async def set_attendance_bulk(
     await lock_attendance_day(session, day)
     snapshots = await attendance_employees(session, user, day, ids)
     for item in body.records:
-        await save_attendance_record(session, user, day, item.employee_id, item, snapshots[item.employee_id])
+        await save_attendance_record(session, user, day, item.employee_id, item, snapshots[item.employee_id],
+                                     audit_action="bulk")
     await audit(session, actor=user, action="set_fact_bulk", entity_type="attendance_day",
                 entity_id=str(day), details={"records": len(ids)})
     await session.commit()
@@ -1568,6 +1574,7 @@ async def close_attendance_day(
     user: User = Depends(require_permission("editAttendance")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    from .attendance_audit import attendance_snapshot, record_change
     ids = set(body.planned_employee_ids)
     await lock_attendance_day(session, day)
     snapshots = await attendance_employees(session, user, day, ids)
@@ -1576,10 +1583,13 @@ async def close_attendance_day(
             continue
         record = await session.get(AttendanceRecord, (day, employee_id))
         if record is None or record.fact == FactStatus.none:
-            await save_attendance_record(session, user, day, employee_id,
+            record = await save_attendance_record(session, user, day, employee_id,
                                          AttendanceRecordIn(fact=FactStatus.absent, worked_minutes=0),
-                                         snapshots[employee_id])
+                                         snapshots[employee_id], audit_action="close_unfilled",
+                                         audit_reason="При закрытии дня незаполненная отметка стала неявкой")
         session.add(AttendanceLock(day=day, employee_id=employee_id, closed_by_id=user.id))
+        await record_change(session, user, day, employee_id, attendance_snapshot(record),
+                            attendance_snapshot(record, closed=True), action="close", reason="День закрыт")
     await audit(session, actor=user, action="close", entity_type="attendance_day",
                 entity_id=str(day), details={"employee_ids": sorted(map(str, ids))})
     await session.commit()
@@ -1592,17 +1602,29 @@ async def reopen_attendance_day(
     user: User = Depends(require_permission("editAttendance")),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    from .attendance_audit import attendance_snapshot, record_change
     await lock_attendance_day(session, day)
     allowed_ids = set(await attendance_employees(session, user, day))
     ids = set(body.employee_ids) if body and body.employee_ids is not None else allowed_ids
     if not ids <= allowed_ids:
         raise api_error(404, "Один из сотрудников не найден")
+    locks = list((await session.scalars(select(AttendanceLock).where(
+        AttendanceLock.day == day, AttendanceLock.employee_id.in_(ids)))).all())
+    for lock in locks:
+        record = await session.get(AttendanceRecord, (day, lock.employee_id))
+        await record_change(session, user, day, lock.employee_id, attendance_snapshot(record, closed=True),
+                            attendance_snapshot(record), action="reopen", reason="День переоткрыт")
     await session.execute(delete(AttendanceLock).where(
         AttendanceLock.day == day, AttendanceLock.employee_id.in_(ids)))
     await audit(session, actor=user, action="reopen", entity_type="attendance_day",
                 entity_id=str(day), details={"employee_ids": sorted(map(str, ids))})
     await session.commit()
     return Response(status_code=204)
+
+
+# Register the static history path before /attendance/{day}.
+from .attendance_audit import register_history_routes
+register_history_routes(app)
 
 
 @app.get("/api/v1/attendance/{day}", response_model=list[AttendanceRecordOut])

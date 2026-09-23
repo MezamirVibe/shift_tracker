@@ -425,7 +425,7 @@ class _RoleDetailsState extends State<_RoleDetails> {
                   isExpanded: true,
                   initialValue: _scopeKind,
                   decoration: const InputDecoration(
-                    labelText: 'Scope',
+                    labelText: 'Область доступа',
                     border: OutlineInputBorder(),
                   ),
                   items: ScopeKind.values
@@ -474,7 +474,9 @@ class _RoleDetailsState extends State<_RoleDetails> {
         ),
         const SizedBox(height: 12),
         Card(
-          child: Column(
+          child: ExpansionTile(
+            title: const Text('Расширенные права'),
+            subtitle: Text('Разрешений: ${_permissions.length}'),
             children: AppPermission.values.map((p) {
               final enabled = _permissions.contains(p);
 

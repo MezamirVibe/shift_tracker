@@ -22,9 +22,31 @@ void main() {
   var fail = false;
   var personalRequests = 0;
   Map<String, dynamic>? submitted;
+  bool pending = false;
   setUpAll(() async {
     fixture.roles[1]['permissions'] = ['viewCalendar'];
     fixture.responder = (method, uri, body) {
+      if (uri.path.endsWith('/hour-requests/page')) {
+        return {
+          'items': pending
+              ? [
+                  {
+                    'id': 'request-1',
+                    'employee_id': 'employee-1',
+                    'full_name': 'Сотрудник',
+                    'day': '2026-09-14',
+                    'additional_minutes': 180,
+                    'base_minutes': 480,
+                    'reason': 'Дополнительная приёмка',
+                    'status': 'pending',
+                    'created_at': '2026-09-14T12:00:00',
+                  }
+                ]
+              : [],
+          'next_cursor': null,
+          'pending_count': pending ? 1 : 0
+        };
+      }
       if (uri.path.endsWith('/self/schedule')) {
         personalRequests++;
         if (fail) throw const ApiException(503, 'Сервер временно недоступен');
@@ -72,6 +94,7 @@ void main() {
     fail = false;
     personalRequests = 0;
     submitted = null;
+    pending = false;
   });
 
   testWidgets('calendar-only employee dashboard loads its own schedule',
@@ -139,7 +162,8 @@ void main() {
     expect(find.text('11 ч'), findsOneWidget);
     expect(find.text('Вых.'), findsNWidgets(2));
     expect(find.text('Смена'), findsNWidgets(3));
-    expect(find.text('Закрыто: 8 ч'), findsOneWidget);
+    expect(find.text('Учтено: 8 ч'), findsOneWidget);
+    expect(find.text('День закрыт'), findsOneWidget);
     expect(find.text('Закрыто за эту неделю: 19 ч'), findsOneWidget);
     expect(tester.takeException(), isNull);
     final folder = Platform.environment['LAYOUT_AUDIT_OUTPUT'];
@@ -150,19 +174,55 @@ void main() {
         final image = await boundary.toImage();
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         await Directory(folder).create(recursive: true);
-        await File('$folder/personal-week-1.5.0.png')
+        await File('$folder/personal-week-1.6.0.png')
             .writeAsBytes(bytes!.buffer.asUint8List());
         image.dispose();
       });
     }
     await tester.tap(find.text('15').first);
     await tester.pumpAndSettle();
-    expect(find.text('Закрыто: 11 ч'), findsOneWidget);
+    expect(find.text('Учтено: 11 ч'), findsOneWidget);
     await tester.tap(find.text('19').first);
     await tester.pumpAndSettle();
-    expect(find.text('Выходной по графику'), findsOneWidget);
+    expect(find.text('По плану: выходной'), findsOneWidget);
     expect(find.text('Запросить добавление часов'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'pending request replaces submit and details expand in-place in both themes',
+      (tester) async {
+    pending = true;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    for (final width in [320.0, 1600.0]) {
+      tester.view.physicalSize = Size(width, width == 320 ? 740 : 900);
+      for (final dark in [false, true]) {
+        await tester.pumpWidget(MaterialApp(
+          theme: dark ? AppTheme.dim() : AppTheme.light(),
+          home: CalendarPage(
+              key: ValueKey('$width-$dark'),
+              initialDate: DateTime(2026, 9, 14)),
+        ));
+        await tester.pumpAndSettle();
+        expect(find.text('Учтено: 8 ч'), findsOneWidget);
+        expect(find.text('Запрошено +3 ч — ожидает решения'), findsOneWidget);
+        expect(find.text('Запросить добавление часов'), findsNothing);
+        await tester.ensureVisible(find.text('Подробности дня'));
+        await tester.pumpAndSettle();
+        if (tester.getCenter(find.text('Подробности дня')).dy >
+            tester.view.physicalSize.height - 100) {
+          await tester.drag(find.byType(ListView).first, const Offset(0, -180));
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.text('Подробности дня'));
+        await tester.pumpAndSettle();
+        expect(find.text('Приход: не указан'), findsOneWidget);
+        expect(find.text('Открыть неделю'), findsNothing);
+        expect(tester.takeException(), isNull);
+      }
+    }
   });
 
   testWidgets(

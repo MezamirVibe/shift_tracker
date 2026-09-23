@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../app/route_observer.dart';
 import '../../core/api_client.dart';
 import '../employees/personal_schedule_storage.dart';
 import '../../shared/formatters/work_duration_formatter.dart';
@@ -13,11 +14,11 @@ import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
 import '../employees/employees_storage.dart';
 import '../employees/schedule_utils.dart';
-import '../day/attendance_deviation.dart';
 import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
 import '../attendance/hour_requests_page.dart';
 import 'personal_week_view.dart';
+import 'personal_day_card.dart';
 
 class _DaySummary {
   final int planned;
@@ -64,7 +65,8 @@ class CalendarPage extends StatefulWidget {
   State<CalendarPage> createState() => _CalendarPageState();
 }
 
-class _CalendarPageState extends State<CalendarPage> {
+class _CalendarPageState extends State<CalendarPage>
+    with WidgetsBindingObserver, RouteAware {
   final _employeesStorage = EmployeesStorage();
   final _attendanceStorage = AttendanceStorage();
   final _structureStorage = StructureStorage();
@@ -72,6 +74,8 @@ class _CalendarPageState extends State<CalendarPage> {
 
   bool _loading = true;
   String? _loadError;
+  DateTime? _lastUpdated;
+  bool _refreshing = false;
 
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month, 1);
 
@@ -116,6 +120,7 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final initialDay = dateOnly(widget.initialDate ?? DateTime.now());
     _month = DateTime(initialDay.year, initialDay.month, 1);
     _selectedScheduleDay = initialDay;
@@ -130,7 +135,9 @@ class _CalendarPageState extends State<CalendarPage> {
 
   @override
   void dispose() {
+    appRouteObserver.unsubscribe(this);
     AttendanceStorage.changes.removeListener(_onAttendanceChanged);
+    WidgetsBinding.instance.removeObserver(this);
     _attendanceRefreshTimer?.cancel();
     _pageController.dispose();
     super.dispose();
@@ -249,197 +256,50 @@ class _CalendarPageState extends State<CalendarPage> {
         '${minute.toString().padLeft(2, '0')}';
   }
 
-  int? _clockToMinutes(String? value) {
-    final parts = value?.split(':');
-    if (parts == null || parts.length != 2) return null;
-    final hour = int.tryParse(parts[0]);
-    final minute = int.tryParse(parts[1]);
-    if (hour == null || minute == null || hour > 23 || minute > 59) {
-      return null;
-    }
-    return hour * 60 + minute;
-  }
-
-  String _personalFactLabel(FactStatus fact, bool planned) {
-    return switch (fact) {
-      FactStatus.worked => 'Смена отработана',
-      FactStatus.businessTrip => 'Командировка',
-      FactStatus.vacationWorked => 'Работа в отпуске',
-      FactStatus.unpaid => 'Без содержания',
-      FactStatus.vacation => 'Отпуск',
-      FactStatus.sick => 'Больничный',
-      FactStatus.absent => 'Неявка',
-      FactStatus.none => planned ? 'Рабочая смена по плану' : 'Выходной',
-    };
-  }
-
   Future<void> _showPersonalDayDetails(DateTime day) async {
     if (_employeesVisible.isEmpty) return;
-    final employee = _employeesVisible.first;
-    final record = _recordFor(day, employee.id);
-    final fact = record?.fact ?? FactStatus.none;
-    final planned = isWorkDay(
-      day: day,
-      type: employee.scheduleType,
-      startDate: employee.scheduleStartDate,
-      customWorkdays: employee.customWorkdays,
-    );
-    const plannedStart = 8 * 60;
-    final plannedEnd = plannedStart + employee.shiftHours * 60;
-    final actualStart = _clockToMinutes(record?.actualStart);
-    final actualEnd = _clockToMinutes(record?.actualEnd);
-    final workedMinutes = record?.hasWorked == true
-        ? (record?.workedMinutes ??
-            (record?.fact == FactStatus.worked
-                ? employee.paidShiftHours * 60
-                : 0))
-        : 0;
-    AttendanceDeviation? deviation;
-    if (record?.hasWorked == true && actualStart != null && actualEnd != null) {
-      deviation = calculateAttendanceDeviation(
-        plannedStartMinutes: plannedStart,
-        plannedEndMinutes: plannedEnd,
-        actualStartMinutes: actualStart,
-        actualEndMinutes: actualEnd,
-      );
-    }
-    final deviationParts = <String>[
-      if ((deviation?.lateMinutes ?? 0) > 0)
-        'Опоздание ${formatWorkDuration(deviation!.lateMinutes)}',
-      if ((deviation?.earlyLeaveMinutes ?? 0) > 0)
-        'Ранний уход ${formatWorkDuration(deviation!.earlyLeaveMinutes)}',
-      if ((deviation?.overtimeMinutes ?? 0) > 0)
-        'Переработка ${formatWorkDuration(deviation!.overtimeMinutes)}',
-    ];
-    final dateLabel = '${day.day.toString().padLeft(2, '0')}.'
-        '${day.month.toString().padLeft(2, '0')}.${day.year}';
-
     await showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        final scheme = Theme.of(sheetContext).colorScheme;
-
-        Widget detail(String label, String value, {IconData? icon}) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 7),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (icon != null) ...[
-                  Icon(icon, size: 20, color: scheme.primary),
-                  const SizedBox(width: 10),
-                ],
-                Expanded(
-                  child: Text(
-                    label,
-                    style: TextStyle(color: scheme.onSurfaceVariant),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Flexible(
-                  child: Text(
-                    value,
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                dateLabel,
-                style: Theme.of(sheetContext).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _personalFactLabel(fact, planned),
-                style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
-                      color: fact == FactStatus.absent
-                          ? scheme.error
-                          : scheme.primary,
-                    ),
-              ),
-              const SizedBox(height: 14),
-              detail(
-                record?.closed == true ? 'Закрыто часов' : 'Учтено часов',
-                formatWorkDuration(workedMinutes),
-                icon: record?.closed == true
-                    ? Icons.lock_outline
-                    : Icons.schedule,
-              ),
-              if (planned) ...[
-                detail(
-                  'План',
-                  '${_clockFromMinutes(plannedStart)}–'
-                      '${_clockFromMinutes(plannedEnd)}',
-                  icon: Icons.event_outlined,
-                ),
-                detail(
-                  'По плану оплачивается',
-                  formatWorkDuration(employee.paidShiftHours * 60),
-                ),
-                if (employee.breakHours > 0)
-                  detail(
-                    'Перерыв',
-                    formatWorkDuration(employee.breakHours * 60),
-                  ),
-              ],
-              if (record?.hasWorked == true) ...[
-                detail(
-                  'Фактическое время',
-                  record?.actualStart != null && record?.actualEnd != null
-                      ? '${record!.actualStart}–${record.actualEnd}'
-                      : 'Время не указано',
-                  icon: Icons.schedule_outlined,
-                ),
-                detail(
-                  'Оплачено за день',
-                  formatWorkDuration(workedMinutes),
-                  icon: Icons.payments_outlined,
-                ),
-                if (deviationParts.isNotEmpty)
-                  detail('Отклонения', deviationParts.join(' · ')),
-                if (deviation != null && !deviation.hasDeviations)
-                  detail('Отклонения', 'Нет'),
-              ],
-              if (record?.comment?.trim().isNotEmpty == true)
-                detail('Комментарий', record!.comment!.trim()),
-              const SizedBox(height: 16),
-              if (!day.isAfter(dateOnly(DateTime.now()))) ...[
-                FilledButton.icon(
-                  onPressed: () {
-                    Navigator.of(sheetContext).pop();
-                    _requestHours(day);
-                  },
-                  icon: const Icon(Icons.more_time),
-                  label: const Text('Запросить добавление часов'),
-                ),
-                const SizedBox(height: 8),
-              ],
-              FilledButton.icon(
-                onPressed: () {
-                  Navigator.of(sheetContext).pop();
-                  context.go('/schedule?date=${_isoDate(day)}');
-                },
-                icon: const Icon(Icons.view_week_outlined),
-                label: const Text('Открыть неделю'),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (sheetContext) => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+        child: PersonalDayCard(
+          employee: _employeesVisible.first,
+          day: day,
+          record: _recordFor(day, _employeesVisible.first.id),
+          onRequest: () {
+            Navigator.of(sheetContext).pop();
+            _requestHours(day);
+          },
+          onRequests: () {
+            Navigator.of(sheetContext).pop();
+            _openRequests();
+          },
+        ),
+      ),
     );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadAndRecalc(force: true);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPopNext() => _loadAndRecalc(force: true);
+
+  Future<void> _openRequests() async {
+    await context.push('/hour-requests');
+    if (mounted) await _loadAndRecalc(force: true);
   }
 
   Future<void> _requestHours(DateTime day) async {
@@ -451,7 +311,6 @@ class _CalendarPageState extends State<CalendarPage> {
         : 0;
     if (await showHourRequestDialog(context, day: day, baseMinutes: minutes) &&
         mounted) {
-      await context.push('/hour-requests');
       if (mounted) await _loadAndRecalc(force: true);
     }
   }
@@ -470,10 +329,7 @@ class _CalendarPageState extends State<CalendarPage> {
             onToday: _jumpToToday,
             onDetails: () => _showPersonalDayDetails(_selectedScheduleDay),
             onRequest: () => _requestHours(_selectedScheduleDay),
-            onRequests: () async {
-              await context.push('/hour-requests');
-              if (mounted) await _loadAndRecalc(force: true);
-            },
+            onRequests: _openRequests,
             onRefresh: () => _loadAndRecalc(force: true),
           ),
         ),
@@ -539,7 +395,10 @@ class _CalendarPageState extends State<CalendarPage> {
   Future<void> _loadAndRecalc({DateTime? forMonth, bool force = false}) async {
     final loadGeneration = ++_loadGeneration;
     final targetMonth = forMonth ?? _month;
-    setState(() => _loadError = null);
+    setState(() {
+      _loadError = null;
+      _refreshing = true;
+    });
 
     if (_employeesVisible.isEmpty) {
       setState(() => _loading = true);
@@ -560,7 +419,7 @@ class _CalendarPageState extends State<CalendarPage> {
         personal?.then((data) => data.employees) ??
             _employeesStorage.load(force: force),
         personal?.then((data) => data.attendance) ??
-            _attendanceStorage.loadRange(rangeFrom, rangeTo, force: force),
+            _attendanceStorage.loadRange(rangeFrom, rangeTo, force: true),
         personal != null
             ? Future.value(<DepartmentModel>[])
             : _structureStorage.loadDepartments(force: force),
@@ -610,11 +469,14 @@ class _CalendarPageState extends State<CalendarPage> {
         _rawAttendance = rawAttendance;
         _recordCache.clear();
         _loading = false;
+        _refreshing = false;
+        _lastUpdated = DateTime.now();
       });
     } catch (error) {
       if (!mounted || loadGeneration != _loadGeneration) return;
       setState(() {
         _loading = false;
+        _refreshing = false;
         _loadError = error is ApiException
             ? error.message
             : 'Не удалось загрузить график. Проверьте соединение и повторите.';
@@ -729,7 +591,7 @@ class _CalendarPageState extends State<CalendarPage> {
 
   List<GroupModel> get _groupsForSelectedDepartment {
     final depId = _selectedDepartmentId;
-    if (depId == null) return const [];
+    if (depId == null) return _groups;
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
@@ -835,6 +697,12 @@ class _CalendarPageState extends State<CalendarPage> {
     final depLocked = !_canChangeDepartmentFilter;
     final grpLocked = !_canChangeGroupFilter;
     final groups = _groupsForSelectedDepartment;
+    final showDepartment = !depLocked && _departments.length > 1;
+    final showGroup = !grpLocked && groups.length > 1;
+    final showPosition = _availablePositions.length > 1;
+    if (!showDepartment && !showGroup && !showPosition) {
+      return const SizedBox.shrink();
+    }
 
     final content = LayoutBuilder(
       builder: (context, constraints) {
@@ -845,126 +713,127 @@ class _CalendarPageState extends State<CalendarPage> {
           runSpacing: 12,
           spacing: 12,
           children: [
-            SizedBox(
-              width: fieldWidth,
-              child: DropdownButtonFormField<String?>(
-                itemHeight: null,
-                initialValue: _selectedDepartmentId,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Подразделение',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text(
-                      'Все подразделения',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+            if (showDepartment)
+              SizedBox(
+                width: fieldWidth,
+                child: DropdownButtonFormField<String?>(
+                  itemHeight: null,
+                  initialValue: _selectedDepartmentId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Подразделение',
+                    border: OutlineInputBorder(),
                   ),
-                  ..._departments.map(
-                    (d) => DropdownMenuItem<String?>(
-                      value: d.id,
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
                       child: Text(
-                        d.name,
+                        'Все подразделения',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                  ),
-                ],
-                onChanged: depLocked
-                    ? null
-                    : (v) {
-                        setState(() {
-                          _selectedDepartmentId = v;
-                          _selectedGroupId = null;
-                          _selectedPosition = null;
-                        });
-                        _recalculateFromLoaded();
-                      },
-              ),
-            ),
-            SizedBox(
-              width: fieldWidth,
-              child: DropdownButtonFormField<String?>(
-                itemHeight: null,
-                initialValue: _selectedGroupId,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Группа',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text(
-                      'Все группы',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    ..._departments.map(
+                      (d) => DropdownMenuItem<String?>(
+                        value: d.id,
+                        child: Text(
+                          d.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ),
+                  ],
+                  onChanged: depLocked
+                      ? null
+                      : (v) {
+                          setState(() {
+                            _selectedDepartmentId = v;
+                            _selectedGroupId = null;
+                            _selectedPosition = null;
+                          });
+                          _recalculateFromLoaded();
+                        },
+                ),
+              ),
+            if (showGroup)
+              SizedBox(
+                width: fieldWidth,
+                child: DropdownButtonFormField<String?>(
+                  itemHeight: null,
+                  initialValue: _selectedGroupId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Группа',
+                    border: OutlineInputBorder(),
                   ),
-                  ...groups.map(
-                    (g) => DropdownMenuItem<String?>(
-                      value: g.id,
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
                       child: Text(
-                        g.name,
+                        'Все группы',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                  ),
-                ],
-                onChanged: grpLocked
-                    ? null
-                    : (_selectedDepartmentId == null)
-                        ? null
-                        : (v) {
-                            setState(() {
-                              _selectedGroupId = v;
-                              _selectedPosition = null;
-                            });
-                            _recalculateFromLoaded();
-                          },
-              ),
-            ),
-            SizedBox(
-              width: fieldWidth,
-              child: DropdownButtonFormField<String?>(
-                itemHeight: null,
-                initialValue: _selectedPosition,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Должность',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text(
-                      'Все должности',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    ...groups.map(
+                      (g) => DropdownMenuItem<String?>(
+                        value: g.id,
+                        child: Text(
+                          g.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ),
+                  ],
+                  onChanged: grpLocked
+                      ? null
+                      : (v) {
+                          setState(() {
+                            _selectedGroupId = v;
+                            _selectedPosition = null;
+                          });
+                          _recalculateFromLoaded();
+                        },
+                ),
+              ),
+            if (showPosition)
+              SizedBox(
+                width: fieldWidth,
+                child: DropdownButtonFormField<String?>(
+                  itemHeight: null,
+                  initialValue: _selectedPosition,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Должность',
+                    border: OutlineInputBorder(),
                   ),
-                  for (final position in _availablePositions)
-                    DropdownMenuItem<String?>(
-                      value: position,
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
                       child: Text(
-                        position,
+                        'Все должности',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                ],
-                onChanged: (value) {
-                  setState(() => _selectedPosition = value);
-                  _recalculateFromLoaded();
-                },
+                    for (final position in _availablePositions)
+                      DropdownMenuItem<String?>(
+                        value: position,
+                        child: Text(
+                          position,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    setState(() => _selectedPosition = value);
+                    _recalculateFromLoaded();
+                  },
+                ),
               ),
-            ),
             FilledButton.tonalIcon(
               onPressed: () async {
                 if (isPhone && _mobileFiltersExpanded) {
@@ -1051,8 +920,8 @@ class _CalendarPageState extends State<CalendarPage> {
         runSpacing: 8,
         children: [
           if (_isPersonalView) ...[
-            dot(Theme.of(context).colorScheme.primary, 'Рабочая смена'),
-            dot(context.shiftColors.success, 'Смена отработана'),
+            dot(Theme.of(context).colorScheme.primary, 'По плану'),
+            dot(context.shiftColors.success, 'Учтено'),
             dot(context.shiftColors.vacation, 'Отпуск'),
             dot(context.shiftColors.sick, 'Больничный'),
             dot(Theme.of(context).colorScheme.error, 'Неявка'),
@@ -1102,7 +971,7 @@ class _CalendarPageState extends State<CalendarPage> {
                 Expanded(
                   child: Text(
                     _isPersonalView
-                        ? 'Цвета: смена, отпуск, больничный и выходной'
+                        ? 'По плану · Учтено · Замок — день закрыт'
                         : 'В ячейке: вышли / план',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1711,7 +1580,7 @@ class _CalendarPageState extends State<CalendarPage> {
         if (_isPersonalView) {
           details = planned
               ? 'План: 08:00–${_clockFromMinutes(8 * 60 + employee.shiftHours * 60)} · '
-                  '${formatWorkDuration(employee.paidShiftHours * 60)} оплачивается'
+                  '${formatWorkDuration(employee.paidShiftHours * 60)} по плану'
               : 'Смена не запланирована';
         }
         break;
@@ -2141,6 +2010,25 @@ class _CalendarPageState extends State<CalendarPage> {
       child: Column(
         children: [
           Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Row(children: [
+              Icon(_loadError != null ? Icons.cloud_off_outlined : Icons.sync,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Expanded(
+                  child: Text(
+                      _refreshing
+                          ? 'Обновляем график…'
+                          : _lastUpdated == null
+                              ? 'График ещё не обновлён'
+                              : '${_loadError != null ? 'Нет свежих данных. Последнее обновление' : 'Обновлено'} '
+                                  '${_lastUpdated!.day.toString().padLeft(2, '0')}.${_lastUpdated!.month.toString().padLeft(2, '0')} '
+                                  '${_lastUpdated!.hour.toString().padLeft(2, '0')}:${_lastUpdated!.minute.toString().padLeft(2, '0')}',
+                      style: Theme.of(context).textTheme.bodySmall)),
+            ]),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: SegmentedButton<bool>(
               segments: const [
@@ -2194,8 +2082,7 @@ class _CalendarPageState extends State<CalendarPage> {
                                       _calendarLegend(compact: isPhone),
                                       if (_isPersonalView)
                                         TextButton.icon(
-                                          onPressed: () =>
-                                              context.push('/hour-requests'),
+                                          onPressed: _openRequests,
                                           icon: const Icon(Icons.outgoing_mail),
                                           label: const Text(
                                               'Мои запросы и ответы'),
