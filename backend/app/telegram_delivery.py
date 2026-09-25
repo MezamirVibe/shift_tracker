@@ -220,6 +220,11 @@ async def run_due_once(api, sessions, transport, now: datetime | None = None):
                 status = 'Не отправлено: проверьте доступ к выбранному отделу и группе'
             delivery.last_status = status
         attempt.status = status
+        if not status.startswith('Отправлено:'):
+            from .notifications import emit_notification
+            await emit_notification(session, user_id=user_id, kind='delivery_failed',
+                title='Табель не отправлен', body=status,
+                dedupe_key=f'delivery-failed:{attempt_id}')
         await session.commit()
     return True
 

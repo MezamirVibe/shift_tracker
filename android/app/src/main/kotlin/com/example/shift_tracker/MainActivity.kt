@@ -17,9 +17,13 @@ import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
     private var checkingUpdate = false
+    private var notificationBridge: NotificationBridge? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        notificationBridge = NotificationBridge(this, flutterEngine).also {
+            it.acceptIntent(intent, notifyFlutter = false)
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chereda/app_updates")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -83,6 +87,27 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationBridge?.acceptIntent(intent, notifyFlutter = true)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        notificationBridge?.onPermissionResult(requestCode)
+    }
+
+    override fun onDestroy() {
+        notificationBridge?.dispose()
+        notificationBridge = null
+        super.onDestroy()
     }
 
     @Suppress("DEPRECATION")

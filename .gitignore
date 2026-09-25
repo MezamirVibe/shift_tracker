@@ -31,10 +31,15 @@ __pycache__/
 
 # --- Deployment secrets and local backups ---
 deploy/.env
+deploy/.env.push
 deploy/organizations/*.env
 deploy/organizations/*.caddy
 deploy/organizations/*.pending
 deploy/backups/
+deploy/secrets/
+android/app/google-services.json
+*firebase-adminsdk*.json
+service-account*.json
 *.dump
 
 # --- Android / Gradle ---

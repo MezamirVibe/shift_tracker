@@ -5,6 +5,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Unconfigured local builds remain usable; they report push as unavailable.
+if (file("google-services.json").isFile) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.example.shift_tracker"
     compileSdk = flutter.compileSdkVersion
@@ -45,4 +50,6 @@ flutter {
 
 dependencies {
     implementation("androidx.core:core:1.13.1")
+    implementation(platform("com.google.firebase:firebase-bom:34.3.0"))
+    implementation("com.google.firebase:firebase-messaging")
 }

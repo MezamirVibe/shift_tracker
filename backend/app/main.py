@@ -163,10 +163,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await bind_database(session, settings.ORGANIZATION_CODE)
         await seed_roles(session)
     from .telegram_delivery import worker
+    from .notifications import worker as notification_worker
     delivery_task = asyncio.create_task(worker(sys.modules[__name__])) if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_BOT_USERNAME else None
+    notification_task = asyncio.create_task(notification_worker(sys.modules[__name__]))
     try:
         yield
     finally:
+        notification_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await notification_task
         if delivery_task:
             delivery_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -176,7 +181,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Shift Tracker API",
-    version="1.6.0",
+    version="1.8.0",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -1342,9 +1347,14 @@ async def update_employee(
         raise api_error(status.HTTP_403_FORBIDDEN, "Нельзя переносить сотрудника вне своего подразделения")
     if user.role.scope_kind == ScopeKind.group and candidate.group_id != user.group_id:
         raise api_error(status.HTTP_403_FORBIDDEN, "Нельзя переносить сотрудника вне своей группы")
+    from .notification_events import SCHEDULE_FIELDS, schedule_changed
+    changed_schedule = any(field in SCHEDULE_FIELDS and getattr(item, field) != value
+                           for field, value in changes.items())
     for field, value in changes.items():
         setattr(item, field, value)
     await remember_employee(session, item, date.today())
+    if changed_schedule:
+        await schedule_changed(session, item.id, date.today())
     await audit(session, actor=user, action="update", entity_type="employee", entity_id=str(item.id))
     await session.commit()
     await session.refresh(item)
@@ -1590,6 +1600,8 @@ async def close_attendance_day(
         session.add(AttendanceLock(day=day, employee_id=employee_id, closed_by_id=user.id))
         await record_change(session, user, day, employee_id, attendance_snapshot(record),
                             attendance_snapshot(record, closed=True), action="close", reason="День закрыт")
+        from .notification_events import hours_closed
+        await hours_closed(session, employee_id, day, record.worked_minutes or 0)
     await audit(session, actor=user, action="close", entity_type="attendance_day",
                 entity_id=str(day), details={"employee_ids": sorted(map(str, ids))})
     await session.commit()
@@ -1614,6 +1626,9 @@ async def reopen_attendance_day(
         record = await session.get(AttendanceRecord, (day, lock.employee_id))
         await record_change(session, user, day, lock.employee_id, attendance_snapshot(record, closed=True),
                             attendance_snapshot(record), action="reopen", reason="День переоткрыт")
+        from .notification_events import hours_closed
+        await hours_closed(session, lock.employee_id, day,
+                           record.worked_minutes if record and record.worked_minutes else 0, closed=False)
     await session.execute(delete(AttendanceLock).where(
         AttendanceLock.day == day, AttendanceLock.employee_id.in_(ids)))
     await audit(session, actor=user, action="reopen", entity_type="attendance_day",
@@ -1679,3 +1694,5 @@ from .telegram_delivery import register_delivery_routes
 register_delivery_routes(app)
 from .hour_requests import register_hour_request_routes
 register_hour_request_routes(app)
+from .notifications import register_notification_routes
+register_notification_routes(app)

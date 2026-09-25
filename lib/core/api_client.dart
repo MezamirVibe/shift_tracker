@@ -138,6 +138,8 @@ class ApiClient {
   void checkSessionEpoch(int epoch) => _checkEpoch(epoch);
 
   VoidCallback? onSessionInvalidated;
+  /// Clear device-local delivery bindings before any asynchronous storage work.
+  VoidCallback? onSessionClearing;
 
   static const _accessTokenKey = 'shift_tracker_access_token';
   static const _refreshTokenKey = 'shift_tracker_refresh_token';
@@ -312,6 +314,11 @@ class ApiClient {
 
   Future<void> clearSession() async {
     _sessionEpoch++;
+    try {
+      onSessionClearing?.call();
+    } catch (_) {
+      // A platform integration must never prevent clearing authentication.
+    }
     _refreshInFlight = null;
     _accessToken = null;
     _refreshToken = null;

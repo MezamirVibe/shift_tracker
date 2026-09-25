@@ -204,6 +204,14 @@ class _PreferencesPageState extends State<PreferencesPage> {
                   const SizedBox(height: 20),
                 ],
                 const AppUpdateTile(),
+                ListTile(
+                  leading: const Icon(Icons.notifications_outlined),
+                  title: const Text('Уведомления'),
+                  subtitle: const Text(
+                      'Какие события присылать и когда не беспокоить'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/settings/notifications'),
+                ),
                 const SizedBox(height: 16),
                 Card(
                   child: ExpansionTile(

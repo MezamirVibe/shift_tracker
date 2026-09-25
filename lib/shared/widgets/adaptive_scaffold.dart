@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/auth_models.dart';
 import '../../features/auth/auth_service.dart';
+import '../../features/notifications/notification_bell.dart';
 
 class NavItem {
   final String label;
@@ -161,6 +162,8 @@ class AdaptiveScaffold extends StatelessWidget {
     final desktop = isDesktop(context);
     final resolvedItems = items ?? _defaultItems(context);
     final resolvedIndex = _resolvedIndex(resolvedItems);
+    final showNotifications = const ['/', '/schedule', '/calendar', '/settings']
+        .contains(selectedRoute);
 
     if (!desktop) {
       final primaryItems = resolvedItems
@@ -214,6 +217,7 @@ class AdaptiveScaffold extends StatelessWidget {
                   : null),
           actions: [
             ...actions,
+            if (showNotifications) const NotificationBell(),
             if (selectedRoute != '/settings')
               IconButton(
                 tooltip: 'Настройки',
@@ -395,6 +399,7 @@ class AdaptiveScaffold extends StatelessWidget {
                         ),
                       ),
                       ...actions,
+                      if (showNotifications) const NotificationBell(),
                     ],
                   ),
                 ),

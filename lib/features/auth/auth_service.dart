@@ -7,6 +7,7 @@ import '../../core/api_client.dart';
 import '../../core/id.dart';
 import '../../shared/extensions/iterable_x.dart';
 import '../employees/employees_storage.dart';
+import '../notifications/notifications_service.dart';
 import 'auth_models.dart';
 import 'auth_storage.dart';
 
@@ -38,6 +39,8 @@ class EmployeeAccountCredentials {
 class AuthService extends ChangeNotifier {
   AuthService._() {
     ApiClient.instance.onSessionInvalidated = _handleSessionInvalidated;
+    ApiClient.instance.onSessionClearing =
+        NotificationsService.instance.clearSession;
   }
   static final AuthService instance = AuthService._();
 
@@ -342,6 +345,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await NotificationsService.instance.disconnect();
     await ApiClient.instance.logout();
     _currentUser = null;
     _users = const [];
@@ -350,6 +354,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> changeOrganization() async {
+    await NotificationsService.instance.disconnect();
     await ApiClient.instance.forgetOrganization();
     _currentUser = null;
     _users = const [];

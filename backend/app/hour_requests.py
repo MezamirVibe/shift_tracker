@@ -156,6 +156,8 @@ def register_hour_request_routes(app):
                            additional_minutes=body.additional_minutes, reason=body.reason, baseline=baseline)
         session.add(item)
         await api.audit(session, actor=user, action="request_hours", entity_type="hour_request", entity_id=str(item.id))
+        from .notification_events import request_created
+        await request_created(session, item, employee.full_name)
         await session.commit()
         return output(item, employee.full_name)
 
@@ -259,5 +261,7 @@ def register_hour_request_routes(app):
         item.reviewed_at = utcnow()
         await api.audit(session, actor=user, action="review_hour_request", entity_type="hour_request", entity_id=str(item.id),
                         details={"decision": item.status, "additional_minutes": item.additional_minutes})
+        from .notification_events import request_decided
+        await request_decided(session, item)
         await session.commit()
         return output(item, employee.full_name)

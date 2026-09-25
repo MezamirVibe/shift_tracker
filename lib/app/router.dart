@@ -21,6 +21,8 @@ import '../features/attendance/month_report_page.dart';
 import '../features/attendance/import_timesheet_page.dart';
 import '../features/attendance/delivery_page.dart';
 import '../features/attendance/hour_requests_page.dart';
+import '../features/notifications/notifications_page.dart';
+import '../features/notifications/notification_settings_page.dart';
 
 class AppRouter {
   static const String splash = '/splash';
@@ -82,6 +84,14 @@ class AppRouter {
         return null;
       },
       routes: [
+        GoRoute(
+          path: '/notifications',
+          builder: (_, __) => const NotificationsPage(),
+        ),
+        GoRoute(
+          path: '/settings/notifications',
+          builder: (_, __) => const NotificationSettingsPage(),
+        ),
         GoRoute(
           path: '/hour-requests',
           builder: (_, __) => const HourRequestsPage(),
