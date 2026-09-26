@@ -14,6 +14,7 @@ os.environ.setdefault("JWT_SECRET", "test-only-secret-not-used-outside-tests-123
 os.environ.setdefault("BOOTSTRAP_TOKEN", "test-only-bootstrap-not-used-outside-tests-1234")
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -156,6 +157,55 @@ class TimesheetTests(unittest.IsolatedAsyncioTestCase):
         item = {"employee_id": str(self.a.id), "fact": "worked", "worked_minutes": 480}
         response = await self.client.put("/api/v1/attendance/2026-08-03", json={"records": [item, item]})
         self.assertEqual(response.status_code, 422)
+
+    async def test_vacation_range_marks_every_calendar_day_without_overwriting_facts(self):
+        self.assertEqual((await self.mark("2026-09-22", "worked", 660)).status_code, 200)
+        self.assertEqual((await self.mark("2026-09-23", "vacation", 0)).status_code, 200)
+        closed = await self.client.post("/api/v1/attendance/2026-09-24/close",
+                                        json={"planned_employee_ids": [str(self.a.id)]})
+        self.assertEqual(closed.status_code, 204)
+        response = await self.client.post("/api/v1/attendance/vacation-range", json={
+            "employee_id": str(self.a.id), "date_from": "2026-09-21", "date_to": "2026-09-30",
+            "comment": "Ежегодный отпуск",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(len(result["applied"]), 7)
+        self.assertEqual(result["skipped_existing"], ["2026-09-22"])
+        self.assertEqual(result["already_vacation"], ["2026-09-23"])
+        self.assertEqual(result["skipped_closed"], ["2026-09-24"])
+        attendance = (await self.client.get(
+            "/api/v1/attendance?date_from=2026-09-21&date_to=2026-09-30")).json()
+        for day in ["2026-09-21", "2026-09-26", "2026-09-27", "2026-09-30"]:
+            self.assertEqual(attendance[day][str(self.a.id)]["fact"], "vacation")
+        self.assertEqual(attendance["2026-09-22"][str(self.a.id)]["workedMinutes"], 660)
+        self.assertEqual(attendance["2026-09-24"][str(self.a.id)]["fact"], "absent")
+
+    async def test_vacation_range_rejects_other_department_and_invalid_length(self):
+        body = {"employee_id": str(self.b.id), "date_from": "2026-09-21", "date_to": "2026-09-30"}
+        response = await self.client.post("/api/v1/attendance/vacation-range", json=body)
+        self.assertEqual(response.status_code, 404)
+        body["employee_id"] = str(self.a.id)
+        body["date_to"] = "2028-09-30"
+        response = await self.client.post("/api/v1/attendance/vacation-range", json=body)
+        self.assertEqual(response.status_code, 422)
+
+    async def test_vacation_range_transfer_is_rejected_without_partial_write(self):
+        async with self.sessions() as session:
+            employee = await session.get(Employee, self.a.id)
+            employee.department_id = self.dep_b.id
+            await remember_employee(session, employee, date(2026, 9, 25))
+            await session.commit()
+        response = await self.client.post("/api/v1/attendance/vacation-range", json={
+            "employee_id": str(self.a.id), "date_from": "2026-09-21", "date_to": "2026-09-30",
+        })
+        self.assertEqual(response.status_code, 404)
+        async with self.sessions() as session:
+            records = (await session.scalars(select(AttendanceRecord).where(
+                AttendanceRecord.employee_id == self.a.id,
+                AttendanceRecord.day.between(date(2026, 9, 21), date(2026, 9, 30)),
+            ))).all()
+            self.assertEqual(records, [])
 
     async def test_export_has_full_template_blank_finances_and_last_row_totals(self):
         self.assertEqual((await self.mark("2026-08-31", "businessTrip", 630)).status_code, 200)

@@ -86,4 +86,25 @@ void main() {
     expect(save(draft).workedMinutes, 480);
     expect(save(draft).actualStart, isNull);
   });
+
+  test('editing only total hours keeps previously recorded arrival and exit',
+      () {
+    final draft = AttendanceEditDraft(
+        defaultMinutes: 480,
+        original: const AttendanceRecord(
+            fact: FactStatus.worked,
+            workedMinutes: 480,
+            actualStart: '08:00',
+            actualEnd: '17:00'));
+    final edited = draft.build(
+        fact: FactStatus.worked,
+        tripHasHours: true,
+        calculatedMinutes: 720,
+        actualStart: '08:00',
+        actualEnd: '20:00',
+        manualMinutes: 660);
+    expect(edited.workedMinutes, 660);
+    expect(edited.actualStart, '08:00');
+    expect(edited.actualEnd, '17:00');
+  });
 }

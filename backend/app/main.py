@@ -46,6 +46,7 @@ from .schemas import (
     AttendanceRecordOut,
     AttendanceCloseIn,
     AttendanceReopenIn,
+    VacationRangeIn,
     BootstrapIn,
     DepartmentIn,
     DepartmentOut,
@@ -1556,6 +1557,54 @@ async def set_attendance(
     await session.commit()
     await session.refresh(record)
     return record
+
+
+@app.post("/api/v1/attendance/vacation-range")
+async def set_vacation_range(
+    body: VacationRangeIn,
+    user: User = Depends(require_permission("editAttendance")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    if user.role.scope_kind == ScopeKind.self:
+        raise api_error(403, "Назначать отпуск может только руководитель")
+    scope = await attendance_scope(session, user, body.date_to)
+    days = [body.date_from + timedelta(days=offset)
+            for offset in range((body.date_to - body.date_from).days + 1)]
+    snapshots = {}
+    for day in days:
+        snapshot = scope.snapshot(body.employee_id, day)
+        if (snapshot is None or not snapshot.get("is_active", True) or
+                day < date.fromisoformat(snapshot["schedule_start_date"])):
+            raise api_error(404, "Сотрудник недоступен на одну из выбранных дат")
+        snapshots[day] = snapshot
+
+    applied, already_vacation, skipped_closed, skipped_existing = [], [], [], []
+    for day in days:
+        await lock_attendance_day(session, day)
+        if await session.get(AttendanceLock, (day, body.employee_id)) is not None:
+            skipped_closed.append(day.isoformat())
+            continue
+        existing = await session.get(AttendanceRecord, (day, body.employee_id))
+        if existing is not None:
+            (already_vacation if existing.fact == FactStatus.vacation
+             else skipped_existing).append(day.isoformat())
+            continue
+        await save_attendance_record(
+            session, user, day, body.employee_id,
+            AttendanceRecordIn(fact=FactStatus.vacation, comment=body.comment),
+            snapshots[day], audit_action="vacation_range",
+            audit_reason=body.comment or "Отпуск назначен на период",
+        )
+        applied.append(day.isoformat())
+    await audit(session, actor=user, action="set_vacation_range", entity_type="employee",
+                entity_id=str(body.employee_id), details={
+                    "date_from": body.date_from.isoformat(), "date_to": body.date_to.isoformat(),
+                    "applied": len(applied), "already_vacation": len(already_vacation),
+                    "skipped_closed": len(skipped_closed), "skipped_existing": len(skipped_existing),
+                })
+    await session.commit()
+    return {"applied": applied, "already_vacation": already_vacation,
+            "skipped_closed": skipped_closed, "skipped_existing": skipped_existing}
 
 
 @app.put("/api/v1/attendance/{day}", status_code=204)

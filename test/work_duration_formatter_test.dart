@@ -13,4 +13,13 @@ void main() {
   test('does not display a negative duration', () {
     expect(formatWorkDuration(-15), '0 мин');
   });
+
+  test('accepts direct hours, minutes and Russian decimal separator', () {
+    expect(parseWorkDurationInput('11'), 660);
+    expect(parseWorkDurationInput('8:30'), 510);
+    expect(parseWorkDurationInput('8,5'), 510);
+    expect(formatWorkDurationInput(510), '8:30');
+    expect(parseWorkDurationInput('25'), isNull);
+    expect(parseWorkDurationInput('8:75'), isNull);
+  });
 }

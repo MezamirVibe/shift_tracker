@@ -255,6 +255,19 @@ class AttendanceBulkIn(BaseModel):
     records: list[AttendanceBulkItem] = Field(min_length=1, max_length=500)
 
 
+class VacationRangeIn(BaseModel):
+    employee_id: uuid.UUID
+    date_from: date
+    date_to: date
+    comment: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "VacationRangeIn":
+        if self.date_to < self.date_from or (self.date_to - self.date_from).days > 365:
+            raise ValueError("Период отпуска должен быть от 1 до 366 календарных дней")
+        return self
+
+
 class AttendanceCloseIn(BaseModel):
     planned_employee_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
 

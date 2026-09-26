@@ -84,8 +84,9 @@ class _DayPageState extends State<DayPage> {
       final groups = results[1] as List<GroupModel>;
 
       // ✅ scope по роли
-      final scopedEmployees =
-          AuthService.instance.filterEmployeesByScope(allEmployees);
+      final scopedEmployees = AuthService.instance.filterEmployeesByScope(
+        allEmployees,
+      );
       final visibleEmployees = scopedEmployees
           .where((employee) => _preferences.isGroupVisible(employee.groupId))
           .toList();
@@ -121,7 +122,8 @@ class _DayPageState extends State<DayPage> {
             .whereType<String>()
             .toSet();
         _recordsById = attendance.records;
-        _closed = planned.isNotEmpty &&
+        _closed =
+            planned.isNotEmpty &&
             planned.every((e) => attendance.records[e.id]?.closed == true);
         _loading = false;
       });
@@ -171,6 +173,17 @@ class _DayPageState extends State<DayPage> {
   String _timeValue(TimeOfDay value) =>
       '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 
+  TimeOfDay? _clockInput(String value) {
+    final match = RegExp(r'^(\d{1,2}):([0-5]\d)$').firstMatch(value.trim());
+    if (match == null) return null;
+    final hour = int.parse(match.group(1)!);
+    if (hour > 23) return null;
+    return TimeOfDay(hour: hour, minute: int.parse(match.group(2)!));
+  }
+
+  String _displayDate(DateTime day) =>
+      '${day.day.toString().padLeft(2, '0')}.${day.month.toString().padLeft(2, '0')}.${day.year}';
+
   ({TimeOfDay start, TimeOfDay end}) _defaultTimes(EmployeeModel employee) {
     const start = TimeOfDay(hour: 8, minute: 0);
     final endTotal = start.hour * 60 + employee.shiftHours * 60;
@@ -210,10 +223,7 @@ class _DayPageState extends State<DayPage> {
     );
   }
 
-  String? _deviationLabel(
-    EmployeeModel employee,
-    AttendanceRecord? record,
-  ) {
+  String? _deviationLabel(EmployeeModel employee, AttendanceRecord? record) {
     if (record?.hasWorked != true ||
         record?.actualStart == null ||
         record?.actualEnd == null) {
@@ -244,10 +254,10 @@ class _DayPageState extends State<DayPage> {
     final scheme = Theme.of(context).colorScheme;
 
     Widget item(String label, IconData icon, Color color) => Chip(
-          avatar: Icon(icon, size: 17, color: color),
-          label: Text(label),
-          side: BorderSide(color: color.withValues(alpha: 0.45)),
-        );
+      avatar: Icon(icon, size: 17, color: color),
+      label: Text(label),
+      side: BorderSide(color: color.withValues(alpha: 0.45)),
+    );
 
     if (!deviations.hasDeviations) {
       return Align(
@@ -344,19 +354,17 @@ class _DayPageState extends State<DayPage> {
     }
   }
 
-  Future<void> _setFacts(
-    List<EmployeeModel> employees,
-    FactStatus fact,
-  ) async {
+  Future<void> _setFacts(List<EmployeeModel> employees, FactStatus fact) async {
     if (!_canEditAttendance || employees.isEmpty || _bulkSaving || _closed) {
       return;
     }
-    final editable =
-        employees.where((e) => _recordOf(e)?.closed != true).toList();
+    final editable = employees
+        .where((e) => _recordOf(e)?.closed != true)
+        .toList();
     final targets = fact == FactStatus.worked
         ? editable
-            .where((employee) => _factOf(employee) == FactStatus.none)
-            .toList()
+              .where((employee) => _factOf(employee) == FactStatus.none)
+              .toList()
         : editable;
     if (targets.isEmpty) return;
     final updates = <String, AttendanceRecord>{
@@ -364,8 +372,9 @@ class _DayPageState extends State<DayPage> {
         employee.id: AttendanceRecord(
           fact: fact,
           comment: _recordsById[employee.id]?.comment,
-          workedMinutes:
-              fact == FactStatus.worked ? employee.paidShiftHours * 60 : 0,
+          workedMinutes: fact == FactStatus.worked
+              ? employee.paidShiftHours * 60
+              : 0,
           actualStart: fact == FactStatus.worked
               ? _timeValue(_defaultTimes(employee).start)
               : null,
@@ -389,7 +398,8 @@ class _DayPageState extends State<DayPage> {
       setState(() => _recordsById = previous);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Не удалось выполнить массовую отметку: $error')),
+          content: Text('Не удалось выполнить массовую отметку: $error'),
+        ),
       );
     } finally {
       if (mounted) setState(() => _bulkSaving = false);
@@ -410,14 +420,20 @@ class _DayPageState extends State<DayPage> {
     final targetCount = clear
         ? employees.length
         : employees
-            .where((employee) =>
-                _factOf(employee) == FactStatus.none &&
-                _recordOf(employee)?.closed != true)
-            .length;
+              .where(
+                (employee) =>
+                    _factOf(employee) == FactStatus.none &&
+                    _recordOf(employee)?.closed != true,
+              )
+              .length;
     if (targetCount == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
           content: Text(
-              'Нет незаполненных отметок. Уже указанные отпуска и другие статусы сохранены.')));
+            'Нет незаполненных отметок. Уже указанные отпуска и другие статусы сохранены.',
+          ),
+        ),
+      );
       return;
     }
     final confirmed = await showDialog<bool>(
@@ -443,10 +459,7 @@ class _DayPageState extends State<DayPage> {
       ),
     );
     if (confirmed == true) {
-      await _setFacts(
-        employees,
-        clear ? FactStatus.none : FactStatus.worked,
-      );
+      await _setFacts(employees, clear ? FactStatus.none : FactStatus.worked);
     }
   }
 
@@ -455,21 +468,24 @@ class _DayPageState extends State<DayPage> {
         .where((e) => !_planned.any((p) => p.id == e.id))
         .toList();
     if (candidates.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Все доступные сотрудники уже показаны')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Все доступные сотрудники уже показаны')),
+      );
       return;
     }
     final employee = await showDialog<EmployeeModel>(
-        context: context,
-        builder: (context) => SimpleDialog(
-              title: const Text('Внеплановый выход'),
-              children: [
-                for (final e in candidates)
-                  SimpleDialogOption(
-                      onPressed: () => Navigator.pop(context, e),
-                      child: Text(e.fullName))
-              ],
-            ));
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Внеплановый выход'),
+        children: [
+          for (final e in candidates)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, e),
+              child: Text(e.fullName),
+            ),
+        ],
+      ),
+    );
     if (employee == null || !mounted) return;
     await _edit(employee);
     if (mounted &&
@@ -492,269 +508,367 @@ class _DayPageState extends State<DayPage> {
     final defaults = _defaultTimes(e);
     var actualStart = _parseTime(current?.actualStart, defaults.start);
     var actualEnd = _parseTime(current?.actualEnd, defaults.end);
-    var deductBreak = current?.workedMinutes == null ||
+    final startController = TextEditingController(
+      text: _timeValue(actualStart),
+    );
+    final endController = TextEditingController(text: _timeValue(actualEnd));
+    final hoursController = TextEditingController(
+      text: formatWorkDurationInput(
+        current?.fact.mayHaveHours == true &&
+                (current!.fact != FactStatus.businessTrip ||
+                    current.hasWorked)
+            ? current.workedMinutes ?? e.paidShiftHours * 60
+            : e.paidShiftHours * 60,
+      ),
+    );
+    final formKey = GlobalKey<FormState>();
+    int? manualMinutes;
+    var deductBreak =
+        current?.workedMinutes == null ||
         current!.workedMinutes ==
             _workedMinutesBetween(actualStart, actualEnd, e);
     final draft = AttendanceEditDraft(
-        original: current, defaultMinutes: e.paidShiftHours * 60);
+      original: current,
+      defaultMinutes: e.paidShiftHours * 60,
+    );
     AttendanceRecord editedRecord() => draft.build(
-        fact: fact,
-        tripHasHours: tripHasHours,
-        calculatedMinutes: _workedMinutesBetween(actualStart, actualEnd, e,
-            deductBreak: deductBreak),
-        actualStart: _timeValue(actualStart),
-        actualEnd: _timeValue(actualEnd),
-        comment: comment.trim().isEmpty ? null : comment.trim());
+      fact: fact,
+      tripHasHours: tripHasHours,
+      calculatedMinutes: _workedMinutesBetween(
+        actualStart,
+        actualEnd,
+        e,
+        deductBreak: deductBreak,
+      ),
+      actualStart: _timeValue(actualStart),
+      actualEnd: _timeValue(actualEnd),
+      manualMinutes: manualMinutes,
+      comment: comment.trim().isEmpty ? null : comment.trim(),
+    );
 
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocalState) => LayoutBuilder(
-              builder: (context, dialogConstraints) => AlertDialog(
-                    scrollable: true,
-                    insetPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 24,
-                    ),
-                    title: Text(e.fullName),
-                    content: SizedBox(
-                      width: 560,
-                      child: SingleChildScrollView(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            DropdownButtonFormField<FactStatus>(
-                              itemHeight: null,
-                              isExpanded: true,
-                              initialValue: fact,
-                              items: const [
-                                DropdownMenuItem(
-                                  value: FactStatus.none,
-                                  child: Text('Не заполнено',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                ),
-                                DropdownMenuItem(
-                                  value: FactStatus.worked,
-                                  child: Text('Вышел',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                ),
-                                DropdownMenuItem(
-                                  value: FactStatus.absent,
-                                  child: Text('Неявка',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                ),
-                                DropdownMenuItem(
-                                  value: FactStatus.sick,
-                                  child: Text('Больничный',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                ),
-                                DropdownMenuItem(
-                                  value: FactStatus.vacation,
-                                  child: Text('Отпуск',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                ),
-                                DropdownMenuItem(
-                                    value: FactStatus.businessTrip,
-                                    child: Text('Командировка',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis)),
-                                DropdownMenuItem(
-                                    value: FactStatus.vacationWorked,
-                                    child: Text('Работа в отпуске',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis)),
-                                DropdownMenuItem(
-                                    value: FactStatus.unpaid,
-                                    child: Text('Без содержания',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis)),
-                              ],
-                              onChanged: canEditNow
-                                  ? (v) {
-                                      if (v == null) return;
-                                      setLocalState(() => fact = v);
-                                    }
-                                  : null,
-                              decoration:
-                                  const InputDecoration(labelText: 'Факт'),
-                            ),
-                            if (fact == FactStatus.businessTrip)
-                              SwitchListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: const Text(
-                                      'В командировке отработаны часы'),
-                                  subtitle: const Text(
-                                      'Без часов — «К», с часами — например «11к»'),
-                                  value: tripHasHours,
-                                  onChanged: canEditNow
-                                      ? (value) => setLocalState(
-                                          () => tripHasHours = value)
-                                      : null),
-                            if (fact.mayHaveHours &&
-                                (fact != FactStatus.businessTrip ||
-                                    tripHasHours)) ...[
-                              const SizedBox(height: 16),
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  'План: ${_timeValue(defaults.start)}–${_timeValue(defaults.end)}. '
-                                  'Сохранённые часы не изменятся, пока вы не измените время или перерыв.',
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Builder(
-                                builder: (context) {
-                                  Widget timeButton({
-                                    required bool start,
-                                    required TimeOfDay value,
-                                  }) {
-                                    return OutlinedButton.icon(
-                                      onPressed: canEditNow
-                                          ? () async {
-                                              final selected =
-                                                  await showTimePicker(
-                                                context: context,
-                                                initialTime: value,
-                                                helpText: start
-                                                    ? 'Время начала работы'
-                                                    : 'Время окончания работы',
-                                              );
-                                              if (selected == null) return;
-                                              setLocalState(() {
-                                                draft.timesChanged = true;
-                                                if (start) {
-                                                  actualStart = selected;
-                                                } else {
-                                                  actualEnd = selected;
-                                                }
-                                              });
-                                            }
-                                          : null,
-                                      icon: Icon(
-                                        start ? Icons.login : Icons.logout,
-                                      ),
-                                      label: Text(
-                                        '${start ? 'Начало' : 'Окончание'}: '
-                                        '${_timeValue(value)}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    );
-                                  }
-
-                                  if (dialogConstraints.maxWidth - 80 < 420) {
-                                    return Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        timeButton(
-                                            start: true, value: actualStart),
-                                        const SizedBox(height: 8),
-                                        timeButton(
-                                            start: false, value: actualEnd),
-                                      ],
-                                    );
-                                  }
-                                  return Row(
-                                    children: [
-                                      Expanded(
-                                        child: timeButton(
-                                          start: true,
-                                          value: actualStart,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: timeButton(
-                                          start: false,
-                                          value: actualEnd,
-                                        ),
-                                      ),
-                                    ],
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: 8),
-                              if (draft.timesChanged ||
-                                  current?.actualStart != null)
-                                _deviationSummary(e, actualStart, actualEnd),
-                              const SizedBox(height: 8),
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  'Отработано: ${formatWorkDuration(editedRecord().workedMinutes ?? 0)}',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ),
-                              if (e.breakHours > 0)
-                                SwitchListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  value: deductBreak,
-                                  title: Text(
-                                    'Вычесть стандартный перерыв '
-                                    '(${e.breakHours * 60} мин)',
-                                  ),
-                                  subtitle: const Text(
-                                    'Отключите, если сотрудник не использовал перерыв.',
-                                  ),
-                                  onChanged: canEditNow
-                                      ? (value) => setLocalState(
-                                            () {
-                                              deductBreak = value;
-                                              draft.timesChanged = true;
-                                            },
-                                          )
-                                      : null,
-                                ),
-                            ],
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              initialValue: comment,
-                              onChanged: (value) => comment = value,
-                              enabled: canEditNow,
-                              maxLines: 3,
-                              decoration: const InputDecoration(
-                                labelText: 'Комментарий',
-                                hintText: 'Например: отпустили раньше в 15:00',
+            builder: (context, dialogConstraints) => AlertDialog(
+              scrollable: true,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
+              title: Text(e.fullName),
+              content: SizedBox(
+                width: 560,
+                child: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DropdownButtonFormField<FactStatus>(
+                          itemHeight: null,
+                          isExpanded: true,
+                          initialValue: fact,
+                          items: const [
+                            DropdownMenuItem(
+                              value: FactStatus.none,
+                              child: Text(
+                                'Не заполнено',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            if (!canEditNow) ...[
-                              const SizedBox(height: 12),
+                            DropdownMenuItem(
+                              value: FactStatus.worked,
+                              child: Text(
+                                'Вышел',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: FactStatus.absent,
+                              child: Text(
+                                'Неявка',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: FactStatus.sick,
+                              child: Text(
+                                'Больничный',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: FactStatus.vacation,
+                              child: Text(
+                                'Отпуск',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: FactStatus.businessTrip,
+                              child: Text(
+                                'Командировка',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: FactStatus.vacationWorked,
+                              child: Text(
+                                'Работа в отпуске',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value: FactStatus.unpaid,
+                              child: Text(
+                                'Без содержания',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                          onChanged: canEditNow
+                              ? (v) {
+                                  if (v == null) return;
+                                  setLocalState(() => fact = v);
+                                }
+                              : null,
+                          decoration: const InputDecoration(labelText: 'Факт'),
+                        ),
+                        if (fact == FactStatus.businessTrip)
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('В командировке отработаны часы'),
+                            subtitle: const Text(
+                              'Без часов — «К», с часами — например «11к»',
+                            ),
+                            value: tripHasHours,
+                            onChanged: canEditNow
+                                ? (value) =>
+                                      setLocalState(() => tripHasHours = value)
+                                : null,
+                          ),
+                        if (fact.mayHaveHours &&
+                            (fact != FactStatus.businessTrip ||
+                                tripHasHours)) ...[
+                          const SizedBox(height: 16),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'План: ${_timeValue(defaults.start)}–${_timeValue(defaults.end)}. '
+                              'Можно указать итог часов или время прихода и ухода.',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: hoursController,
+                            enabled: canEditNow,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            autovalidateMode:
+                                AutovalidateMode.onUserInteraction,
+                            decoration: const InputDecoration(
+                              labelText: 'Учтено часов',
+                              hintText: 'Например, 8 или 11',
+                              helperText: 'Можно также ввести 8:30 или 8,5',
+                              prefixIcon: Icon(Icons.more_time),
+                            ),
+                            validator: (value) {
+                              final minutes = parseWorkDurationInput(
+                                value ?? '',
+                              );
+                              if (minutes == null) {
+                                return 'Введите от 0 до 24 часов';
+                              }
+                              if (fact == FactStatus.vacationWorked &&
+                                  minutes == 0) {
+                                return 'Укажите часы работы в отпуске';
+                              }
+                              return null;
+                            },
+                            onChanged: (value) {
+                              final minutes = parseWorkDurationInput(value);
+                              if (minutes != null) {
+                                setLocalState(() => manualMinutes = minutes);
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 12),
                               const Align(
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  'Режим просмотра: нет прав или день закрыт.',
+                                  'Приход и уход (необязательно). '
+                                  'Изменение только часов не меняет это время. '
+                                  'Если время не записано, показаны плановые значения для ввода.',
                                 ),
                               ),
-                            ],
-                          ],
+                          const SizedBox(height: 8),
+                          Builder(
+                            builder: (context) {
+                              Widget timeField({required bool start}) {
+                                return TextFormField(
+                                  controller: start
+                                      ? startController
+                                      : endController,
+                                  enabled: canEditNow,
+                                  keyboardType: TextInputType.datetime,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                  decoration: InputDecoration(
+                                    labelText: start ? 'Приход' : 'Уход',
+                                    hintText: '08:00',
+                                    prefixIcon: Icon(
+                                      start ? Icons.login : Icons.logout,
+                                    ),
+                                  ),
+                                  validator: (value) =>
+                                      _clockInput(value ?? '') == null
+                                      ? 'Время ЧЧ:ММ'
+                                      : null,
+                                  onChanged: (value) {
+                                    final parsed = _clockInput(value);
+                                    if (parsed == null) return;
+                                    setLocalState(() {
+                                      if (start) {
+                                        actualStart = parsed;
+                                      } else {
+                                        actualEnd = parsed;
+                                      }
+                                      draft.timesChanged = true;
+                                      manualMinutes = null;
+                                      hoursController.text =
+                                          formatWorkDurationInput(
+                                            _workedMinutesBetween(
+                                              actualStart,
+                                              actualEnd,
+                                              e,
+                                              deductBreak: deductBreak,
+                                            ),
+                                          );
+                                    });
+                                  },
+                                );
+                              }
+
+                              if (dialogConstraints.maxWidth - 80 < 420) {
+                                return Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    timeField(start: true),
+                                    const SizedBox(height: 8),
+                                    timeField(start: false),
+                                  ],
+                                );
+                              }
+                              return Row(
+                                children: [
+                                  Expanded(child: timeField(start: true)),
+                                  const SizedBox(width: 12),
+                                  Expanded(child: timeField(start: false)),
+                                ],
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          if (draft.timesChanged ||
+                              current?.actualStart != null)
+                            _deviationSummary(e, actualStart, actualEnd),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Отработано: ${formatWorkDuration(editedRecord().workedMinutes ?? 0)}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                          if (e.breakHours > 0)
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: deductBreak,
+                              title: Text(
+                                'Вычесть стандартный перерыв '
+                                '(${e.breakHours * 60} мин)',
+                              ),
+                              subtitle: const Text(
+                                'Отключите, если сотрудник не использовал перерыв.',
+                              ),
+                              onChanged: canEditNow
+                                  ? (value) => setLocalState(() {
+                                      deductBreak = value;
+                                      draft.timesChanged = true;
+                                      manualMinutes = null;
+                                      hoursController.text =
+                                          formatWorkDurationInput(
+                                            _workedMinutesBetween(
+                                              actualStart,
+                                              actualEnd,
+                                              e,
+                                              deductBreak: value,
+                                            ),
+                                          );
+                                    })
+                                  : null,
+                            ),
+                        ],
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          initialValue: comment,
+                          onChanged: (value) => comment = value,
+                          enabled: canEditNow,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            labelText: 'Комментарий',
+                            hintText: 'Например: отпустили раньше в 15:00',
+                          ),
                         ),
-                      ),
+                        if (!canEditNow) ...[
+                          const SizedBox(height: 12),
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Режим просмотра: нет прав или день закрыт.',
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        child: Text(canEditNow ? 'Отмена' : 'Закрыть'),
-                      ),
-                      if (canEditNow)
-                        FilledButton(
-                          onPressed: () => Navigator.of(context).pop(true),
-                          child: const Text('Сохранить'),
-                        ),
-                    ],
-                  )),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(canEditNow ? 'Отмена' : 'Закрыть'),
+                ),
+                if (canEditNow)
+                  FilledButton(
+                    onPressed: () {
+                      if (formKey.currentState?.validate() == true) {
+                        Navigator.of(context).pop(true);
+                      }
+                    },
+                    child: const Text('Сохранить'),
+                  ),
+              ],
+            ),
+          ),
         );
       },
     );
 
-    final edited = editedRecord();
-    if (saved != true) return;
+    final edited = saved == true ? editedRecord() : null;
+    if (edited == null) return;
 
     await _setFact(
       e,
@@ -765,6 +879,159 @@ class _DayPageState extends State<DayPage> {
       actualEnd: edited.actualEnd,
     );
   }
+
+  Future<void> _assignVacation() async {
+    if (!_canEditAttendance || _bulkSaving || _allDayEmployees.isEmpty) return;
+    final employees = [..._allDayEmployees]
+      ..sort((a, b) => a.fullName.compareTo(b.fullName));
+    EmployeeModel? employee = employees.length == 1 ? employees.first : null;
+    var range = DateTimeRange(
+      start: _day,
+      end: _day.add(const Duration(days: 9)),
+    );
+    var comment = '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setLocalState) => AlertDialog(
+          scrollable: true,
+          title: const Text('Отпуск на период'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<EmployeeModel>(
+                  isExpanded: true,
+                  initialValue: employee,
+                  decoration: const InputDecoration(labelText: 'Сотрудник'),
+                  items: [
+                    for (final item in employees)
+                      DropdownMenuItem(
+                        value: item,
+                        child: Text(
+                          item.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) => setLocalState(() => employee = value),
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final selected = await showDateRangePicker(
+                      context: dialogContext,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                      initialDateRange: range,
+                      helpText: 'Выберите первый и последний день отпуска',
+                    );
+                    if (selected != null && dialogContext.mounted) {
+                      setLocalState(() => range = selected);
+                    }
+                  },
+                  icon: const Icon(Icons.date_range),
+                  label: Text(
+                    '${_displayDate(range.start)} – '
+                    '${_displayDate(range.end)}',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text('Обе даты включены. Отпуск отметится и в выходные.'),
+                if (range.duration.inDays > 365)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text('Максимум 366 календарных дней.'),
+                  ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  maxLength: 4000,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Комментарий (необязательно)',
+                  ),
+                  onChanged: (value) => comment = value,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Уже заполненные и закрытые дни не меняются. '
+                  'После сохранения покажем, какие даты пропущены.',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: employee == null || range.duration.inDays > 365
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Назначить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || employee == null || !mounted) return;
+    setState(() => _bulkSaving = true);
+    try {
+      final result = await _attendanceStorage.setVacationRange(
+        employeeId: employee!.id,
+        dateFrom: _dateIsoOf(range.start),
+        dateTo: _dateIsoOf(range.end),
+        comment: comment.trim().isEmpty ? null : comment.trim(),
+      );
+      if (!mounted) return;
+      await _load(force: true);
+      if (!mounted) return;
+      final skipped = [
+        if (result.skippedExisting.isNotEmpty)
+          'Уже заполнены: ${result.skippedExisting.map((day) => _displayDate(DateTime.parse(day))).join(', ')}',
+        if (result.skippedClosed.isNotEmpty)
+          'Дни закрыты: ${result.skippedClosed.map((day) => _displayDate(DateTime.parse(day))).join(', ')}',
+      ];
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          scrollable: true,
+          title: const Text('Отпуск сохранён'),
+          content: Text(
+            [
+              'Отмечено новых дней: ${result.applied.length}.',
+              if (result.alreadyVacation.isNotEmpty)
+                'Уже были в отпуске: ${result.alreadyVacation.length}.',
+              ...skipped,
+            ].join('\n\n'),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Понятно'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось назначить отпуск: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _bulkSaving = false);
+    }
+  }
+
+  String _dateIsoOf(DateTime day) =>
+      '${day.year.toString().padLeft(4, '0')}-'
+      '${day.month.toString().padLeft(2, '0')}-'
+      '${day.day.toString().padLeft(2, '0')}';
 
   Future<void> _closeDay() async {
     if (!_canEditAttendance || _bulkSaving || _savingEmployeeIds.isNotEmpty) {
@@ -804,7 +1071,8 @@ class _DayPageState extends State<DayPage> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось закрыть день: $error')));
+          SnackBar(content: Text('Не удалось закрыть день: $error')),
+        );
       }
     } finally {
       if (mounted) setState(() => _bulkSaving = false);
@@ -822,7 +1090,8 @@ class _DayPageState extends State<DayPage> {
         scrollable: true,
         title: const Text('Переоткрыть день?'),
         content: const Text(
-            'День снова станет доступен для изменений.\n\nПродолжить?'),
+          'День снова станет доступен для изменений.\n\nПродолжить?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -841,12 +1110,15 @@ class _DayPageState extends State<DayPage> {
     setState(() => _bulkSaving = true);
     try {
       await _attendanceStorage.reopenDay(
-          dateIso: _dateIso, employeeIds: _planned.map((e) => e.id).toList());
+        dateIso: _dateIso,
+        employeeIds: _planned.map((e) => e.id).toList(),
+      );
       if (mounted) await _load();
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось переоткрыть день: $error')));
+          SnackBar(content: Text('Не удалось переоткрыть день: $error')),
+        );
       }
     } finally {
       if (mounted) setState(() => _bulkSaving = false);
@@ -984,20 +1256,22 @@ class _DayPageState extends State<DayPage> {
         return false;
       }
       if (_search.isEmpty) return true;
-      final haystack = '${employee.fullName} ${employee.position} '
-              '${_groupName(employee.groupId)} ${_factLabel(_factOf(employee))}'
-          .toLowerCase();
+      final haystack =
+          '${employee.fullName} ${employee.position} '
+                  '${_groupName(employee.groupId)} ${_factLabel(_factOf(employee))}'
+              .toLowerCase();
       return haystack.contains(_search);
     }).toList();
   }
 
   List<String> get _availablePositions {
-    final result = _planned
-        .map((employee) => employee.position.trim())
-        .where((position) => position.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final result =
+        _planned
+            .map((employee) => employee.position.trim())
+            .where((position) => position.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return result;
   }
 
@@ -1009,7 +1283,8 @@ class _DayPageState extends State<DayPage> {
     final minutes = _minutesFor(employee, fact);
     final duration = formatWorkDuration(minutes);
     final record = _recordOf(employee);
-    final actualTime = fact.mayHaveHours &&
+    final actualTime =
+        fact.mayHaveHours &&
             record?.actualStart != null &&
             record?.actualEnd != null
         ? '${record!.actualStart}–${record.actualEnd}'
@@ -1028,8 +1303,9 @@ class _DayPageState extends State<DayPage> {
       await _setFact(
         employee,
         value,
-        workedMinutes:
-            value == FactStatus.worked ? employee.paidShiftHours * 60 : 0,
+        workedMinutes: value == FactStatus.worked
+            ? employee.paidShiftHours * 60
+            : 0,
         actualStart: value == FactStatus.worked
             ? (record?.actualStart ?? _timeValue(defaults.start))
             : null,
@@ -1057,8 +1333,9 @@ class _DayPageState extends State<DayPage> {
             : scheme.onPrimaryContainer;
         return Expanded(
           child: OutlinedButton.icon(
-            onPressed:
-                canChange && !selected ? () => setQuickFact(value) : null,
+            onPressed: canChange && !selected
+                ? () => setQuickFact(value)
+                : null,
             style: OutlinedButton.styleFrom(
               backgroundColor: selected ? selectedColor : null,
               foregroundColor: selected ? selectedForeground : null,
@@ -1280,12 +1557,12 @@ class _DayPageState extends State<DayPage> {
               onTap: forcedOpen
                   ? null
                   : () => setState(() {
-                        if (expanded) {
-                          _expandedGroups.remove(name);
-                        } else {
-                          _expandedGroups.add(name);
-                        }
-                      }),
+                      if (expanded) {
+                        _expandedGroups.remove(name);
+                      } else {
+                        _expandedGroups.add(name);
+                      }
+                    }),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
                 child: Row(
@@ -1322,10 +1599,10 @@ class _DayPageState extends State<DayPage> {
                 onPressed: _bulkSaving
                     ? null
                     : () => _toggleAllWorked(
-                          row,
-                          markTitle: 'Вся группа вышла?',
-                          clearTitle: 'Снять отметки у всей группы?',
-                        ),
+                        row,
+                        markTitle: 'Вся группа вышла?',
+                        clearTitle: 'Снять отметки у всей группы?',
+                      ),
                 icon: Icon(
                   _allWorked(row) ? Icons.remove_done : Icons.done_all,
                   size: 18,
@@ -1335,8 +1612,10 @@ class _DayPageState extends State<DayPage> {
                 ),
                 style: FilledButton.styleFrom(
                   visualDensity: VisualDensity.compact,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                 ),
               ),
             ),
@@ -1353,16 +1632,21 @@ class _DayPageState extends State<DayPage> {
         '${_day.day.toString().padLeft(2, '0')}.${_day.month.toString().padLeft(2, '0')}.${_day.year}';
 
     final plannedCount = _planned.length;
-    final workedCount =
-        _planned.where((e) => _recordOf(e)?.hasWorked == true).length;
-    final absentCount =
-        _planned.where((e) => _factOf(e) == FactStatus.absent).length;
-    final sickCount =
-        _planned.where((e) => _factOf(e) == FactStatus.sick).length;
-    final vacationCount =
-        _planned.where((e) => _factOf(e) == FactStatus.vacation).length;
-    final unfilledCount =
-        _planned.where((e) => _factOf(e) == FactStatus.none).length;
+    final workedCount = _planned
+        .where((e) => _recordOf(e)?.hasWorked == true)
+        .length;
+    final absentCount = _planned
+        .where((e) => _factOf(e) == FactStatus.absent)
+        .length;
+    final sickCount = _planned
+        .where((e) => _factOf(e) == FactStatus.sick)
+        .length;
+    final vacationCount = _planned
+        .where((e) => _factOf(e) == FactStatus.vacation)
+        .length;
+    final unfilledCount = _planned
+        .where((e) => _factOf(e) == FactStatus.none)
+        .length;
     final visibleCount = _filteredPlanned.length;
 
     final canEditNow = _canEditAttendance && !_closed;
@@ -1385,16 +1669,18 @@ class _DayPageState extends State<DayPage> {
       actions: [
         if (_canEditAttendance && !_loading)
           IconButton(
-              tooltip: 'Добавить внеплановый выход',
-              onPressed: _bulkSaving ? null : _addUnplanned,
-              icon: const Icon(Icons.person_add_alt_1)),
+            tooltip: 'Добавить внеплановый выход',
+            onPressed: _bulkSaving ? null : _addUnplanned,
+            icon: const Icon(Icons.person_add_alt_1),
+          ),
         if (_canEditAttendance &&
             !_closed &&
             _planned.any((e) => _recordOf(e)?.closed == true))
           IconButton(
-              tooltip: 'Переоткрыть закрытые отметки',
-              onPressed: _reopenDay,
-              icon: const Icon(Icons.lock_open)),
+            tooltip: 'Переоткрыть закрытые отметки',
+            onPressed: _reopenDay,
+            icon: const Icon(Icons.lock_open),
+          ),
         IconButton(
           tooltip: 'Обновить',
           icon: const Icon(Icons.refresh),
@@ -1427,306 +1713,365 @@ class _DayPageState extends State<DayPage> {
             : NestedScrollView(
                 headerSliverBuilder: (context, innerBoxIsScrolled) => [
                   SliverToBoxAdapter(
-                      child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (!_canEditAttendance)
-                        const Card(
-                          child: Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Row(
-                              children: [
-                                Icon(Icons.visibility_outlined),
-                                SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    'Режим просмотра: у твоей роли нет права "Редактирование факта".',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (!_canEditAttendance)
+                          const Card(
+                            child: Padding(
+                              padding: EdgeInsets.all(12),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.visibility_outlined),
+                                  SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      'Режим просмотра: у твоей роли нет права "Редактирование факта".',
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      if (_closed)
-                        const Card(
-                          child: Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Row(
-                              children: [
-                                Icon(Icons.lock),
-                                SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    'День закрыт.\nИзменение факта отключено.',
+                        if (_closed)
+                          const Card(
+                            child: Padding(
+                              padding: EdgeInsets.all(12),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.lock),
+                                  SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      'День закрыт.\nИзменение факта отключено.',
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      Card(
-                        child: Padding(
-                          padding: EdgeInsets.all(isPhone ? 12 : 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (isPhone)
-                                InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTap: () => setState(() {
-                                    _mobileToolsExpanded =
-                                        !_mobileToolsExpanded;
-                                  }),
-                                  child: Padding(
-                                    padding:
-                                        const EdgeInsets.symmetric(vertical: 4),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Wrap(
-                                            spacing: 12,
-                                            runSpacing: 4,
-                                            children: [
-                                              Text('План $plannedCount'),
-                                              Text('Вышли $workedCount'),
-                                              Text('Неявка $absentCount'),
-                                              Text(
-                                                'Ожидают $unfilledCount',
-                                                style: TextStyle(
-                                                  color: unfilledCount > 0
-                                                      ? Theme.of(context)
-                                                          .colorScheme
-                                                          .error
-                                                      : null,
-                                                  fontWeight: FontWeight.w600,
+                        Card(
+                          child: Padding(
+                            padding: EdgeInsets.all(isPhone ? 12 : 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (isPhone)
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(10),
+                                    onTap: () => setState(() {
+                                      _mobileToolsExpanded =
+                                          !_mobileToolsExpanded;
+                                    }),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 4,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Wrap(
+                                              spacing: 12,
+                                              runSpacing: 4,
+                                              children: [
+                                                Text('План $plannedCount'),
+                                                Text('Вышли $workedCount'),
+                                                Text('Неявка $absentCount'),
+                                                Text(
+                                                  'Ожидают $unfilledCount',
+                                                  style: TextStyle(
+                                                    color: unfilledCount > 0
+                                                        ? Theme.of(
+                                                            context,
+                                                          ).colorScheme.error
+                                                        : null,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          Icon(
+                                            _mobileToolsExpanded
+                                                ? Icons.expand_less
+                                                : Icons.tune,
+                                            size: 21,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Wrap(
+                                    spacing: 16,
+                                    runSpacing: 8,
+                                    children: [
+                                      Text('По плану: $plannedCount'),
+                                      Text('Вышли: $workedCount'),
+                                      Text('Неявка: $absentCount'),
+                                      Text('Больничный: $sickCount'),
+                                      Text('Отпуск: $vacationCount'),
+                                      Text(
+                                        'Не заполнено: $unfilledCount',
+                                        style: TextStyle(
+                                          color: unfilledCount > 0
+                                              ? Theme.of(
+                                                  context,
+                                                ).colorScheme.error
+                                              : null,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                if (_canEditAttendance &&
+                                    _allDayEmployees.isNotEmpty) ...[
+                                  const SizedBox(height: 12),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: FilledButton.tonalIcon(
+                                      onPressed: _bulkSaving
+                                          ? null
+                                          : _assignVacation,
+                                      icon: const Icon(Icons.beach_access),
+                                      label: const Text('Отпуск на период'),
+                                    ),
+                                  ),
+                                ],
+                                if (!isPhone || _mobileToolsExpanded) ...[
+                                  if (isPhone && _canEditAttendance) ...[
+                                    const SizedBox(height: 10),
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: _closed
+                                          ? OutlinedButton.icon(
+                                              onPressed: _reopenDay,
+                                              icon: const Icon(
+                                                Icons.lock_open,
+                                                size: 18,
+                                              ),
+                                              label: const Text(
+                                                'Переоткрыть день',
+                                              ),
+                                              style: OutlinedButton.styleFrom(
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                              ),
+                                            )
+                                          : FilledButton.tonalIcon(
+                                              onPressed:
+                                                  canEditNow &&
+                                                      _planned.isNotEmpty &&
+                                                      !_bulkSaving
+                                                  ? _closeDay
+                                                  : null,
+                                              icon: const Icon(
+                                                Icons.lock,
+                                                size: 18,
+                                              ),
+                                              label: const Text('Закрыть день'),
+                                              style: FilledButton.styleFrom(
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                              ),
+                                            ),
+                                    ),
+                                  ],
+                                  const Divider(height: 24),
+                                  LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final narrow = constraints.maxWidth < 760;
+                                      final search = TextField(
+                                        controller: _searchController,
+                                        decoration: InputDecoration(
+                                          labelText: 'Найти сотрудника',
+                                          hintText: 'ФИО, должность или группа',
+                                          prefixIcon: const Icon(Icons.search),
+                                          suffixIcon: _search.isEmpty
+                                              ? null
+                                              : IconButton(
+                                                  onPressed:
+                                                      _searchController.clear,
+                                                  icon: const Icon(Icons.clear),
+                                                ),
+                                          border: const OutlineInputBorder(),
+                                        ),
+                                      );
+                                      final status =
+                                          DropdownButtonFormField<FactStatus?>(
+                                            itemHeight: null,
+                                            isExpanded: true,
+                                            initialValue: _statusFilter,
+                                            decoration: const InputDecoration(
+                                              labelText: 'Показать статус',
+                                              border: OutlineInputBorder(),
+                                            ),
+                                            items: const [
+                                              DropdownMenuItem<FactStatus?>(
+                                                value: null,
+                                                child: Text(
+                                                  'Все статусы',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem<FactStatus?>(
+                                                value: FactStatus.none,
+                                                child: Text(
+                                                  'Не заполнено',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem<FactStatus?>(
+                                                value: FactStatus.worked,
+                                                child: Text(
+                                                  'Вышел',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem<FactStatus?>(
+                                                value: FactStatus.absent,
+                                                child: Text(
+                                                  'Неявка',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem<FactStatus?>(
+                                                value: FactStatus.sick,
+                                                child: Text(
+                                                  'Больничный',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem<FactStatus?>(
+                                                value: FactStatus.vacation,
+                                                child: Text(
+                                                  'Отпуск',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: FactStatus.businessTrip,
+                                                child: Text(
+                                                  'Командировка',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem(
+                                                value:
+                                                    FactStatus.vacationWorked,
+                                                child: Text(
+                                                  'Работа в отпуске',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              DropdownMenuItem(
+                                                value: FactStatus.unpaid,
+                                                child: Text(
+                                                  'Без содержания',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                 ),
                                               ),
                                             ],
-                                          ),
-                                        ),
-                                        Icon(
-                                          _mobileToolsExpanded
-                                              ? Icons.expand_less
-                                              : Icons.tune,
-                                          size: 21,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                )
-                              else
-                                Wrap(
-                                  spacing: 16,
-                                  runSpacing: 8,
-                                  children: [
-                                    Text('По плану: $plannedCount'),
-                                    Text('Вышли: $workedCount'),
-                                    Text('Неявка: $absentCount'),
-                                    Text('Больничный: $sickCount'),
-                                    Text('Отпуск: $vacationCount'),
-                                    Text(
-                                      'Не заполнено: $unfilledCount',
-                                      style: TextStyle(
-                                        color: unfilledCount > 0
-                                            ? Theme.of(context)
-                                                .colorScheme
-                                                .error
-                                            : null,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              if (!isPhone || _mobileToolsExpanded) ...[
-                                if (isPhone && _canEditAttendance) ...[
-                                  const SizedBox(height: 10),
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: _closed
-                                        ? OutlinedButton.icon(
-                                            onPressed: _reopenDay,
-                                            icon: const Icon(
-                                              Icons.lock_open,
-                                              size: 18,
+                                            onChanged: (value) => setState(
+                                              () => _statusFilter = value,
                                             ),
-                                            label:
-                                                const Text('Переоткрыть день'),
-                                            style: OutlinedButton.styleFrom(
-                                              visualDensity:
-                                                  VisualDensity.compact,
+                                          );
+                                      final position =
+                                          DropdownButtonFormField<String?>(
+                                            itemHeight: null,
+                                            initialValue: _positionFilter,
+                                            isExpanded: true,
+                                            decoration: const InputDecoration(
+                                              labelText: 'Должность',
+                                              border: OutlineInputBorder(),
                                             ),
-                                          )
-                                        : FilledButton.tonalIcon(
-                                            onPressed: canEditNow &&
-                                                    _planned.isNotEmpty &&
-                                                    !_bulkSaving
-                                                ? _closeDay
-                                                : null,
-                                            icon: const Icon(Icons.lock,
-                                                size: 18),
-                                            label: const Text('Закрыть день'),
-                                            style: FilledButton.styleFrom(
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                            ),
-                                          ),
-                                  ),
-                                ],
-                                const Divider(height: 24),
-                                LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    final narrow = constraints.maxWidth < 760;
-                                    final search = TextField(
-                                      controller: _searchController,
-                                      decoration: InputDecoration(
-                                        labelText: 'Найти сотрудника',
-                                        hintText: 'ФИО, должность или группа',
-                                        prefixIcon: const Icon(Icons.search),
-                                        suffixIcon: _search.isEmpty
-                                            ? null
-                                            : IconButton(
-                                                onPressed:
-                                                    _searchController.clear,
-                                                icon: const Icon(Icons.clear),
+                                            items: [
+                                              const DropdownMenuItem<String?>(
+                                                value: null,
+                                                child: Text(
+                                                  'Все должности',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
                                               ),
-                                        border: const OutlineInputBorder(),
-                                      ),
-                                    );
-                                    final status =
-                                        DropdownButtonFormField<FactStatus?>(
-                                      itemHeight: null,
-                                      isExpanded: true,
-                                      initialValue: _statusFilter,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Показать статус',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      items: const [
-                                        DropdownMenuItem<FactStatus?>(
-                                          value: null,
-                                          child: Text('Все статусы',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis),
-                                        ),
-                                        DropdownMenuItem<FactStatus?>(
-                                          value: FactStatus.none,
-                                          child: Text('Не заполнено',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis),
-                                        ),
-                                        DropdownMenuItem<FactStatus?>(
-                                          value: FactStatus.worked,
-                                          child: Text('Вышел',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis),
-                                        ),
-                                        DropdownMenuItem<FactStatus?>(
-                                          value: FactStatus.absent,
-                                          child: Text('Неявка',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis),
-                                        ),
-                                        DropdownMenuItem<FactStatus?>(
-                                          value: FactStatus.sick,
-                                          child: Text('Больничный',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis),
-                                        ),
-                                        DropdownMenuItem<FactStatus?>(
-                                          value: FactStatus.vacation,
-                                          child: Text('Отпуск',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis),
-                                        ),
-                                        DropdownMenuItem(
-                                            value: FactStatus.businessTrip,
-                                            child: Text('Командировка',
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis)),
-                                        DropdownMenuItem(
-                                            value: FactStatus.vacationWorked,
-                                            child: Text('Работа в отпуске',
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis)),
-                                        DropdownMenuItem(
-                                            value: FactStatus.unpaid,
-                                            child: Text('Без содержания',
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis)),
-                                      ],
-                                      onChanged: (value) =>
-                                          setState(() => _statusFilter = value),
-                                    );
-                                    final position =
-                                        DropdownButtonFormField<String?>(
-                                      itemHeight: null,
-                                      initialValue: _positionFilter,
-                                      isExpanded: true,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Должность',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      items: [
-                                        const DropdownMenuItem<String?>(
-                                          value: null,
-                                          child: Text('Все должности',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis),
-                                        ),
-                                        for (final value in _availablePositions)
-                                          DropdownMenuItem<String?>(
-                                            value: value,
-                                            child: Text(
-                                              value,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
+                                              for (final value
+                                                  in _availablePositions)
+                                                DropdownMenuItem<String?>(
+                                                  value: value,
+                                                  child: Text(
+                                                    value,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                            ],
+                                            onChanged: (value) => setState(
+                                              () => _positionFilter = value,
                                             ),
-                                          ),
-                                      ],
-                                      onChanged: (value) => setState(
-                                          () => _positionFilter = value),
-                                    );
-                                    if (narrow) {
-                                      return Column(
+                                          );
+                                      if (narrow) {
+                                        return Column(
+                                          children: [
+                                            search,
+                                            const SizedBox(height: 10),
+                                            status,
+                                            if (_availablePositions.length >
+                                                1) ...[
+                                              const SizedBox(height: 10),
+                                              position,
+                                            ],
+                                          ],
+                                        );
+                                      }
+                                      return Row(
                                         children: [
-                                          search,
-                                          const SizedBox(height: 10),
-                                          status,
+                                          Expanded(child: search),
+                                          const SizedBox(width: 10),
+                                          SizedBox(width: 220, child: status),
                                           if (_availablePositions.length >
                                               1) ...[
-                                            const SizedBox(height: 10),
-                                            position,
+                                            const SizedBox(width: 10),
+                                            SizedBox(
+                                              width: 260,
+                                              child: position,
+                                            ),
                                           ],
                                         ],
                                       );
-                                    }
-                                    return Row(
-                                      children: [
-                                        Expanded(child: search),
-                                        const SizedBox(width: 10),
-                                        SizedBox(width: 220, child: status),
-                                        if (_availablePositions.length > 1) ...[
-                                          const SizedBox(width: 10),
-                                          SizedBox(width: 260, child: position),
-                                        ],
-                                      ],
-                                    );
-                                  },
-                                ),
-                                const SizedBox(height: 12),
-                                Wrap(
-                                  spacing: 10,
-                                  runSpacing: 10,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    if (canEditNow)
-                                      FilledButton.icon(
-                                        onPressed: _bulkSaving
-                                            ? null
-                                            : () => _toggleAllWorked(
+                                    },
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      if (canEditNow)
+                                        FilledButton.icon(
+                                          onPressed: _bulkSaving
+                                              ? null
+                                              : () => _toggleAllWorked(
                                                   _filteredPlanned,
                                                   markTitle: !_hasActiveFilters
                                                       ? 'Вся смена вышла?'
@@ -1735,111 +2080,126 @@ class _DayPageState extends State<DayPage> {
                                                       ? 'Снять отметки у всей смены?'
                                                       : 'Снять отметки у найденных?',
                                                 ),
-                                        icon: Icon(
-                                          _allWorked(_filteredPlanned)
-                                              ? Icons.remove_done
-                                              : Icons.done_all,
-                                          size: 18,
-                                        ),
-                                        label: Text(
-                                          _allWorked(_filteredPlanned)
-                                              ? (!_hasActiveFilters
-                                                  ? (isPhone
-                                                      ? 'Снять отметки'
-                                                      : 'Снять отметки у всей смены')
-                                                  : (isPhone
-                                                      ? 'Снять у найденных'
-                                                      : 'Снять отметки у найденных'))
-                                              : (!_hasActiveFilters
-                                                  ? (isPhone
-                                                      ? 'Отметить всех'
-                                                      : 'Отметить всю смену вышедшей')
-                                                  : (isPhone
-                                                      ? 'Отметить найденных'
-                                                      : 'Отметить найденных вышедшими')),
-                                        ),
-                                        style: FilledButton.styleFrom(
-                                          visualDensity: VisualDensity.compact,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 8,
+                                          icon: Icon(
+                                            _allWorked(_filteredPlanned)
+                                                ? Icons.remove_done
+                                                : Icons.done_all,
+                                            size: 18,
+                                          ),
+                                          label: Text(
+                                            _allWorked(_filteredPlanned)
+                                                ? (!_hasActiveFilters
+                                                      ? (isPhone
+                                                            ? 'Снять отметки'
+                                                            : 'Снять отметки у всей смены')
+                                                      : (isPhone
+                                                            ? 'Снять у найденных'
+                                                            : 'Снять отметки у найденных'))
+                                                : (!_hasActiveFilters
+                                                      ? (isPhone
+                                                            ? 'Отметить всех'
+                                                            : 'Отметить всю смену вышедшей')
+                                                      : (isPhone
+                                                            ? 'Отметить найденных'
+                                                            : 'Отметить найденных вышедшими')),
+                                          ),
+                                          style: FilledButton.styleFrom(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    if (_planned
-                                            .map((employee) => employee.groupId)
-                                            .toSet()
-                                            .length >
-                                        1)
-                                      FilterChip(
-                                        avatar: const Icon(
+                                      if (_planned
+                                              .map(
+                                                (employee) => employee.groupId,
+                                              )
+                                              .toSet()
+                                              .length >
+                                          1)
+                                        FilterChip(
+                                          avatar: const Icon(
                                             Icons.groups_2_outlined,
-                                            size: 18),
-                                        label: Text(
-                                          isPhone
-                                              ? 'По группам'
-                                              : 'Разделить по группам',
+                                            size: 18,
+                                          ),
+                                          label: Text(
+                                            isPhone
+                                                ? 'По группам'
+                                                : 'Разделить по группам',
+                                          ),
+                                          selected: _groupByGroup,
+                                          onSelected: (value) => setState(
+                                            () => _groupByGroup = value,
+                                          ),
                                         ),
-                                        selected: _groupByGroup,
-                                        onSelected: (value) => setState(
-                                            () => _groupByGroup = value),
-                                      ),
-                                    if (_groups
-                                                .where((group) => _scopeGroupIds
-                                                    .contains(group.id))
-                                                .length >
-                                            1 ||
-                                        _groups.any((group) =>
-                                            _scopeGroupIds.contains(group.id) &&
-                                            _preferences.hiddenGroupIds
-                                                .contains(group.id)))
-                                      OutlinedButton.icon(
-                                        onPressed: _manageGroupVisibility,
-                                        icon: const Icon(
-                                            Icons.visibility_off_outlined),
-                                        label: Text(
-                                          _preferences.hiddenGroupIds.isEmpty
-                                              ? (isPhone
-                                                  ? 'Видимость'
-                                                  : 'Видимость групп')
-                                              : (isPhone
-                                                  ? 'Скрыто: ${_preferences.hiddenGroupIds.length}'
-                                                  : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}'),
+                                      if (_groups
+                                                  .where(
+                                                    (group) => _scopeGroupIds
+                                                        .contains(group.id),
+                                                  )
+                                                  .length >
+                                              1 ||
+                                          _groups.any(
+                                            (group) =>
+                                                _scopeGroupIds.contains(
+                                                  group.id,
+                                                ) &&
+                                                _preferences.hiddenGroupIds
+                                                    .contains(group.id),
+                                          ))
+                                        OutlinedButton.icon(
+                                          onPressed: _manageGroupVisibility,
+                                          icon: const Icon(
+                                            Icons.visibility_off_outlined,
+                                          ),
+                                          label: Text(
+                                            _preferences.hiddenGroupIds.isEmpty
+                                                ? (isPhone
+                                                      ? 'Видимость'
+                                                      : 'Видимость групп')
+                                                : (isPhone
+                                                      ? 'Скрыто: ${_preferences.hiddenGroupIds.length}'
+                                                      : 'Скрыто групп: ${_preferences.hiddenGroupIds.length}'),
+                                          ),
                                         ),
-                                      ),
-                                    Text('Показано: $visibleCount'),
+                                      Text('Показано: $visibleCount'),
+                                    ],
+                                  ),
+                                  if (_bulkSaving) ...[
+                                    const SizedBox(height: 12),
+                                    const LinearProgressIndicator(),
+                                    const SizedBox(height: 4),
+                                    const Text('Сохраняем массовую отметку…'),
                                   ],
-                                ),
-                                if (_bulkSaving) ...[
-                                  const SizedBox(height: 12),
-                                  const LinearProgressIndicator(),
-                                  const SizedBox(height: 4),
-                                  const Text('Сохраняем массовую отметку…'),
                                 ],
                               ],
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                  )),
+                        const SizedBox(height: 12),
+                      ],
+                    ),
+                  ),
                 ],
                 body: _loadError != null
                     ? Center(
-                        child: Text(_loadError!, textAlign: TextAlign.center))
+                        child: Text(_loadError!, textAlign: TextAlign.center),
+                      )
                     : _planned.isEmpty
-                        ? const Center(
-                            child: Text(
-                                'Никто не запланирован в смену по графику.'),
-                          )
-                        : visibleCount == 0
-                            ? const Center(
-                                child: Text(
-                                  'По выбранному поиску и статусу сотрудников нет.',
-                                ),
-                              )
-                            : _employeesList(canEditNow),
+                    ? const Center(
+                        child: Text(
+                          'Никто не запланирован в смену по графику.',
+                        ),
+                      )
+                    : visibleCount == 0
+                    ? const Center(
+                        child: Text(
+                          'По выбранному поиску и статусу сотрудников нет.',
+                        ),
+                      )
+                    : _employeesList(canEditNow),
               ),
       ),
     );

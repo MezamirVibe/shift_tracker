@@ -14,12 +14,14 @@ class AttendanceEditDraft {
     required int calculatedMinutes,
     required String actualStart,
     required String actualEnd,
+    int? manualMinutes,
     String? comment,
   }) {
     final saveHours =
         fact.mayHaveHours && (fact != FactStatus.businessTrip || tripHasHours);
     final previous = original;
-    final keepOriginal = !timesChanged &&
+    final keepOriginal =
+        !timesChanged &&
         previous != null &&
         previous.fact.mayHaveHours &&
         (previous.fact != FactStatus.businessTrip || previous.hasWorked) &&
@@ -29,25 +31,26 @@ class AttendanceEditDraft {
       comment: comment,
       workedMinutes: !saveHours
           ? 0
-          : timesChanged
-              ? calculatedMinutes
-              : keepOriginal
-                  ? previous.workedMinutes ?? defaultMinutes
-                  : defaultMinutes,
+          : manualMinutes ??
+                (timesChanged
+                    ? calculatedMinutes
+                    : keepOriginal
+                    ? previous.workedMinutes ?? defaultMinutes
+                    : defaultMinutes),
       actualStart: !saveHours
           ? null
           : timesChanged
-              ? actualStart
-              : keepOriginal
-                  ? previous.actualStart
-                  : null,
+          ? actualStart
+          : keepOriginal
+          ? previous.actualStart
+          : null,
       actualEnd: !saveHours
           ? null
           : timesChanged
-              ? actualEnd
-              : keepOriginal
-                  ? previous.actualEnd
-                  : null,
+          ? actualEnd
+          : keepOriginal
+          ? previous.actualEnd
+          : null,
       updatedAt: previous?.updatedAt,
       closed: previous?.closed ?? false,
     );

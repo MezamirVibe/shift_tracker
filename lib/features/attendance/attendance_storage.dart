@@ -21,15 +21,15 @@ extension FactStatusInfo on FactStatus {
       this == FactStatus.vacationWorked;
 
   String get label => switch (this) {
-        FactStatus.none => 'Не заполнено',
-        FactStatus.worked => 'Вышел',
-        FactStatus.absent => 'Неявка',
-        FactStatus.sick => 'Больничный',
-        FactStatus.vacation => 'Отпуск',
-        FactStatus.businessTrip => 'Командировка',
-        FactStatus.vacationWorked => 'Работа в отпуске',
-        FactStatus.unpaid => 'Без содержания',
-      };
+    FactStatus.none => 'Не заполнено',
+    FactStatus.worked => 'Вышел',
+    FactStatus.absent => 'Неявка',
+    FactStatus.sick => 'Больничный',
+    FactStatus.vacation => 'Отпуск',
+    FactStatus.businessTrip => 'Командировка',
+    FactStatus.vacationWorked => 'Работа в отпуске',
+    FactStatus.unpaid => 'Без содержания',
+  };
 }
 
 FactStatus factStatusFromString(String? s) {
@@ -87,15 +87,15 @@ class AttendanceRecord {
   });
 
   Map<String, dynamic> toJson() => {
-        'fact': factStatusToString(fact),
-        if (comment != null && comment!.trim().isNotEmpty)
-          'comment': comment!.trim(),
-        if (workedMinutes != null) 'workedMinutes': workedMinutes,
-        if (actualStart != null) 'actualStart': actualStart,
-        if (actualEnd != null) 'actualEnd': actualEnd,
-        'closed': closed,
-        'updatedAt': updatedAt ?? DateTime.now().toIso8601String(),
-      };
+    'fact': factStatusToString(fact),
+    if (comment != null && comment!.trim().isNotEmpty)
+      'comment': comment!.trim(),
+    if (workedMinutes != null) 'workedMinutes': workedMinutes,
+    if (actualStart != null) 'actualStart': actualStart,
+    if (actualEnd != null) 'actualEnd': actualEnd,
+    'closed': closed,
+    'updatedAt': updatedAt ?? DateTime.now().toIso8601String(),
+  };
 
   /// поддерживает старый формат:
   /// { status: planned/present/absent, note?, updatedAt }
@@ -105,8 +105,9 @@ class AttendanceRecord {
 
     // Старый ключ status
     final oldStatus = json['status'] as String?;
-    final migratedFact =
-        oldStatus != null ? factStatusFromString(oldStatus) : fact;
+    final migratedFact = oldStatus != null
+        ? factStatusFromString(oldStatus)
+        : fact;
 
     // comment / note
     final comment = (json['comment'] as String?) ?? (json['note'] as String?);
@@ -124,6 +125,30 @@ class AttendanceRecord {
           (json['actualEnd'] as String?) ?? (json['actual_end'] as String?),
       updatedAt: json['updatedAt'] as String?,
       closed: json['closed'] == true,
+    );
+  }
+}
+
+class VacationRangeResult {
+  final List<String> applied;
+  final List<String> alreadyVacation;
+  final List<String> skippedClosed;
+  final List<String> skippedExisting;
+
+  const VacationRangeResult({
+    required this.applied,
+    required this.alreadyVacation,
+    required this.skippedClosed,
+    required this.skippedExisting,
+  });
+
+  factory VacationRangeResult.fromJson(Map<String, dynamic> json) {
+    List<String> dates(String key) => List<String>.from(json[key] as List);
+    return VacationRangeResult(
+      applied: dates('applied'),
+      alreadyVacation: dates('already_vacation'),
+      skippedClosed: dates('skipped_closed'),
+      skippedExisting: dates('skipped_existing'),
     );
   }
 }
@@ -163,7 +188,8 @@ class AttendanceStorage {
     changes.value++;
   }
 
-  String _iso(DateTime day) => '${day.year.toString().padLeft(4, '0')}-'
+  String _iso(DateTime day) =>
+      '${day.year.toString().padLeft(4, '0')}-'
       '${day.month.toString().padLeft(2, '0')}-'
       '${day.day.toString().padLeft(2, '0')}';
 
@@ -184,7 +210,8 @@ class AttendanceStorage {
       for (final candidate in _rangeCache.values) {
         final fresh =
             DateTime.now().difference(candidate.loadedAt) < _cacheLifetime;
-        final coversRange = !from.isBefore(candidate.from) &&
+        final coversRange =
+            !from.isBefore(candidate.from) &&
             !to.isAfter(candidate.to) &&
             candidate.userId == userId;
         if (fresh && coversRange) {
@@ -238,20 +265,14 @@ class AttendanceStorage {
   }
 
   Future<Map<String, dynamic>> loadMonth(int year, int month) {
-    return loadRange(
-      DateTime(year, month, 1),
-      DateTime(year, month + 1, 0),
-    );
+    return loadRange(DateTime(year, month, 1), DateTime(year, month + 1, 0));
   }
 
   /// Служебный полный диапазон. Не используйте для чтения одного дня:
   /// на сервере это одиннадцать лет данных.
   Future<Map<String, dynamic>> loadAllRaw() async {
     final year = DateTime.now().year;
-    return loadRange(
-      DateTime(year - 5, 1, 1),
-      DateTime(year + 5, 12, 31),
-    );
+    return loadRange(DateTime(year - 5, 1, 1), DateTime(year + 5, 12, 31));
   }
 
   Future<({Map<String, AttendanceRecord> records, bool closed})> loadDay(
@@ -274,8 +295,9 @@ class AttendanceStorage {
       if (entry.key == _metaKey) continue;
       final value = entry.value;
       if (value is Map) {
-        records[entry.key] =
-            AttendanceRecord.fromJson(Map<String, dynamic>.from(value));
+        records[entry.key] = AttendanceRecord.fromJson(
+          Map<String, dynamic>.from(value),
+        );
       }
     }
     return (records: records, closed: _isClosedFromDayMap(day));
@@ -348,6 +370,26 @@ class AttendanceStorage {
     _markChanged();
   }
 
+  Future<VacationRangeResult> setVacationRange({
+    required String employeeId,
+    required String dateFrom,
+    required String dateTo,
+    String? comment,
+  }) async {
+    final data = await ApiClient.instance.request(
+      'POST',
+      '/api/v1/attendance/vacation-range',
+      body: {
+        'employee_id': employeeId,
+        'date_from': dateFrom,
+        'date_to': dateTo,
+        'comment': comment,
+      },
+    );
+    _markChanged();
+    return VacationRangeResult.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
   /// Закрыть день:
   /// - всем сотрудникам из списка plannedEmployeeIds:
   ///   - если записи нет или fact == none -> ставим absent
@@ -364,8 +406,10 @@ class AttendanceStorage {
     _markChanged();
   }
 
-  Future<void> reopenDay(
-      {required String dateIso, List<String>? employeeIds}) async {
+  Future<void> reopenDay({
+    required String dateIso,
+    List<String>? employeeIds,
+  }) async {
     await ApiClient.instance.request(
       'POST',
       '/api/v1/attendance/$dateIso/reopen',
