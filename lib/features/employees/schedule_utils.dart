@@ -6,8 +6,13 @@ bool isWorkDay({
   required DateTime day,
   required ScheduleType type,
   required DateTime startDate,
+  List<int> customWorkdays = const [1, 2, 3, 4, 5],
 }) {
   final d = dateOnly(day);
+
+  if (type == ScheduleType.custom) {
+    return customWorkdays.contains(d.weekday);
+  }
 
   if (type == ScheduleType.fiveTwo) {
     // 5/2: Пн–Пт рабочие

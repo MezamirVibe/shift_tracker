@@ -58,6 +58,7 @@ class _PositionsPageState extends State<PositionsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Новая должность'),
         content: TextField(
           controller: ctrl,
@@ -118,6 +119,7 @@ class _PositionsPageState extends State<PositionsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Переименовать должность'),
         content: TextField(
           controller: ctrl,
@@ -172,6 +174,7 @@ class _PositionsPageState extends State<PositionsPage> {
 
   Future<void> _deletePosition(PositionModel item) async {
     final employees = await _employeesStorage.load();
+    if (!mounted) return;
     final inUse = employees.any(
       (e) => e.position.trim().toLowerCase() == item.name.trim().toLowerCase(),
     );
@@ -186,6 +189,7 @@ class _PositionsPageState extends State<PositionsPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить должность?'),
         content: Text('Удалить "${item.name}"?'),
         actions: [

@@ -21,6 +21,7 @@ class EmployeeDraft {
   final DateTime scheduleStartDate;
   final int shiftHours;
   final int breakHours;
+  final List<int> customWorkdays;
 
   final String? login;
   final String? roleId;
@@ -36,6 +37,7 @@ class EmployeeDraft {
     required this.scheduleStartDate,
     required this.shiftHours,
     required this.breakHours,
+    required this.customWorkdays,
     this.login,
     this.roleId,
   });
@@ -46,6 +48,7 @@ class EmployeeEditorDialog extends StatefulWidget {
   final String title;
   final String confirmText;
   final bool showAccessFields;
+  final VoidCallback? onDeactivate;
 
   const EmployeeEditorDialog({
     super.key,
@@ -53,6 +56,7 @@ class EmployeeEditorDialog extends StatefulWidget {
     this.title = 'Добавить сотрудника',
     this.confirmText = 'Добавить',
     this.showAccessFields = false,
+    this.onDeactivate,
   });
 
   @override
@@ -64,8 +68,6 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
   final _positionsStorage = PositionsStorage();
 
   late final TextEditingController _nameController;
-  late final TextEditingController _salaryController;
-  late final TextEditingController _bonusController;
   late final TextEditingController _loginController;
 
   bool _loadingStructure = true;
@@ -84,6 +86,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
   late DateTime _scheduleStartDate;
   late int _shiftHours;
   late int _breakHours;
+  late List<int> _customWorkdays;
 
   @override
   void initState() {
@@ -91,10 +94,6 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     final init = widget.initial;
 
     _nameController = TextEditingController(text: init?.fullName ?? '');
-    _salaryController =
-        TextEditingController(text: (init?.salary ?? 70000).toString());
-    _bonusController =
-        TextEditingController(text: (init?.bonus ?? 10000).toString());
     _loginController = TextEditingController(text: init?.login ?? '');
 
     _departmentId = init?.departmentId;
@@ -106,6 +105,10 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     _scheduleStartDate = init?.scheduleStartDate ?? DateTime.now();
     _shiftHours = init?.shiftHours ?? 12;
     _breakHours = init?.breakHours ?? 1;
+    _customWorkdays = [...?init?.customWorkdays];
+    if (_customWorkdays.isEmpty) {
+      _customWorkdays = [1, 2, 3, 4, 5];
+    }
 
     _loadData();
   }
@@ -113,8 +116,6 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
   @override
   void dispose() {
     _nameController.dispose();
-    _salaryController.dispose();
-    _bonusController.dispose();
     _loginController.dispose();
     super.dispose();
   }
@@ -125,9 +126,14 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
       _loadingPositions = true;
     });
 
-    final deps = await _structureStorage.loadDepartments();
-    final groups = await _structureStorage.loadGroups();
-    final positions = await _positionsStorage.loadPositions();
+    final results = await Future.wait([
+      _structureStorage.loadDepartments(),
+      _structureStorage.loadGroups(),
+      _positionsStorage.loadPositions(),
+    ]);
+    final deps = results[0] as List<DepartmentModel>;
+    final groups = results[1] as List<GroupModel>;
+    final positions = results[2] as List<PositionModel>;
 
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
@@ -154,14 +160,9 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     }
   }
 
-  int _parseInt(String s, {required int fallback}) {
-    final v = int.tryParse(s.trim());
-    return v ?? fallback;
-  }
-
   void _normalizeSelectedGroup() {
     if (_groupId == null) return;
-    final g = _groups.cast<dynamic?>().firstWhere(
+    final g = _groups.cast<dynamic>().firstWhere(
           (x) => x?.id == _groupId,
           orElse: () => null,
         );
@@ -201,6 +202,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Новая должность'),
         content: TextField(
           controller: ctrl,
@@ -222,6 +224,11 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
         ],
       ),
     );
+
+    if (!mounted) {
+      ctrl.dispose();
+      return;
+    }
 
     if (ok != true) {
       ctrl.dispose();
@@ -302,8 +309,8 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
       }
     }
 
-    final salary = _parseInt(_salaryController.text, fallback: 0);
-    final bonus = _parseInt(_bonusController.text, fallback: 0);
+    final salary = widget.initial?.salary ?? 0;
+    final bonus = widget.initial?.bonus ?? 0;
 
     if (_shiftHours <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -329,6 +336,13 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
       return;
     }
 
+    if (_scheduleType == ScheduleType.custom && _customWorkdays.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Выбери хотя бы один рабочий день')),
+      );
+      return;
+    }
+
     Navigator.of(context).pop(
       EmployeeDraft(
         fullName: name,
@@ -341,6 +355,7 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
         scheduleStartDate: _scheduleStartDate,
         shiftHours: _shiftHours,
         breakHours: _breakHours,
+        customWorkdays: [..._customWorkdays]..sort(),
         login: widget.showAccessFields ? login : null,
         roleId: widget.showAccessFields ? _roleId : null,
       ),
@@ -353,289 +368,391 @@ class _EmployeeEditorDialogState extends State<EmployeeEditorDialog> {
     final roles = AuthService.instance.roles.toList()
       ..sort((a, b) => a.name.compareTo(b.name));
 
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 560,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _nameController,
-                decoration: const InputDecoration(labelText: 'ФИО'),
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 12),
-              if (_loadingPositions)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: LinearProgressIndicator(),
-                )
-              else ...[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _positionName,
+    return LayoutBuilder(
+        builder: (context, dialogConstraints) => AlertDialog(
+              scrollable: true,
+              title: Text(widget.title),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(labelText: 'ФИО'),
+                        textInputAction: TextInputAction.next,
+                      ),
+                      const SizedBox(height: 12),
+                      if (_loadingPositions)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: LinearProgressIndicator(),
+                        )
+                      else ...[
+                        Builder(
+                          builder: (context) {
+                            final field = DropdownButtonFormField<String>(
+                              itemHeight: null,
+                              initialValue: _positionName,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Должность',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: _positions
+                                  .map(
+                                    (p) => DropdownMenuItem<String>(
+                                      value: p.name,
+                                      child: Text(p.name,
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) {
+                                setState(() => _positionName = value);
+                              },
+                            );
+                            final addButton = FilledButton.tonalIcon(
+                              onPressed: _showAddPositionDialog,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Добавить должность'),
+                            );
+
+                            if (dialogConstraints.maxWidth - 128 < 460) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  field,
+                                  const SizedBox(height: 8),
+                                  addButton,
+                                ],
+                              );
+                            }
+
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: field),
+                                const SizedBox(width: 8),
+                                addButton,
+                              ],
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Должность выбирается из справочника.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      if (_loadingStructure)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else ...[
+                        DropdownButtonFormField<String?>(
+                          itemHeight: null,
+                          isExpanded: true,
+                          initialValue: _departmentId,
+                          decoration: const InputDecoration(
+                            labelText: 'Подразделение',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text('— не выбрано —',
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ),
+                            ..._departments.map(
+                              (d) => DropdownMenuItem<String?>(
+                                value: d.id as String?,
+                                child: Text(d.name as String,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                            ),
+                          ],
+                          onChanged: (v) {
+                            setState(() {
+                              _departmentId = v;
+                              _groupId = null;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String?>(
+                          itemHeight: null,
+                          isExpanded: true,
+                          initialValue: _groupId,
+                          decoration: const InputDecoration(
+                            labelText: 'Группа',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text('— не выбрано —',
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ),
+                            ...groups.map(
+                              (g) => DropdownMenuItem<String?>(
+                                value: g.id as String?,
+                                child: Text(g.name as String,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                            ),
+                          ],
+                          onChanged: (_departmentId == null)
+                              ? null
+                              : (v) => setState(() => _groupId = v),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<ScheduleType>(
+                        itemHeight: null,
+                        isExpanded: true,
+                        initialValue: _scheduleType,
                         decoration: const InputDecoration(
-                          labelText: 'Должность',
+                          labelText: 'График',
                           border: OutlineInputBorder(),
                         ),
-                        items: _positions
-                            .map(
-                              (p) => DropdownMenuItem<String>(
-                                value: p.name,
-                                child: Text(p.name),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          setState(() => _positionName = value);
+                        items: const [
+                          DropdownMenuItem(
+                            value: ScheduleType.twoTwo,
+                            child: Text('2/2',
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                          DropdownMenuItem(
+                            value: ScheduleType.fiveTwo,
+                            child: Text('5/2',
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                          DropdownMenuItem(
+                            value: ScheduleType.custom,
+                            child: Text('Произвольный',
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                        ],
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() => _scheduleType = v);
                         },
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton.tonalIcon(
-                      onPressed: _showAddPositionDialog,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Добавить'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Должность выбирается из справочника.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              TextField(
-                controller: _salaryController,
-                decoration: const InputDecoration(labelText: 'Оклад (₽)'),
-                keyboardType: TextInputType.number,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _bonusController,
-                decoration: const InputDecoration(labelText: 'Премия (₽)'),
-                keyboardType: TextInputType.number,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 16),
-              if (_loadingStructure)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else ...[
-                DropdownButtonFormField<String?>(
-                  initialValue: _departmentId,
-                  decoration: const InputDecoration(
-                    labelText: 'Подразделение',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('— не выбрано —'),
-                    ),
-                    ..._departments.map(
-                      (d) => DropdownMenuItem<String?>(
-                        value: d.id as String?,
-                        child: Text(d.name as String),
-                      ),
-                    ),
-                  ],
-                  onChanged: (v) {
-                    setState(() {
-                      _departmentId = v;
-                      _groupId = null;
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String?>(
-                  initialValue: _groupId,
-                  decoration: const InputDecoration(
-                    labelText: 'Группа',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('— не выбрано —'),
-                    ),
-                    ...groups.map(
-                      (g) => DropdownMenuItem<String?>(
-                        value: g.id as String?,
-                        child: Text(g.name as String),
-                      ),
-                    ),
-                  ],
-                  onChanged: (_departmentId == null)
-                      ? null
-                      : (v) => setState(() => _groupId = v),
-                ),
-              ],
-              const SizedBox(height: 16),
-              DropdownButtonFormField<ScheduleType>(
-                initialValue: _scheduleType,
-                decoration: const InputDecoration(
-                  labelText: 'График',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: ScheduleType.twoTwo,
-                    child: Text('2/2'),
-                  ),
-                  DropdownMenuItem(
-                    value: ScheduleType.fiveTwo,
-                    child: Text('5/2'),
-                  ),
-                ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() => _scheduleType = v);
-                },
-              ),
-              const SizedBox(height: 12),
-              InkWell(
-                onTap: _pickStartDate,
-                borderRadius: BorderRadius.circular(8),
-                child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Дата старта графика',
-                    border: OutlineInputBorder(),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${_scheduleStartDate.day.toString().padLeft(2, '0')}.'
-                          '${_scheduleStartDate.month.toString().padLeft(2, '0')}.'
-                          '${_scheduleStartDate.year}',
+                      if (_scheduleType == ScheduleType.custom) ...[
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Рабочие дни недели',
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: const [
+                              (1, 'Пн'),
+                              (2, 'Вт'),
+                              (3, 'Ср'),
+                              (4, 'Чт'),
+                              (5, 'Пт'),
+                              (6, 'Сб'),
+                              (7, 'Вс'),
+                            ].map((item) {
+                              return FilterChip(
+                                label: Text(item.$2),
+                                selected: _customWorkdays.contains(item.$1),
+                                onSelected: (selected) {
+                                  setState(() {
+                                    if (selected) {
+                                      _customWorkdays.add(item.$1);
+                                    } else {
+                                      _customWorkdays.remove(item.$1);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      InkWell(
+                        onTap: _pickStartDate,
+                        borderRadius: BorderRadius.circular(8),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Дата старта графика',
+                            border: OutlineInputBorder(),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${_scheduleStartDate.day.toString().padLeft(2, '0')}.'
+                                  '${_scheduleStartDate.month.toString().padLeft(2, '0')}.'
+                                  '${_scheduleStartDate.year}',
+                                ),
+                              ),
+                              const Icon(Icons.calendar_today_outlined,
+                                  size: 18),
+                            ],
+                          ),
                         ),
                       ),
-                      const Icon(Icons.calendar_today_outlined, size: 18),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        itemHeight: null,
+                        isExpanded: true,
+                        initialValue: _shiftHours,
+                        decoration: const InputDecoration(
+                          labelText: 'Длительность смены',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: List.generate(
+                          24,
+                          (index) => DropdownMenuItem(
+                            value: index + 1,
+                            child: Text('${index + 1} ч',
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                        ),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() {
+                            _shiftHours = v;
+                            if (_breakHours >= _shiftHours) {
+                              _breakHours = _shiftHours - 1;
+                            }
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        itemHeight: null,
+                        isExpanded: true,
+                        initialValue: _breakHours,
+                        decoration: const InputDecoration(
+                          labelText: 'Перерыв',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: List.generate(
+                          _shiftHours,
+                          (i) => DropdownMenuItem<int>(
+                            value: i,
+                            child: Text('$i час(а)',
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                        ),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() => _breakHours = v);
+                        },
+                      ),
+                      if (widget.showAccessFields) ...[
+                        const SizedBox(height: 16),
+                        Card(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              children: [
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Учётная запись создастся автоматически вместе с сотрудником.',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _loginController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Логин для входа',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                DropdownButtonFormField<String>(
+                                  itemHeight: null,
+                                  isExpanded: true,
+                                  initialValue: _roleId,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Роль',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  items: roles
+                                      .map(
+                                        (r) => DropdownMenuItem<String>(
+                                          value: r.id,
+                                          child: Text(r.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (value) {
+                                    setState(() => _roleId = value);
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                const Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Пароль будет сгенерирован автоматически в формате 6 букв + 4 цифры.',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (widget.onDeactivate != null) ...[
+                        const SizedBox(height: 20),
+                        const Divider(),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: widget.onDeactivate,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor:
+                                  Theme.of(context).colorScheme.error,
+                            ),
+                            icon: const Icon(Icons.person_off_outlined),
+                            label: const Text('Удалить сотрудника'),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                initialValue: _shiftHours,
-                decoration: const InputDecoration(
-                  labelText: 'Длительность смены',
-                  border: OutlineInputBorder(),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Отмена'),
                 ),
-                items: const [
-                  DropdownMenuItem(value: 9, child: Text('9 часов')),
-                  DropdownMenuItem(value: 12, child: Text('12 часов')),
-                ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() {
-                    _shiftHours = v;
-                    if (_breakHours >= _shiftHours) {
-                      _breakHours = _shiftHours - 1;
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                initialValue: _breakHours,
-                decoration: const InputDecoration(
-                  labelText: 'Перерыв',
-                  border: OutlineInputBorder(),
-                ),
-                items: List.generate(
-                  _shiftHours,
-                  (i) => DropdownMenuItem<int>(
-                    value: i,
-                    child: Text('$i час(а)'),
-                  ),
-                ),
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() => _breakHours = v);
-                },
-              ),
-              if (widget.showAccessFields) ...[
-                const SizedBox(height: 16),
-                Card(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Учётная запись создастся автоматически вместе с сотрудником.',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _loginController,
-                          decoration: const InputDecoration(
-                            labelText: 'Логин для входа',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          initialValue: _roleId,
-                          decoration: const InputDecoration(
-                            labelText: 'Роль',
-                            border: OutlineInputBorder(),
-                          ),
-                          items: roles
-                              .map(
-                                (r) => DropdownMenuItem<String>(
-                                  value: r.id,
-                                  child: Text(r.name),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (value) {
-                            setState(() => _roleId = value);
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        const Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Пароль будет сгенерирован автоматически в формате 6 букв + 4 цифры.',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                FilledButton(
+                  onPressed: _submit,
+                  child: Text(widget.confirmText),
                 ),
               ],
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          child: Text(widget.confirmText),
-        ),
-      ],
-    );
+            ));
   }
 }

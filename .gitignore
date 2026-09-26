@@ -1,8 +1,10 @@
 # --- Dart / Flutter ---
 .dart_tool/
+.flutter-plugins-dependencies
 .packages
 .pub/
 build/
+dist/
 .pub-cache/
 
 # If you use FVM
@@ -21,12 +23,23 @@ coverage/
 *.log
 
 # --- Python ---
+.venv/
+.pytest_cache/
+*.inspect.ndjson
 __pycache__/
 *.py[cod]
 
 # --- Deployment secrets and local backups ---
 deploy/.env
+deploy/.env.push
+deploy/organizations/*.env
+deploy/organizations/*.caddy
+deploy/organizations/*.pending
 deploy/backups/
+deploy/secrets/
+android/app/google-services.json
+*firebase-adminsdk*.json
+service-account*.json
 *.dump
 
 # --- Android / Gradle ---

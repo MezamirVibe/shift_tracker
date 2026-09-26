@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
@@ -15,8 +14,9 @@ class AdminPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = AuthService.instance;
+    final isPhone = MediaQuery.sizeOf(context).width < 600;
 
-    final tabs = _buildTabs(auth);
+    final tabs = _buildTabs(auth, compact: isPhone);
     final views = _buildViews(auth);
 
     final int safeLength = tabs.isEmpty ? 1 : tabs.length;
@@ -40,70 +40,64 @@ class AdminPage extends StatelessWidget {
       length: safeLength,
       child: AdaptiveScaffold(
         title: 'Администрирование',
-        selectedIndex: 2,
-        items: [
-          NavItem(
-            label: 'Календарь',
-            icon: Icons.calendar_month,
-            onTap: () => context.go('/'),
-          ),
-          NavItem(
-            label: 'Сотрудники',
-            icon: Icons.people,
-            onTap: () => context.go('/employees'),
-          ),
-          NavItem(
-            label: 'Админ',
-            icon: Icons.admin_panel_settings,
-            onTap: () => context.go('/admin'),
-          ),
-        ],
-        child: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Wrap(
-                    runSpacing: 8,
-                    spacing: 12,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      const Icon(Icons.tune),
-                      Text(
-                        'Здесь настраиваются пользователи, роли, структура и справочник должностей.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
+        selectedRoute: '/admin',
+        child: NestedScrollView(
+          headerSliverBuilder: (context, innerBoxIsScrolled) => [
+            SliverToBoxAdapter(
+                child: Column(children: [
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Wrap(
+                      runSpacing: 8,
+                      spacing: 12,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        const Icon(Icons.tune),
+                        Text(
+                          'Здесь настраиваются пользователи, роли, структура и справочник должностей.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            Material(
-              color: Theme.of(context).colorScheme.surface,
-              child: TabBar(
-                isScrollable: true,
-                tabs: safeTabs,
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: TabBar(
+                  isScrollable: !isPhone,
+                  tabAlignment:
+                      isPhone ? TabAlignment.fill : TabAlignment.start,
+                  labelPadding: isPhone
+                      ? EdgeInsets.zero
+                      : const EdgeInsets.symmetric(horizontal: 16),
+                  labelStyle: isPhone
+                      ? Theme.of(context).textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          )
+                      : null,
+                  tabs: safeTabs,
+                ),
               ),
-            ),
-            Expanded(
-              child: TabBarView(
-                children: safeViews,
-              ),
-            ),
+            ])),
           ],
+          body: TabBarView(
+            children: safeViews,
+          ),
         ),
       ),
     );
   }
 
-  List<Tab> _buildTabs(AuthService auth) {
+  List<Tab> _buildTabs(AuthService auth, {required bool compact}) {
     final tabs = <Tab>[];
 
     if (_canManageUsers(auth)) {
-      tabs.add(const Tab(text: 'Пользователи'));
+      tabs.add(Tab(text: compact ? 'Доступ' : 'Пользователи'));
     }
 
     if (_canManageStructure(auth)) {
@@ -112,7 +106,7 @@ class AdminPage extends StatelessWidget {
     }
 
     if (_canEditRolePolicies(auth)) {
-      tabs.add(const Tab(text: 'Роли и права'));
+      tabs.add(Tab(text: compact ? 'Роли' : 'Роли и права'));
     }
 
     return tabs;

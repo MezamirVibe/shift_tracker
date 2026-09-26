@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/id.dart';
+import '../employees/employees_storage.dart';
+import '../auth/auth_models.dart';
+import '../auth/auth_service.dart';
 
 import 'structure_storage.dart';
 
@@ -17,8 +20,34 @@ class _StructurePageState extends State<StructurePage>
   final _storage = StructureStorage();
 
   bool _loading = true;
+  bool _saving = false;
+  String? _loadError;
   List<DepartmentModel> _departments = [];
   List<GroupModel> _groups = [];
+
+  bool get _canEdit =>
+      !_saving && AuthService.instance.hasPerm(AppPermission.editEmployees);
+  ScopeKind? get _scope => AuthService.instance
+      .roleById(AuthService.instance.currentUser?.roleId)
+      ?.scopeKind;
+  bool get _global =>
+      AuthService.instance.isCurrentUserSuperAdmin || _scope == ScopeKind.all;
+  bool get _canCreateDepartment => _canEdit && _global;
+  bool get _canCreateGroup =>
+      _canEdit && (_global || _scope == ScopeKind.department);
+  bool _canEditDepartment(DepartmentModel department) =>
+      _canEdit &&
+      (_global ||
+          (_scope == ScopeKind.department &&
+              AuthService.instance.currentUser?.departmentId == department.id));
+  bool _canEditGroup(GroupModel group) =>
+      _canEdit &&
+      (_global ||
+          (_scope == ScopeKind.department &&
+              AuthService.instance.currentUser?.departmentId ==
+                  group.departmentId) ||
+          (_scope == ScopeKind.group &&
+              AuthService.instance.currentUser?.groupId == group.id));
 
   @override
   void initState() {
@@ -34,27 +63,51 @@ class _StructurePageState extends State<StructurePage>
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final deps = await _storage.loadDepartments();
-    final grps = await _storage.loadGroups();
-    if (!mounted) return;
-    setState(() {
-      _departments = deps;
-      _groups = grps;
-      _loading = false;
-    });
+    try {
+      final deps = await _storage.loadDepartments(force: true);
+      final grps = await _storage.loadGroups(force: true);
+      if (!mounted) return;
+      setState(() {
+        _departments = deps;
+        _groups = grps;
+        _loadError = null;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _loadError = 'Не удалось загрузить структуру: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _persist(Future<void> Function() save, String message) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await save();
+      EmployeesStorage().invalidateCache();
+      if (mounted) await _load();
+      if (mounted) _snack(message);
+    } catch (error) {
+      if (mounted) {
+        _snack('Не удалось сохранить: $error');
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   void _snack(String t) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
 
-  Future<String?> _askName({
-    required String title,
-    String initial = '',
-  }) async {
+  Future<String?> _askName({required String title, String initial = ''}) async {
     final c = TextEditingController(text: initial);
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: Text(title),
         content: TextField(
           controller: c,
@@ -64,11 +117,13 @@ class _StructurePageState extends State<StructurePage>
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Сохранить')),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Сохранить'),
+          ),
         ],
       ),
     );
@@ -84,31 +139,32 @@ class _StructurePageState extends State<StructurePage>
     final name = await _askName(title: 'Добавить подразделение');
     if (name == null) return;
 
-    final dep = DepartmentModel(
-      id: newUuidV4(),
-      name: name,
-    );
+    final dep = DepartmentModel(id: newUuidV4(), name: name);
 
     final next = [..._departments, dep]
       ..sort((a, b) => a.name.compareTo(b.name));
     setState(() => _departments = next);
-    await _storage.saveDepartments(_departments);
-    _snack('Подразделение добавлено');
+    await _persist(
+      () => _storage.saveDepartments(_departments),
+      'Подразделение добавлено',
+    );
   }
 
   Future<void> _renameDepartment(DepartmentModel dep) async {
-    final name =
-        await _askName(title: 'Переименовать подразделение', initial: dep.name);
+    final name = await _askName(
+      title: 'Переименовать подразделение',
+      initial: dep.name,
+    );
     if (name == null) return;
 
     setState(() {
-      _departments = _departments
-          .map((d) => d.id == dep.id ? d.copyWith(name: name) : d)
-          .toList()
-        ..sort((a, b) => a.name.compareTo(b.name));
+      _departments =
+          _departments
+              .map((d) => d.id == dep.id ? d.copyWith(name: name) : d)
+              .toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
     });
-    await _storage.saveDepartments(_departments);
-    _snack('Сохранено');
+    await _persist(() => _storage.saveDepartments(_departments), 'Сохранено');
   }
 
   Future<void> _deleteDepartment(DepartmentModel dep) async {
@@ -116,19 +172,20 @@ class _StructurePageState extends State<StructurePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить подразделение?'),
         content: Text(
-          linkedGroups > 0
-              ? 'В этом подразделении есть групп: $linkedGroups.\nСначала удали/перенеси группы.'
-              : 'Удалить "${dep.name}"?',
+          'Удалить «${dep.name}»${linkedGroups > 0 ? ' и все его группы ($linkedGroups)' : ''}? '
+          'Сотрудники останутся в организации без подразделения. Их часы и старые табели сохранятся. '
+          'Привязанный доступ пользователей сначала нужно изменить в разделе «Пользователи».',
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
           FilledButton(
-            onPressed:
-                linkedGroups > 0 ? null : () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Удалить'),
           ),
         ],
@@ -140,8 +197,10 @@ class _StructurePageState extends State<StructurePage>
     setState(() {
       _departments = _departments.where((d) => d.id != dep.id).toList();
     });
-    await _storage.saveDepartments(_departments);
-    _snack('Удалено');
+    await _persist(
+      () => _storage.deleteDepartment(dep.id),
+      'Подразделение удалено, сотрудники сохранены',
+    );
   }
 
   // ---------- Groups ----------
@@ -159,6 +218,7 @@ class _StructurePageState extends State<StructurePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Добавить группу'),
         content: SizedBox(
           width: 480,
@@ -166,11 +226,21 @@ class _StructurePageState extends State<StructurePage>
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
+                itemHeight: null,
+                isExpanded: true,
                 initialValue: selected.id,
                 decoration: const InputDecoration(labelText: 'Подразделение'),
                 items: _departments
-                    .map((d) =>
-                        DropdownMenuItem(value: d.id, child: Text(d.name)))
+                    .map(
+                      (d) => DropdownMenuItem(
+                        value: d.id,
+                        child: Text(
+                          d.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
                     .toList(),
                 onChanged: (v) {
                   if (v == null) return;
@@ -189,11 +259,13 @@ class _StructurePageState extends State<StructurePage>
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Создать')),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Создать'),
+          ),
         ],
       ),
     );
@@ -213,8 +285,7 @@ class _StructurePageState extends State<StructurePage>
       _groups = [..._groups, g]..sort((a, b) => a.name.compareTo(b.name));
     });
 
-    await _storage.saveGroups(_groups);
-    _snack('Группа добавлена');
+    await _persist(() => _storage.saveGroups(_groups), 'Группа добавлена');
   }
 
   Future<void> _editGroup(GroupModel g) async {
@@ -229,6 +300,7 @@ class _StructurePageState extends State<StructurePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Редактировать группу'),
         content: SizedBox(
           width: 480,
@@ -236,16 +308,28 @@ class _StructurePageState extends State<StructurePage>
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
+                itemHeight: null,
+                isExpanded: true,
                 initialValue: depId,
                 decoration: const InputDecoration(labelText: 'Подразделение'),
                 items: _departments
-                    .map((d) =>
-                        DropdownMenuItem(value: d.id, child: Text(d.name)))
+                    .map(
+                      (d) => DropdownMenuItem(
+                        value: d.id,
+                        child: Text(
+                          d.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
                     .toList(),
-                onChanged: (v) {
-                  if (v == null) return;
-                  depId = v;
-                },
+                onChanged: !_global
+                    ? null
+                    : (v) {
+                        if (v == null) return;
+                        depId = v;
+                      },
               ),
               const SizedBox(height: 12),
               TextField(
@@ -257,11 +341,13 @@ class _StructurePageState extends State<StructurePage>
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Сохранить')),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Сохранить'),
+          ),
         ],
       ),
     );
@@ -272,30 +358,39 @@ class _StructurePageState extends State<StructurePage>
     if (name.isEmpty) return;
 
     setState(() {
-      _groups = _groups
-          .map((x) =>
-              x.id == g.id ? x.copyWith(departmentId: depId, name: name) : x)
-          .toList()
-        ..sort((a, b) => a.name.compareTo(b.name));
+      _groups =
+          _groups
+              .map(
+                (x) => x.id == g.id
+                    ? x.copyWith(departmentId: depId, name: name)
+                    : x,
+              )
+              .toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
     });
 
-    await _storage.saveGroups(_groups);
-    _snack('Сохранено');
+    await _persist(() => _storage.saveGroups(_groups), 'Сохранено');
   }
 
   Future<void> _deleteGroup(GroupModel g) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
         title: const Text('Удалить группу?'),
-        content: Text('Удалить "${g.name}"?'),
+        content: Text(
+          'Удалить «${g.name}»? Сотрудники останутся в своём подразделении без группы. '
+          'Часы и старые табели сохранятся. Привязанный доступ пользователей сначала нужно изменить в разделе «Пользователи».',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Удалить')),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Удалить'),
+          ),
         ],
       ),
     );
@@ -305,8 +400,10 @@ class _StructurePageState extends State<StructurePage>
     setState(() {
       _groups = _groups.where((x) => x.id != g.id).toList();
     });
-    await _storage.saveGroups(_groups);
-    _snack('Удалено');
+    await _persist(
+      () => _storage.deleteGroup(g.id),
+      'Группа удалена, сотрудники сохранены',
+    );
   }
 
   String _depName(String depId) {
@@ -332,6 +429,16 @@ class _StructurePageState extends State<StructurePage>
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : _loadError != null
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_loadError!),
+                  TextButton(onPressed: _load, child: const Text('Повторить')),
+                ],
+              ),
+            )
           : TabBarView(
               controller: _tabs,
               children: [
@@ -342,7 +449,7 @@ class _StructurePageState extends State<StructurePage>
                     Align(
                       alignment: Alignment.centerLeft,
                       child: FilledButton.icon(
-                        onPressed: _addDepartment,
+                        onPressed: _canCreateDepartment ? _addDepartment : null,
                         icon: const Icon(Icons.add),
                         label: const Text('Добавить подразделение'),
                       ),
@@ -358,12 +465,16 @@ class _StructurePageState extends State<StructurePage>
                               IconButton(
                                 tooltip: 'Переименовать',
                                 icon: const Icon(Icons.edit_outlined),
-                                onPressed: () => _renameDepartment(d),
+                                onPressed: _canEditDepartment(d)
+                                    ? () => _renameDepartment(d)
+                                    : null,
                               ),
                               IconButton(
                                 tooltip: 'Удалить',
                                 icon: const Icon(Icons.delete_outline),
-                                onPressed: () => _deleteDepartment(d),
+                                onPressed: _canEditDepartment(d)
+                                    ? () => _deleteDepartment(d)
+                                    : null,
                               ),
                             ],
                           ),
@@ -372,9 +483,11 @@ class _StructurePageState extends State<StructurePage>
                     ),
                     if (_departments.isEmpty)
                       const Center(
-                          child: Padding(
-                              padding: EdgeInsets.all(24),
-                              child: Text('Пока пусто'))),
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text('Пока пусто'),
+                        ),
+                      ),
                   ],
                 ),
 
@@ -385,7 +498,7 @@ class _StructurePageState extends State<StructurePage>
                     Align(
                       alignment: Alignment.centerLeft,
                       child: FilledButton.icon(
-                        onPressed: _addGroup,
+                        onPressed: _canCreateGroup ? _addGroup : null,
                         icon: const Icon(Icons.add),
                         label: const Text('Добавить группу'),
                       ),
@@ -396,19 +509,24 @@ class _StructurePageState extends State<StructurePage>
                         child: ListTile(
                           title: Text(g.name),
                           subtitle: Text(
-                              'Подразделение: ${_depName(g.departmentId)}'),
+                            'Подразделение: ${_depName(g.departmentId)}',
+                          ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
                                 tooltip: 'Редактировать',
                                 icon: const Icon(Icons.edit_outlined),
-                                onPressed: () => _editGroup(g),
+                                onPressed: _canEditGroup(g)
+                                    ? () => _editGroup(g)
+                                    : null,
                               ),
                               IconButton(
                                 tooltip: 'Удалить',
                                 icon: const Icon(Icons.delete_outline),
-                                onPressed: () => _deleteGroup(g),
+                                onPressed: _canEditGroup(g)
+                                    ? () => _deleteGroup(g)
+                                    : null,
                               ),
                             ],
                           ),
@@ -417,9 +535,11 @@ class _StructurePageState extends State<StructurePage>
                     ),
                     if (_groups.isEmpty)
                       const Center(
-                          child: Padding(
-                              padding: EdgeInsets.all(24),
-                              child: Text('Пока пусто'))),
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text('Пока пусто'),
+                        ),
+                      ),
                   ],
                 ),
               ],

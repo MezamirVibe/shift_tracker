@@ -1,11 +1,11 @@
 {
-    "name": "shift_tracker",
-    "short_name": "shift_tracker",
+    "name": "Череда — график смен",
+    "short_name": "Череда",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#182033",
+    "theme_color": "#182033",
+    "description": "Планирование и учёт рабочих смен.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

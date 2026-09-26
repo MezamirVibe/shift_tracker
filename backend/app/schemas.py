@@ -1,7 +1,7 @@
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models import FactStatus, ScheduleType, ScopeKind
 
@@ -89,12 +89,30 @@ class PasswordChangeIn(BaseModel):
     new_password: str = Field(min_length=10, max_length=256)
 
 
+class UserPreferencesIn(BaseModel):
+    settings: dict = Field(default_factory=dict)
+
+
+class UserPreferencesOut(ApiModel):
+    settings: dict
+    updated_at: datetime | None = None
+
+
+class UserHiddenGroupsIn(BaseModel):
+    hidden_group_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+
+
+class UserHiddenGroupsOut(BaseModel):
+    hidden_group_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
     user: UserOut
+    organization: dict[str, str]
 
 
 class DepartmentIn(BaseModel):
@@ -146,6 +164,17 @@ class EmployeeIn(BaseModel):
     schedule_start_date: date
     shift_hours: int = Field(default=12, ge=1, le=24)
     break_hours: int = Field(default=1, ge=0, le=23)
+    custom_workdays: list[int] = Field(
+        default_factory=lambda: [1, 2, 3, 4, 5], min_length=1, max_length=7
+    )
+
+    @field_validator("custom_workdays")
+    @classmethod
+    def validate_custom_workdays(cls, value: list[int]) -> list[int]:
+        normalized = sorted(set(value))
+        if any(day < 1 or day > 7 for day in normalized):
+            raise ValueError("Дни недели должны быть в диапазоне от 1 до 7")
+        return normalized
 
 
 class EmployeeOut(EmployeeIn):
@@ -155,6 +184,7 @@ class EmployeeOut(EmployeeIn):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    position_name: str | None = None
 
 
 class EmployeeUpdate(BaseModel):
@@ -168,13 +198,47 @@ class EmployeeUpdate(BaseModel):
     schedule_start_date: date | None = None
     shift_hours: int | None = Field(default=None, ge=1, le=24)
     break_hours: int | None = Field(default=None, ge=0, le=23)
+    custom_workdays: list[int] | None = Field(default=None, min_length=1, max_length=7)
     is_active: bool | None = None
+
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> "EmployeeUpdate":
+        nullable = {"position_id", "department_id", "group_id"}
+        for field in self.model_fields_set - nullable:
+            if getattr(self, field) is None:
+                raise ValueError(f"Поле {field} не может быть пустым")
+        return self
+
+    @field_validator("custom_workdays")
+    @classmethod
+    def validate_custom_workdays(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        normalized = sorted(set(value))
+        if any(day < 1 or day > 7 for day in normalized):
+            raise ValueError("Дни недели должны быть в диапазоне от 1 до 7")
+        return normalized
 
 
 class AttendanceRecordIn(BaseModel):
     fact: FactStatus
     comment: str | None = Field(default=None, max_length=4000)
     worked_minutes: int | None = Field(default=None, ge=0, le=1440)
+    actual_start: time | None = None
+    actual_end: time | None = None
+
+    @model_validator(mode="after")
+    def validate_actual_times(self) -> "AttendanceRecordIn":
+        if (self.actual_start is None) != (self.actual_end is None):
+            raise ValueError("Нужно указать и начало, и окончание работы")
+        has_hours = self.fact in {FactStatus.worked, FactStatus.businessTrip, FactStatus.vacationWorked}
+        if not has_hours and self.actual_start is not None:
+            raise ValueError("Фактическое время доступно только для выхода на смену")
+        if not has_hours and self.worked_minutes not in (None, 0):
+            raise ValueError("Для отсутствия нельзя указывать отработанные часы")
+        if self.fact == FactStatus.vacationWorked and not self.worked_minutes:
+            raise ValueError("Укажите часы работы во время отпуска")
+        return self
 
 
 class AttendanceRecordOut(AttendanceRecordIn, ApiModel):
@@ -183,5 +247,30 @@ class AttendanceRecordOut(AttendanceRecordIn, ApiModel):
     updated_at: datetime
 
 
+class AttendanceBulkItem(AttendanceRecordIn):
+    employee_id: uuid.UUID
+
+
+class AttendanceBulkIn(BaseModel):
+    records: list[AttendanceBulkItem] = Field(min_length=1, max_length=500)
+
+
+class VacationRangeIn(BaseModel):
+    employee_id: uuid.UUID
+    date_from: date
+    date_to: date
+    comment: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "VacationRangeIn":
+        if self.date_to < self.date_from or (self.date_to - self.date_from).days > 365:
+            raise ValueError("Период отпуска должен быть от 1 до 366 календарных дней")
+        return self
+
+
 class AttendanceCloseIn(BaseModel):
-    planned_employee_ids: list[uuid.UUID] = Field(default_factory=list)
+    planned_employee_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500)
+
+
+class AttendanceReopenIn(BaseModel):
+    employee_ids: list[uuid.UUID] | None = Field(default=None, max_length=500)

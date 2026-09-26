@@ -1,9 +1,10 @@
 import enum
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -25,6 +27,14 @@ class Base(DeclarativeBase):
     pass
 
 
+class OrganizationIdentity(Base):
+    """A deployment owns one organization/database; accidental reuse fails closed."""
+    __tablename__ = "organization_identity"
+    __table_args__ = (CheckConstraint("id = 1", name="single_organization_identity"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    code: Mapped[str] = mapped_column(String(48), nullable=False)
+
+
 class ScopeKind(str, enum.Enum):
     all = "all"
     department = "department"
@@ -35,6 +45,7 @@ class ScopeKind(str, enum.Enum):
 class ScheduleType(str, enum.Enum):
     twoTwo = "twoTwo"
     fiveTwo = "fiveTwo"
+    custom = "custom"
 
 
 class FactStatus(str, enum.Enum):
@@ -43,6 +54,9 @@ class FactStatus(str, enum.Enum):
     absent = "absent"
     sick = "sick"
     vacation = "vacation"
+    businessTrip = "businessTrip"
+    vacationWorked = "vacationWorked"
+    unpaid = "unpaid"
 
 
 class Role(Base):
@@ -113,11 +127,41 @@ class Employee(Base):
     schedule_start_date: Mapped[date] = mapped_column(Date, default=date.today)
     shift_hours: Mapped[int] = mapped_column(Integer, default=12)
     break_hours: Mapped[int] = mapped_column(Integer, default=1)
+    custom_workdays: Mapped[list[int]] = mapped_column(
+        JSONB, default=lambda: [1, 2, 3, 4, 5]
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class EmployeeHistory(Base):
+    """Effective-dated, non-financial employee data used by historical reports."""
+
+    __tablename__ = "employee_history"
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="RESTRICT"), primary_key=True
+    )
+    effective_from: Mapped[date] = mapped_column(Date, primary_key=True)
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+
+
+class AttendanceLock(Base):
+    """A day is closed for specific employees, never for unrelated departments."""
+
+    __tablename__ = "attendance_locks"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("employees.id", ondelete="RESTRICT"), primary_key=True
+    )
+    closed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class User(Base):
@@ -151,6 +195,20 @@ class User(Base):
     role: Mapped[Role] = relationship()
 
 
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    settings: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class AttendanceDay(Base):
     __tablename__ = "attendance_days"
 
@@ -177,6 +235,8 @@ class AttendanceRecord(Base):
     )
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     worked_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actual_start: Mapped[time | None] = mapped_column(Time, nullable=True)
+    actual_end: Mapped[time | None] = mapped_column(Time, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
@@ -198,6 +258,26 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class HourRequest(Base):
+    __tablename__ = "hour_requests"
+    __table_args__ = (
+        CheckConstraint("additional_minutes > 0 AND additional_minutes <= 1440"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'cancelled')"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), index=True)
+    requester_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    additional_minutes: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(1000))
+    baseline: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    review_comment: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 
@@ -210,3 +290,109 @@ class AuditEvent(Base):
     entity_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     details: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OrganizationRegistration(Base):
+    """Control-plane jobs only; never a shared employee database."""
+    __tablename__ = "organization_registrations"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    secret_hash: Mapped[str] = mapped_column(String(64))
+    code: Mapped[str] = mapped_column(String(48), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    owner_login: Mapped[str] = mapped_column(String(120))
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReportDelivery(Base):
+    """One explicitly configured recipient/schedule per user, within their tenant."""
+    __tablename__ = "report_deliveries"
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    chat_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    telegram_actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pair_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    pair_expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    candidate_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    candidate_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    candidate_actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    settings: Mapped[dict] = mapped_column(JSONB, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DeliveryAttempt(Base):
+    __tablename__ = "delivery_attempts"
+    __table_args__ = (UniqueConstraint("user_id", "due_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(500), default="Отправка начата")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BotCursor(Base):
+    __tablename__ = "bot_cursors"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    next_update_id: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class NotificationPreference(Base):
+    __tablename__ = "notification_preferences"
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    settings: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Notification(Base):
+    """Transactional inbox. Scope is rechecked on every read and push delivery."""
+    __tablename__ = "notifications"
+    __table_args__ = (UniqueConstraint("user_id", "dedupe_key"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(160))
+    body: Mapped[str] = mapped_column(String(1500))
+    day: Mapped[date | None] = mapped_column(Date, nullable=True)
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=True, index=True)
+    request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hour_requests.id", ondelete="CASCADE"), nullable=True)
+    scope_key: Mapped[str] = mapped_column(String(64))
+    dedupe_key: Mapped[str] = mapped_column(String(240))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NotificationDevice(Base):
+    __tablename__ = "notification_devices"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    installation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True)
+    binding_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token: Mapped[str] = mapped_column(Text)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    token_version: Mapped[int] = mapped_column(Integer)
+    platform: Mapped[str] = mapped_column(String(16), default="android")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class NotificationPushJob(Base):
+    __tablename__ = "notification_push_jobs"
+    __table_args__ = (UniqueConstraint("notification_id", "device_id"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    notification_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("notifications.id", ondelete="CASCADE"), index=True)
+    device_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("notification_devices.id", ondelete="CASCADE"), index=True)
+    # The session binding at enqueue time must still match after account switches.
+    binding_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(40), nullable=True)

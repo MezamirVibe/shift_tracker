@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'auth_service.dart';
+import '../../core/api_client.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -23,8 +24,12 @@ class _SplashPageState extends State<SplashPage> {
     if (!mounted) return;
 
     final auth = AuthService.instance;
+    if (ApiClient.instance.organization == null) {
+      context.go('/organization');
+      return;
+    }
     if (!auth.hasUsers) {
-      context.go('/bootstrap');
+      context.go('/login');
       return;
     }
 
