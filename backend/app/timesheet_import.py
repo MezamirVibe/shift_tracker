@@ -181,7 +181,10 @@ def read_timesheet(content: bytes, year: int, month: int, sheet_name: str | None
                 if mark is not None:
                     marks.append({"day": d, **mark})
             except ValueError as error:
-                errors.append({"cell": address, "message": str(error)})
+                # A bad day cell can be skipped with explicit consent. Formulas
+                # stay blocking because their intended value is unknown.
+                errors.append({"cell": address, "message": str(error),
+                               "can_skip": not isinstance(value, Formula)})
         position = cells.get(pos_col) or ""
         department = cells.get(dep_col) or ""
         if isinstance(position, Formula) or len(str(position)) > 160:
@@ -194,4 +197,7 @@ def read_timesheet(content: bytes, year: int, month: int, sheet_name: str | None
     if not employees:
         raise ValueError("В столбце ФИО нет сотрудников. Выберите заполненный табель, а не пустой шаблон")
     return {"sheets": names, "sheet": selected.get("name"), "detected_period": detected,
-            "rows": employees, "errors": errors[:100], "error_count": len(errors), "needs_sheet": False}
+            "rows": employees, "errors": errors[:100], "error_count": len(errors),
+            "skippable_error_count": sum(bool(e.get("can_skip")) for e in errors),
+            "blocking_error_count": sum(not e.get("can_skip", False) for e in errors),
+            "needs_sheet": False}

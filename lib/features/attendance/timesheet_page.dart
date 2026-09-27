@@ -271,16 +271,59 @@ class _MonthReportPageState extends State<MonthReportPage> {
         : '$value';
   }
 
+  ({Color background, Color foreground, String label}) _dayAppearance(
+      dynamic entry) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final fact = entry?['fact'] as String? ?? 'none';
+    if (entry?['missing'] == true) {
+      return (background: dark ? const Color(0xFF6B2930) : const Color(0xFFFFDFE0),
+          foreground: dark ? Colors.white : const Color(0xFF651C24), label: 'Не заполнено');
+    }
+    switch (fact) {
+      case 'worked':
+        return (background: dark ? const Color(0xFF194B39) : const Color(0xFFD9F4E4),
+            foreground: dark ? Colors.white : const Color(0xFF12432D), label: 'Работа');
+      case 'vacationWorked':
+        return (background: dark ? const Color(0xFF35635D) : const Color(0xFFCFF2EA),
+            foreground: dark ? Colors.white : const Color(0xFF174B45), label: 'Работа в отпуске');
+      case 'businessTrip':
+        return (background: dark ? const Color(0xFF25466D) : const Color(0xFFDCEBFF),
+            foreground: dark ? Colors.white : const Color(0xFF173A63), label: 'Командировка');
+      case 'vacation':
+        return (background: dark ? const Color(0xFF655019) : const Color(0xFFFFEFC3),
+            foreground: dark ? Colors.white : const Color(0xFF60470B), label: 'Отпуск');
+      case 'sick':
+        return (background: dark ? const Color(0xFF513A68) : const Color(0xFFEEDFFF),
+            foreground: dark ? Colors.white : const Color(0xFF4C2869), label: 'Больничный');
+      case 'unpaid':
+        return (background: dark ? const Color(0xFF66422E) : const Color(0xFFFFE4D1),
+            foreground: dark ? Colors.white : const Color(0xFF683A21), label: 'Без содержания');
+      case 'absent':
+        return (background: dark ? const Color(0xFF6B2930) : const Color(0xFFFFDFE0),
+            foreground: dark ? Colors.white : const Color(0xFF651C24), label: 'Неявка');
+      default:
+        return (background: Theme.of(context).colorScheme.surfaceContainerHighest,
+            foreground: Theme.of(context).colorScheme.onSurface, label: entry?['planned'] == true ? 'По плану' : 'Выходной');
+    }
+  }
+
+  Widget _legendItem(String fact, String label, {bool missing = false}) {
+    final style = _dayAppearance({'fact': fact, 'missing': missing});
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(width: 13, height: 13,
+          decoration: BoxDecoration(color: style.background,
+              border: Border.all(color: Theme.of(context).colorScheme.outlineVariant))),
+      const SizedBox(width: 5),
+      Text(label, style: Theme.of(context).textTheme.bodySmall),
+    ]);
+  }
+
   Widget _dayCell(dynamic entry, int day) {
     final scheme = Theme.of(context).colorScheme;
-    final color = entry?['missing'] == true
-        ? scheme.errorContainer
-        : entry?['planned'] == false
-            ? scheme.surfaceContainerHighest
-            : scheme.surface;
+    final appearance = _dayAppearance(entry);
     return Tooltip(
         message:
-            '${day.toString().padLeft(2, '0')}.${_month.month.toString().padLeft(2, '0')}: ${_value(entry)}',
+            '${day.toString().padLeft(2, '0')}.${_month.month.toString().padLeft(2, '0')}: ${appearance.label}, ${_value(entry)}${entry?['closed'] == true ? ', день закрыт' : ''}',
         child: InkWell(
             onTap: entry == null
                 ? null
@@ -293,11 +336,12 @@ class _MonthReportPageState extends State<MonthReportPage> {
                 height: 42,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                    color: color,
+                    color: appearance.background,
                     border:
-                        Border.all(color: scheme.outlineVariant, width: 0.5)),
+                        Border.all(color: entry?['closed'] == true ? scheme.outline : scheme.outlineVariant, width: entry?['closed'] == true ? 1.2 : 0.5)),
                 child: Text(_value(entry),
-                    style: const TextStyle(fontSize: 12)))));
+                    style: TextStyle(fontSize: 12, color: appearance.foreground,
+                        fontWeight: FontWeight.w600)))));
   }
 
   Widget _grid() {
@@ -442,6 +486,21 @@ class _MonthReportPageState extends State<MonthReportPage> {
                             label:
                                 Text('Не заполнено: ${_sum('missing_days')}')),
                       ]),
+                    if (!_loading && _error == null && _rows.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Wrap(spacing: 14, runSpacing: 6, children: [
+                          _legendItem('worked', 'Работа'),
+                          _legendItem('businessTrip', 'Командировка'),
+                          _legendItem('vacation', 'Отпуск'),
+                          _legendItem('vacationWorked', 'Работа в отпуске'),
+                          _legendItem('sick', 'Больничный'),
+                          _legendItem('unpaid', 'Без содержания'),
+                          _legendItem('absent', 'Неявка'),
+                          _legendItem('none', 'Выходной'),
+                          _legendItem('none', 'Не заполнено', missing: true),
+                        ]),
+                      ),
                     const SizedBox(height: 8),
                   ])),
             ],

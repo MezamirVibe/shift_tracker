@@ -112,4 +112,61 @@ void main() {
     expect(find.text('Готовый табель'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('invalid cells require explicit skip before import is enabled',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var previews = 0;
+    fixture.responder = (method, uri, body) {
+      if (uri.path.endsWith('/imports/timesheet/preview')) {
+        previews++;
+        final skip = (body as Map)['ignore_invalid_cells'] == true;
+        return {
+          'sheets': ['Лист1'], 'sheet': 'Лист1', 'needs_sheet': false,
+          'detected_period': null, 'department': 'ОТК',
+          'errors': [{'cell': 'Y7', 'message': 'Неизвестная отметка', 'can_skip': true}],
+          'error_count': 1, 'skippable_error_count': 1,
+          'blocking_error_count': 0,
+          if (skip) 'preview_token': 'accepted-skip',
+          'rows': [{
+            'row': 2, 'full_name': 'Иванов Иван Иванович',
+            'source_department': 'ОТК', 'position': 'Контролёр',
+            'action': 'create', 'new_marks': 1, 'same_marks': 0,
+            'conflicts': 0, 'locked': 0, 'reason': null,
+          }],
+        };
+      }
+      return fixture.reply(method, uri, body);
+    };
+    final router = GoRouter(initialLocation: '/timesheet/import', routes: [
+      GoRoute(path: '/timesheet/import', builder: (_, __) =>
+          ImportTimesheetPage(pickFile: () async => XFile.fromData(
+            Uint8List.fromList([1, 2, 3]), name: 'old.xlsx'))),
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выбрать Excel'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Проверить файл'));
+    await tester.tap(find.text('Проверить файл'));
+    await tester.pumpAndSettle();
+    expect(previews, 1);
+    expect(find.widgetWithText(FilledButton, 'Импортировать (0)'), findsOneWidget);
+    await tester.ensureVisible(find.textContaining('Пропустить ошибочные ячейки'));
+    await tester.tap(find.textContaining('Пропустить ошибочные ячейки'));
+    await tester.pumpAndSettle();
+    expect(previews, 2);
+    expect(find.textContaining('Ошибочных ячеек будет пропущено: 1'), findsOneWidget);
+    await tester.ensureVisible(find.text('Выбрать показанных'));
+    await tester.tap(find.text('Выбрать показанных'));
+    await tester.pumpAndSettle();
+    final import = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Импортировать (1)'));
+    expect(import.onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
 }

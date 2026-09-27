@@ -33,6 +33,13 @@ Map<String, dynamic> report({int missing = 0, int open = 0}) => {
                               : i == 2
                                   ? 'б/с'
                                   : null,
+                      'fact': i == 0
+                          ? 'businessTrip'
+                          : i == 1
+                              ? 'vacationWorked'
+                              : i == 2
+                                  ? 'unpaid'
+                                  : 'none',
                       'planned': true,
                       'missing': false,
                     }),
@@ -115,6 +122,10 @@ void main() {
     expect(find.text('11к'), findsNWidgets(2));
     expect(find.text('о 11'), findsNWidgets(2));
     expect(find.text('б/с'), findsNWidgets(2));
+    expect(find.byTooltip('01.08: Командировка, 11к'), findsNWidgets(2));
+    expect(find.byTooltip('02.08: Работа в отпуске, о 11'), findsNWidgets(2));
+    expect(find.text('Выходной'), findsOneWidget);
+    expect(find.text('Не заполнено'), findsOneWidget);
     await tester.tap(find.text('Все доступные отделы'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Отдел А').last);

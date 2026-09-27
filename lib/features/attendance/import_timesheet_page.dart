@@ -28,6 +28,7 @@ class _ImportTimesheetPageState extends State<ImportTimesheetPage> {
   Map<String, dynamic>? _preview;
   final Set<int> _selected = {};
   bool _busy = true;
+  bool _skipInvalidCells = false;
   String? _error;
 
   @override
@@ -67,6 +68,7 @@ class _ImportTimesheetPageState extends State<ImportTimesheetPage> {
         'schedule_type': _schedule,
         'shift_hours': int.tryParse(_shift.text),
         'break_hours': int.tryParse(_break.text),
+        'ignore_invalid_cells': _skipInvalidCells,
       };
 
   Future<void> _pickFile() async {
@@ -91,6 +93,8 @@ class _ImportTimesheetPageState extends State<ImportTimesheetPage> {
         _data = data;
         _sheet = null;
         _preview = null;
+        _selected.clear();
+        _skipInvalidCells = false;
         _error = null;
       });
     } catch (e) {
@@ -146,7 +150,8 @@ class _ImportTimesheetPageState extends State<ImportTimesheetPage> {
               scrollable: true,
               title: const Text('Импортировать выбранные строки?'),
               content: Text(
-                  'Строк: ${_selected.length}. Отдел: ${_preview!['department']}. Период: ${_month.month.toString().padLeft(2, '0')}.${_month.year}.\n\nСуществующие и закрытые отметки сохранятся. Новые сотрудники появятся в активном списке. Архив не изменится.'),
+                  'Строк: ${_selected.length}. Отдел: ${_preview!['department']}. Период: ${_month.month.toString().padLeft(2, '0')}.${_month.year}.\n\nСуществующие и закрытые отметки сохранятся. Новые сотрудники появятся в активном списке.'
+                  '${_skipInvalidCells && (_preview!['skippable_error_count'] ?? 0) > 0 ? '\n\nБудут пропущены ошибочные ячейки: ${_preview!['skippable_error_count']}. Их часы НЕ попадут в приложение.' : ''}'),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(context, false),
@@ -193,6 +198,7 @@ class _ImportTimesheetPageState extends State<ImportTimesheetPage> {
         change();
         _preview = null;
         _selected.clear();
+        _skipInvalidCells = false;
       });
 
   @override
@@ -409,9 +415,25 @@ class _ImportTimesheetPageState extends State<ImportTimesheetPage> {
                                   child: Text(
                                       '${error['cell']}: ${error['message']}',
                                       style: TextStyle(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .error))),
+                                          color: _skipInvalidCells && error['can_skip'] == true
+                                              ? Theme.of(context).colorScheme.tertiary
+                                              : Theme.of(context).colorScheme.error))),
+                            if ((_preview?['skippable_error_count'] ?? 0) > 0 &&
+                                (_preview?['blocking_error_count'] ?? 0) == 0) ...[
+                              const SizedBox(height: 8),
+                              if (_skipInvalidCells)
+                                Text('Ошибочных ячеек будет пропущено: ${_preview!['skippable_error_count']}. Исправьте файл, если эти часы важны.',
+                                    style: TextStyle(color: Theme.of(context).colorScheme.tertiary))
+                              else
+                                OutlinedButton.icon(
+                                  onPressed: _busy ? null : () {
+                                    setState(() => _skipInvalidCells = true);
+                                    _check();
+                                  },
+                                  icon: const Icon(Icons.warning_amber_outlined),
+                                  label: Text('Пропустить ошибочные ячейки (${_preview!['skippable_error_count']}) и проверить снова'),
+                                ),
+                            ],
                             if (_preview?['detected_period'] != null &&
                                 (_preview!['detected_period']['year'] !=
                                         _month.year ||

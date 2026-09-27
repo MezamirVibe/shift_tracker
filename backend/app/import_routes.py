@@ -31,6 +31,7 @@ class ImportInput(BaseModel):
     schedule_type: ScheduleType = ScheduleType.fiveTwo
     shift_hours: int = Field(default=9, ge=1, le=24)
     break_hours: int = Field(default=1, ge=0, le=23)
+    ignore_invalid_cells: bool = False
 
 
 class ImportCommit(ImportInput):
@@ -120,6 +121,7 @@ def register_import_routes(app):
         if period and period != {"year": body.year, "month": body.month}:
             parsed["errors"].append({"cell": parsed["sheet"], "message": "Период в названии листа отличается от выбранного месяца"})
             parsed["error_count"] += 1
+            parsed["blocking_error_count"] += 1
         # Compare all import-relevant state at commit, including comments/locks.
         fingerprint = digest({"input": {**body.model_dump(exclude={"preview_token", "selected_rows"}), "sheet": parsed["sheet"]},
                               "rows": rows, "user": [str(user.id), user.token_version, user.role_id,
@@ -136,12 +138,16 @@ def register_import_routes(app):
         return {**parsed, "rows": [{k: v for k, v in row.items() if k not in {"marks", "write_marks"}}
                                   for row in parsed["rows"]]}
 
+    def can_import(parsed, body):
+        return parsed.get("error_count", 0) == 0 or (
+            body.ignore_invalid_cells and parsed.get("blocking_error_count", 0) == 0)
+
     @app.post("/api/v1/imports/timesheet/preview")
     async def preview(body: ImportInput, user: User = Depends(api.current_user),
                       session: AsyncSession = Depends(api.get_session)):
         parsed, fingerprint = await prepare(body, user, session)
         response = public_preview(parsed)
-        if fingerprint and not parsed["errors"]:
+        if fingerprint and can_import(parsed, body):
             now = datetime.now(timezone.utc)
             response["preview_token"] = jwt.encode({"sub": str(user.id), "type": "import-preview",
                 "aud": api.settings.ORGANIZATION_CODE, "iat": now, "exp": now + timedelta(minutes=15),
@@ -164,7 +170,7 @@ def register_import_routes(app):
         for day in range(1, monthrange(body.year, body.month)[1] + 1):
             await api.lock_attendance_day(session, date(body.year, body.month, day))
         parsed, fingerprint = await prepare(body, user, session)
-        if not fingerprint or parsed["errors"] or fingerprint != claims["fingerprint"]:
+        if not fingerprint or not can_import(parsed, body) or fingerprint != claims["fingerprint"]:
             raise HTTPException(409, "Данные изменились после проверки. Откройте предпросмотр заново")
         selected = set(body.selected_rows)
         rows = [r for r in parsed["rows"] if r["row"] in selected]
@@ -206,7 +212,8 @@ def register_import_routes(app):
                 written += 1
         await api.audit(session, actor=user, action="import_timesheet", entity_type="timesheet",
                         entity_id=f"{body.year}-{body.month:02d}", details={"created": created, "marks": written,
-                            "rows": len(rows), "source_sha256": hashlib.sha256(base64.b64decode(body.file_base64)).hexdigest()})
+                            "rows": len(rows), "skipped_cells": parsed.get("skippable_error_count", 0) if body.ignore_invalid_cells else 0,
+                            "source_sha256": hashlib.sha256(base64.b64decode(body.file_base64)).hexdigest()})
         await session.commit()
         return {"created_employees": created, "written_marks": written,
                 "preserved_marks": sum(r['conflicts'] + r['locked'] + r['same_marks'] for r in rows)}

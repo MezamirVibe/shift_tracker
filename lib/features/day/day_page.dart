@@ -1038,7 +1038,10 @@ class _DayPageState extends State<DayPage> {
       return;
     }
 
-    final ok = await showDialog<bool>(
+    // Closing a complete day is a single action. Ask for confirmation only
+    // when closing would turn still-empty marks into absences.
+    final hasUnfilled = _planned.any((e) => _factOf(e) == FactStatus.none);
+    final ok = !hasUnfilled ? true : await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         scrollable: true,
@@ -1651,6 +1654,8 @@ class _DayPageState extends State<DayPage> {
 
     final canEditNow = _canEditAttendance && !_closed;
     final isPhone = MediaQuery.sizeOf(context).width < 680;
+    final canChangeDay = _canEditAttendance && !_bulkSaving &&
+        _savingEmployeeIds.isEmpty;
 
     return AdaptiveScaffold(
       leading: IconButton(
@@ -1666,6 +1671,15 @@ class _DayPageState extends State<DayPage> {
       ),
       title: isPhone ? title : 'День: $title',
       selectedRoute: '/day/${widget.dateIso}',
+      floatingActionButton: isPhone && !_loading && _canEditAttendance
+          ? FloatingActionButton.extended(
+              onPressed: canChangeDay && (_closed || _planned.isNotEmpty)
+                  ? (_closed ? _reopenDay : _closeDay)
+                  : null,
+              icon: Icon(_closed ? Icons.lock_open : Icons.lock),
+              label: Text(_closed ? 'Переоткрыть день' : 'Закрыть день'),
+            )
+          : null,
       actions: [
         if (_canEditAttendance && !_loading)
           IconButton(
@@ -1688,7 +1702,7 @@ class _DayPageState extends State<DayPage> {
         ),
         if (!isPhone && !_loading && !_closed)
           FilledButton.icon(
-            onPressed: (canEditNow && _planned.isNotEmpty && !_bulkSaving)
+            onPressed: (canEditNow && _planned.isNotEmpty && canChangeDay)
                 ? _closeDay
                 : null,
             icon: const Icon(Icons.lock),
@@ -1700,7 +1714,7 @@ class _DayPageState extends State<DayPage> {
             child: Chip(label: Text('День закрыт')),
           ),
           OutlinedButton.icon(
-            onPressed: _canEditAttendance ? _reopenDay : null,
+            onPressed: canChangeDay ? _reopenDay : null,
             icon: const Icon(Icons.lock_open),
             label: const Text('Переоткрыть'),
           ),
@@ -1839,44 +1853,6 @@ class _DayPageState extends State<DayPage> {
                                   ),
                                 ],
                                 if (!isPhone || _mobileToolsExpanded) ...[
-                                  if (isPhone && _canEditAttendance) ...[
-                                    const SizedBox(height: 10),
-                                    Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: _closed
-                                          ? OutlinedButton.icon(
-                                              onPressed: _reopenDay,
-                                              icon: const Icon(
-                                                Icons.lock_open,
-                                                size: 18,
-                                              ),
-                                              label: const Text(
-                                                'Переоткрыть день',
-                                              ),
-                                              style: OutlinedButton.styleFrom(
-                                                visualDensity:
-                                                    VisualDensity.compact,
-                                              ),
-                                            )
-                                          : FilledButton.tonalIcon(
-                                              onPressed:
-                                                  canEditNow &&
-                                                      _planned.isNotEmpty &&
-                                                      !_bulkSaving
-                                                  ? _closeDay
-                                                  : null,
-                                              icon: const Icon(
-                                                Icons.lock,
-                                                size: 18,
-                                              ),
-                                              label: const Text('Закрыть день'),
-                                              style: FilledButton.styleFrom(
-                                                visualDensity:
-                                                    VisualDensity.compact,
-                                              ),
-                                            ),
-                                    ),
-                                  ],
                                   const Divider(height: 24),
                                   LayoutBuilder(
                                     builder: (context, constraints) {

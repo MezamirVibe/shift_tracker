@@ -258,7 +258,9 @@ class AppUpdateService extends ChangeNotifier {
         flush: true);
     final powershell =
         '${Platform.environment['SystemRoot'] ?? r'C:\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-    await Process.start(
+    // On Windows the detached launch can return a PID without ever starting
+    // the helper. A normal child continues after this app exits at READY.
+    final installer = await Process.start(
         powershell,
         [
           '-NoProfile',
@@ -286,13 +288,23 @@ class AppUpdateService extends ChangeNotifier {
           '-CommitPath',
           commit.path,
         ],
-        mode: ProcessStartMode.detached);
+        mode: ProcessStartMode.normal);
+    unawaited(installer.stdout.drain<void>());
+    final stderr = StringBuffer();
+    installer.stderr.transform(utf8.decoder).listen(stderr.write);
+    int? exitCode;
+    unawaited(installer.exitCode.then((code) => exitCode = code));
     final deadline = DateTime.now().add(const Duration(seconds: 90));
     while (DateTime.now().isBefore(deadline)) {
       if (await log.exists() &&
           (await log.readAsString()).contains(' ERROR ')) {
         throw FileSystemException(
             'Не удалось подготовить обновление. Приложение не изменено. Проверьте права на папку приложения. Журнал: ${log.path}');
+      }
+      if (exitCode != null) {
+        throw FileSystemException(
+            'Установщик завершился до подготовки обновления (код $exitCode). '
+            'Приложение не изменено. ${stderr.toString()} Журнал: ${log.path}');
       }
       if (await ready.exists() &&
           (await ready.readAsString()).trim() == 'READY') {

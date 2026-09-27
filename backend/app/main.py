@@ -182,7 +182,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Shift Tracker API",
-    version="1.8.0",
+    version="1.9.1",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,

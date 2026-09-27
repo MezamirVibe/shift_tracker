@@ -71,6 +71,24 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('close-day action stays visible on a narrow phone with keyboard',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 260);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.light(),
+      home: const DayPage(dateIso: '2026-08-03'),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FloatingActionButton, 'Закрыть день'),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('direct hours edit does not fabricate clock times',
       (tester) async {
     tester.view.physicalSize = const Size(1280, 800);

@@ -31,6 +31,16 @@ def mutate_xml(content, path, change):
     return result.getvalue()
 
 
+def with_invalid_day_cell(content):
+    def change(data):
+        root = ET.fromstring(data)
+        cell = root.find(f'.//{{{NS}}}c[@r="K2"]')
+        cell.set('t', 'inlineStr')
+        ET.SubElement(ET.SubElement(cell, f'{{{NS}}}is'), f'{{{NS}}}t').text = 'Y7'
+        return ET.tostring(root)
+    return mutate_xml(content, 'xl/worksheets/sheet1.xml', change)
+
+
 class ImportParserTests(unittest.TestCase):
     def test_all_marks(self):
         for text, fact, minutes in [('11к','businessTrip',660),('о 11','vacationWorked',660),
@@ -77,6 +87,13 @@ class ImportParserTests(unittest.TestCase):
             return ET.tostring(root)
         result = read_timesheet(mutate_xml(fixture_file(), 'xl/worksheets/sheet1.xml', duplicate), 2026, 8)
         self.assertGreater(result['error_count'], 0)
+
+    def test_invalid_day_cell_is_skippable_but_formula_is_not(self):
+        result = read_timesheet(with_invalid_day_cell(fixture_file()), 2026, 8)
+        self.assertEqual(result['error_count'], 1)
+        self.assertEqual(result['skippable_error_count'], 1)
+        self.assertEqual(result['blocking_error_count'], 0)
+        self.assertEqual(result['rows'][0]['marks'], [{'day': 1, 'fact': 'businessTrip', 'worked_minutes': 660}])
 
 
 class ImportApiTests(unittest.IsolatedAsyncioTestCase):
@@ -156,6 +173,22 @@ class ImportApiTests(unittest.IsolatedAsyncioTestCase):
         preview = await self.preview()
         self.assertNotIn('preview_token', preview)
         self.assertGreater(preview['error_count'], 0)
+
+    async def test_invalid_cells_need_explicit_skip_and_never_write(self):
+        self.body['file_base64'] = base64.b64encode(with_invalid_day_cell(fixture_file())).decode()
+        strict = await self.preview()
+        self.assertNotIn('preview_token', strict)
+        self.assertEqual(strict['skippable_error_count'], 1)
+        self.body['ignore_invalid_cells'] = True
+        accepted = await self.preview()
+        self.assertIn('preview_token', accepted)
+        result = await self.commit(accepted)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()['written_marks'], 1)
+        async with self.t.sessions() as session:
+            employee = await session.scalar(select(Employee).where(Employee.full_name == 'Новый Иван Иванович'))
+            marks = (await session.scalars(select(AttendanceRecord).where(AttendanceRecord.employee_id == employee.id))).all()
+            self.assertEqual([(m.day.day, m.worked_minutes) for m in marks], [(1, 660)])
 
     async def test_actor_and_auth_token_cannot_replace_preview(self):
         preview = await self.preview()
