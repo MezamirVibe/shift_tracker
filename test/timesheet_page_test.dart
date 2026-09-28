@@ -163,6 +163,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('window fits all 31 days and totals; smaller window exposes scroll',
+      (tester) async {
+    final service = FakeTimesheets();
+    await mount(tester, service, size: const Size(1256, 754));
+    final lastDay = find.byKey(const ValueKey('timesheet-header-day-31'));
+    final total = find.byKey(const ValueKey('timesheet-total-header'));
+    expect(tester.getRect(lastDay).right, lessThanOrEqualTo(1256));
+    expect(tester.getRect(total).right, lessThanOrEqualTo(1256));
+    expect(find.text('Конец месяца'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(1000, 754);
+    await tester.pumpAndSettle();
+    expect(find.text('Конец месяца'), findsOneWidget);
+    final scroll = tester.widget<SingleChildScrollView>(find.byKey(
+        const ValueKey('timesheet-horizontal-scroll')));
+    expect(scroll.controller!.position.maxScrollExtent, greaterThan(0));
+    final horizontalBar = find.byWidgetPredicate((widget) =>
+        widget is Scrollbar && widget.controller == scroll.controller);
+    expect(tester.widget<Scrollbar>(horizontalBar).thumbVisibility, isTrue);
+    await tester.tap(find.text('Конец месяца'));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(total).right, lessThanOrEqualTo(1000));
+    expect(scroll.controller!.offset,
+        closeTo(scroll.controller!.position.maxScrollExtent, 0.5));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(MaterialApp(theme: AppTheme.dark(),
+        home: MonthReportPage(year: 2026, month: 8, service: service)));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('server errors offer retry and recover', (tester) async {
     final service = FakeTimesheets()
       ..loadError = const ApiException(404, 'Not found');

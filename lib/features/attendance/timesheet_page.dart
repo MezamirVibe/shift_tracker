@@ -28,6 +28,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
   bool _loading = true;
   bool _saving = false;
   int _requestId = 0;
+  final _horizontalScroll = ScrollController();
   List<Map<String, dynamic>> get _allRows => (_report?['rows'] as List? ?? [])
       .map((row) => Map<String, dynamic>.from(row as Map))
       .toList();
@@ -41,6 +42,12 @@ class _MonthReportPageState extends State<MonthReportPage> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _horizontalScroll.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -318,7 +325,7 @@ class _MonthReportPageState extends State<MonthReportPage> {
     ]);
   }
 
-  Widget _dayCell(dynamic entry, int day) {
+  Widget _dayCell(dynamic entry, int day, {double width = 46}) {
     final scheme = Theme.of(context).colorScheme;
     final appearance = _dayAppearance(entry);
     return Tooltip(
@@ -332,39 +339,86 @@ class _MonthReportPageState extends State<MonthReportPage> {
                     if (mounted) await _load();
                   },
             child: Container(
-                width: 46,
+                width: width,
                 height: 42,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                     color: appearance.background,
                     border:
                         Border.all(color: entry?['closed'] == true ? scheme.outline : scheme.outlineVariant, width: entry?['closed'] == true ? 1.2 : 0.5)),
-                child: Text(_value(entry),
-                    style: TextStyle(fontSize: 12, color: appearance.foreground,
-                        fontWeight: FontWeight.w600)))));
+                child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(_value(entry),
+                            style: TextStyle(fontSize: width < 32 ? 11 : 12,
+                                color: appearance.foreground,
+                                fontWeight: FontWeight.w600)))))));
   }
 
   Widget _grid() {
     final rows = _rows;
     final days = (_report?['days_in_month'] as num?)?.toInt() ?? 31;
-    return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: 270 + days * 46 + 120,
-          child: Column(children: [
+    return LayoutBuilder(builder: (context, constraints) {
+      final employeeWidth = constraints.maxWidth >= 1300 ? 270.0 : 200.0;
+      const totalWidth = 80.0;
+      // Fit the complete month where marks can remain readable. Narrow windows
+      // keep a minimum cell width and expose explicit horizontal navigation.
+      final dayWidth = ((constraints.maxWidth - employeeWidth - totalWidth) / days)
+          .clamp(22.0, 46.0).toDouble();
+      final gridWidth = employeeWidth + days * dayWidth + totalWidth;
+      final overflows = gridWidth > constraints.maxWidth + 0.5;
+      void scrollTo(bool end) {
+        if (!_horizontalScroll.hasClients) return;
+        _horizontalScroll.animateTo(
+            end ? _horizontalScroll.position.maxScrollExtent : 0,
+            duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      }
+      return Column(children: [
+        if (overflows)
+          Row(children: [
+            IconButton(tooltip: 'К началу месяца',
+                onPressed: () => scrollTo(false),
+                icon: const Icon(Icons.first_page)),
+            Expanded(child: Text('Все $days дней — прокрутите вправо',
+                style: Theme.of(context).textTheme.bodySmall)),
+            TextButton.icon(onPressed: () => scrollTo(true),
+                icon: const Icon(Icons.last_page),
+                label: const Text('Конец месяца')),
+          ]),
+        Expanded(child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: Scrollbar(
+            controller: _horizontalScroll,
+            thumbVisibility: true,
+            trackVisibility: true,
+            thickness: 10,
+            notificationPredicate: (notification) =>
+                notification.metrics.axis == Axis.horizontal,
+            child: SingleChildScrollView(
+              key: const ValueKey('timesheet-horizontal-scroll'),
+              controller: _horizontalScroll,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(bottom: 20),
+              child: SizedBox(
+                width: gridWidth,
+                child: Column(children: [
             Container(
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: Row(children: [
-                  const SizedBox(
-                      width: 270,
+                  SizedBox(
+                      width: employeeWidth,
                       height: 40,
-                      child: Padding(
+                      child: const Padding(
                           padding: EdgeInsets.all(10),
                           child: Text('Сотрудник / отдел'))),
                   for (int d = 1; d <= days; d++)
-                    SizedBox(width: 46, child: Center(child: Text('$d'))),
+                    SizedBox(key: ValueKey('timesheet-header-day-$d'),
+                        width: dayWidth, child: Center(child: Text('$d',
+                            style: TextStyle(fontSize: dayWidth < 32 ? 11 : 14)))),
                   const SizedBox(
-                      width: 120, child: Center(child: Text('Часы'))),
+                      key: ValueKey('timesheet-total-header'),
+                      width: totalWidth, child: Center(child: Text('Часы'))),
                 ])),
             Expanded(
                 child: ListView.builder(
@@ -374,8 +428,8 @@ class _MonthReportPageState extends State<MonthReportPage> {
                       final entries = row['days'] as List;
                       return Row(children: [
                         SizedBox(
-                            width: 270,
-                            height: 60,
+                            width: employeeWidth,
+                            height: 72,
                             child: Padding(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 10, vertical: 5),
@@ -384,9 +438,9 @@ class _MonthReportPageState extends State<MonthReportPage> {
                                         CrossAxisAlignment.start,
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Text(row['full_name'] as String,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis),
+                                      Flexible(child: Text(row['full_name'] as String,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis)),
                                       Text(
                                           '${row['department']} · ${row['group']}',
                                           maxLines: 1,
@@ -396,16 +450,21 @@ class _MonthReportPageState extends State<MonthReportPage> {
                                               .bodySmall),
                                     ]))),
                         for (int d = 1; d <= days; d++)
-                          _dayCell(entries[d - 1], d),
+                          _dayCell(entries[d - 1], d, width: dayWidth),
                         SizedBox(
-                            width: 120,
+                            width: totalWidth,
                             child: Center(
                                 child: Text(formatWorkDuration(
                                     (row['total_minutes'] as num).toInt())))),
                       ]);
                     })),
-          ]),
-        ));
+                ]),
+              ),
+            ),
+          ),
+        )),
+      ]);
+    });
   }
 
   Widget _mobileList() => ListView(children: [
