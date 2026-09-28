@@ -1,0 +1,10 @@
+[Unit]
+Description=Process pending Chereda organization registrations
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

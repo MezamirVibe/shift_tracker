@@ -5,9 +5,11 @@ import 'package:go_router/go_router.dart';
 import '../../shared/widgets/adaptive_scaffold.dart';
 import '../auth/auth_models.dart';
 import '../auth/auth_service.dart';
+import '../preferences/preferences_service.dart';
 import '../structure/structure_storage.dart';
 import 'employee_editor_dialog.dart';
 import 'employees_storage.dart';
+import 'schedule_utils.dart';
 
 class EmployeesPage extends StatefulWidget {
   const EmployeesPage({super.key});
@@ -19,6 +21,7 @@ class EmployeesPage extends StatefulWidget {
 class _EmployeesPageState extends State<EmployeesPage> {
   final _storage = EmployeesStorage();
   final _structureStorage = StructureStorage();
+  final _preferences = PreferencesService.instance;
   final _searchCtrl = TextEditingController();
 
   bool _loading = true;
@@ -31,6 +34,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   String? _selectedDepartmentId;
   String? _selectedGroupId;
+  String? _selectedEmployeeId;
   String _search = '';
 
   bool get _canViewEmployees =>
@@ -55,7 +59,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         _search = _searchCtrl.text.trim().toLowerCase();
       });
     });
-    _loadAll();
+    _loadAll(force: true);
   }
 
   @override
@@ -80,27 +84,44 @@ class _EmployeesPageState extends State<EmployeesPage> {
     return null;
   }
 
-  Future<void> _loadAll() async {
+  Future<void> _loadAll({bool force = false}) async {
     if (mounted) {
       setState(() => _loading = true);
     }
 
-    final employees = await _storage.load();
-    final deps = await _structureStorage.loadDepartments();
-    final groups = await _structureStorage.loadGroups();
+    final results = await Future.wait([
+      _preferences.syncForCurrentUser(force: force),
+      _storage.load(force: force),
+      _structureStorage.loadDepartments(force: force),
+      _structureStorage.loadGroups(force: force),
+    ]);
+    final employees = results[1] as List<EmployeeModel>;
+    final deps = results[2] as List<DepartmentModel>;
+    final groups = results[3] as List<GroupModel>;
 
     deps.sort((a, b) => a.name.compareTo(b.name));
     groups.sort((a, b) => a.name.compareTo(b.name));
 
-    final visible = AuthService.instance.filterEmployeesByScope(employees);
+    final visible = AuthService.instance
+        .filterEmployeesByScope(employees)
+        .where((employee) => _preferences.isGroupVisible(employee.groupId))
+        .toList();
+    final visibleGroups =
+        groups.where((group) => _preferences.isGroupVisible(group.id)).toList();
 
     if (!mounted) return;
 
     setState(() {
-      _employeesAll = employees;
+      _employeesAll = visible;
       _employeesVisible = visible;
       _departments = deps;
-      _groups = groups;
+      _groups = visibleGroups;
+      final selectedStillVisible = visible.any(
+        (employee) => employee.id == _selectedEmployeeId,
+      );
+      if (!selectedStillVisible) {
+        _selectedEmployeeId = visible.isEmpty ? null : visible.first.id;
+      }
       _loading = false;
     });
 
@@ -176,7 +197,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
 
   List<dynamic> get _groupsForSelectedDepartment {
     final depId = _selectedDepartmentId;
-    if (depId == null) return const [];
+    if (depId == null) return _groups;
     return _groups.where((g) => g.departmentId == depId).toList();
   }
 
@@ -212,7 +233,8 @@ class _EmployeesPageState extends State<EmployeesPage> {
   }) async {
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
+        scrollable: true,
         title: const Text('Сотрудник и учётная запись созданы'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -236,15 +258,15 @@ class _EmployeesPageState extends State<EmployeesPage> {
             onPressed: () async {
               final text = 'Логин: $login\nПароль: $password\nРоль: $roleName';
               await Clipboard.setData(ClipboardData(text: text));
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
                 const SnackBar(content: Text('Данные для входа скопированы')),
               );
             },
             child: const Text('Скопировать'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Закрыть'),
           ),
         ],
@@ -277,9 +299,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
     final draft = await showDialog<EmployeeDraft>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const EmployeeEditorDialog(
-        showAccessFields: true,
-      ),
+      builder: (context) => const EmployeeEditorDialog(showAccessFields: true),
     );
 
     if (!mounted || draft == null) return;
@@ -295,6 +315,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
       scheduleStartDate: draft.scheduleStartDate,
       shiftHours: draft.shiftHours,
       breakHours: draft.breakHours,
+      customWorkdays: draft.customWorkdays,
       login: draft.login ?? '',
       roleId: draft.roleId ?? BuiltInRoleIds.worker,
     );
@@ -447,77 +468,83 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   spacing: 12,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    SizedBox(
-                      width: filterWidth,
-                      child: DropdownButtonFormField<String?>(
-                        initialValue: _selectedDepartmentId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Подразделение',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          const DropdownMenuItem<String?>(
-                            value: null,
-                            child: Text(
-                              'Все подразделения',
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                    if (!_filtersLockedByRole && _departments.length > 1)
+                      SizedBox(
+                        width: filterWidth,
+                        child: DropdownButtonFormField<String?>(
+                          itemHeight: null,
+                          initialValue: _selectedDepartmentId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Подразделение',
+                            border: OutlineInputBorder(),
                           ),
-                          ..._departments.map(
-                            (d) => DropdownMenuItem<String?>(
-                              value: d.id as String?,
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
                               child: Text(
-                                d.name as String,
+                                'Все подразделения',
                                 overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
                               ),
                             ),
-                          ),
-                        ],
-                        onChanged: _filtersLockedByRole
-                            ? null
-                            : (v) => setState(() {
-                                  _selectedDepartmentId = v;
-                                  _selectedGroupId = null;
-                                }),
-                      ),
-                    ),
-                    SizedBox(
-                      width: filterWidth,
-                      child: DropdownButtonFormField<String?>(
-                        initialValue: _selectedGroupId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Группа',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          const DropdownMenuItem<String?>(
-                            value: null,
-                            child: Text(
-                              'Все группы',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          ...groups.map(
-                            (g) => DropdownMenuItem<String?>(
-                              value: g.id as String?,
-                              child: Text(
-                                g.name as String,
-                                overflow: TextOverflow.ellipsis,
+                            ..._departments.map(
+                              (d) => DropdownMenuItem<String?>(
+                                value: d.id as String?,
+                                child: Text(
+                                  d.name as String,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                        onChanged: _filtersLockedByRole
-                            ? null
-                            : (_selectedDepartmentId == null)
-                                ? null
-                                : (v) => setState(() => _selectedGroupId = v),
+                          ],
+                          onChanged: _filtersLockedByRole
+                              ? null
+                              : (v) => setState(() {
+                                    _selectedDepartmentId = v;
+                                    _selectedGroupId = null;
+                                  }),
+                        ),
                       ),
-                    ),
+                    if (!_filtersLockedByRole && groups.length > 1)
+                      SizedBox(
+                        width: filterWidth,
+                        child: DropdownButtonFormField<String?>(
+                          itemHeight: null,
+                          initialValue: _selectedGroupId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Группа',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text(
+                                'Все группы',
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
+                            ),
+                            ...groups.map(
+                              (g) => DropdownMenuItem<String?>(
+                                value: g.id as String?,
+                                child: Text(
+                                  g.name as String,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                            ),
+                          ],
+                          onChanged: _filtersLockedByRole
+                              ? null
+                              : (v) => setState(() => _selectedGroupId = v),
+                        ),
+                      ),
                     FilledButton.tonalIcon(
-                      onPressed: _loadAll,
+                      onPressed: () => _loadAll(force: true),
                       icon: const Icon(Icons.refresh),
                       label: const Text('Обновить'),
                     ),
@@ -546,10 +573,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Сотрудники',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text('Сотрудники', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
               'Карточки сотрудников, структура, должности и доступ в приложение.',
@@ -565,6 +589,13 @@ class _EmployeesPageState extends State<EmployeesPage> {
                   label: const Text('Добавить сотрудника'),
                 ),
               ),
+            if (_canEditEmployees &&
+                AuthService.instance.hasPerm(AppPermission.editAttendance))
+              TextButton.icon(
+                onPressed: () => context.push('/timesheet/import'),
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Импортировать старый табель'),
+              ),
           ],
         ),
       ),
@@ -576,7 +607,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
         ? 'Нет данных из-за отсутствия привязки.\nПопросите настроить доступ в админке.'
         : (_employeesAll.isEmpty
             ? (_canAddEmployees
-                ? 'Список пока пуст.\nСоздай первого сотрудника.'
+                ? 'Список пока пуст.\nДобавьте сотрудника вручную или импортируйте старый табель.'
                 : 'Список сотрудников пока пуст.')
             : 'По текущим фильтрам и поиску сотрудников не найдено.');
 
@@ -650,10 +681,7 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 ],
               ),
               const SizedBox(height: 4),
-              Text(
-                e.position,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
+              Text(e.position, style: Theme.of(context).textTheme.bodyMedium),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -661,8 +689,6 @@ class _EmployeesPageState extends State<EmployeesPage> {
                 children: [
                   Chip(label: Text(dep)),
                   Chip(label: Text(grp)),
-                  Chip(label: Text('Оклад ${e.salary} ₽')),
-                  Chip(label: Text('Премия ${e.bonus} ₽')),
                   if (linkedUser != null)
                     Chip(label: Text('Логин: ${linkedUser.login}')),
                 ],
@@ -674,36 +700,199 @@ class _EmployeesPageState extends State<EmployeesPage> {
     );
   }
 
+  Future<void> _openEmployee(EmployeeModel employee, bool canEdit) async {
+    if (!canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Нет прав на редактирование сотрудников')),
+      );
+      return;
+    }
+    final result = await context.push<Map>('/employee/${employee.id}');
+    if (!mounted) return;
+    if (result != null) await _loadAll(force: true);
+  }
+
+  Widget _desktopList(List<EmployeeModel> employees, bool canEdit) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListView.separated(
+        itemCount: employees.length + 1,
+        separatorBuilder: (_, __) =>
+            Divider(height: 1, color: scheme.outlineVariant),
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: scheme.surfaceContainerHighest,
+              child: const _EmployeeTableRow(
+                name: 'Сотрудник',
+                position: 'Должность',
+                schedule: 'График',
+                department: 'Подразделение',
+                header: true,
+              ),
+            );
+          }
+          final employee = employees[index - 1];
+          final selected = employee.id == _selectedEmployeeId;
+          final schedule = scheduleTypeLabel(employee.scheduleType);
+          return Material(
+            color: selected
+                ? scheme.primaryContainer.withValues(alpha: 0.55)
+                : Colors.transparent,
+            child: InkWell(
+              onTap: () => setState(() => _selectedEmployeeId = employee.id),
+              onDoubleTap: () => _openEmployee(employee, canEdit),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 13,
+                ),
+                child: _EmployeeTableRow(
+                  name: employee.fullName,
+                  initials: _initials(employee.fullName),
+                  position: employee.position.isEmpty ? '—' : employee.position,
+                  schedule: schedule,
+                  department: _depName(employee.departmentId),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _employeePreview(bool canEdit) {
+    EmployeeModel? employee;
+    for (final item in _filteredEmployees) {
+      if (item.id == _selectedEmployeeId) employee = item;
+    }
+    if (employee == null) {
+      return const Card(child: Center(child: Text('Выберите сотрудника')));
+    }
+    final linked = AuthService.instance.userByEmployeeId(employee.id);
+    final schedule = scheduleTypeLabel(employee.scheduleType);
+    final worksToday = isWorkDay(
+      day: DateTime.now(),
+      type: employee.scheduleType,
+      startDate: employee.scheduleStartDate,
+      customWorkdays: employee.customWorkdays,
+    );
+    final statusColor = worksToday ? Colors.green : Colors.grey;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 32,
+                    child: Text(
+                      _initials(employee.fullName),
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          employee.fullName,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          employee.position.isEmpty
+                              ? 'Должность не указана'
+                              : employee.position,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Chip(
+                avatar: Icon(
+                  worksToday
+                      ? Icons.check_circle_outline
+                      : Icons.weekend_outlined,
+                  size: 18,
+                  color: statusColor,
+                ),
+                label: Text(
+                  worksToday ? 'Сегодня по графику' : 'Сегодня выходной',
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 10),
+              _DetailLine(
+                label: 'Подразделение',
+                value: _depName(employee.departmentId),
+              ),
+              _DetailLine(label: 'Группа', value: _groupName(employee.groupId)),
+              _DetailLine(label: 'Рабочий график', value: schedule),
+              _DetailLine(label: 'Смена', value: '${employee.shiftHours} ч'),
+              _DetailLine(label: 'Перерыв', value: '${employee.breakHours} ч'),
+              _DetailLine(label: 'Логин', value: linked?.login ?? 'Не создан'),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed:
+                      canEdit ? () => _openEmployee(employee!, canEdit) : null,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Редактировать'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _initials(String value) {
+    return value
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0].toUpperCase())
+        .join();
+  }
+
   @override
   Widget build(BuildContext context) {
     final canView = _canViewEmployees;
     final canEdit = _canEditEmployees;
     final list = _filteredEmployees;
     final isPhone = MediaQuery.of(context).size.shortestSide < 600;
+    final isDesktop = MediaQuery.sizeOf(context).width >= 1100;
 
     final u = AuthService.instance.currentUser;
     final currentRole =
         u == null ? null : AuthService.instance.roleById(u.roleId);
     final noBinding = u != null &&
         !_isSuperAdmin &&
-        _employeesVisible.isEmpty &&
-        currentRole != null;
+        currentRole != null &&
+        ((currentRole.scopeKind == ScopeKind.department &&
+                u.departmentId == null) ||
+            (currentRole.scopeKind == ScopeKind.group && u.groupId == null) ||
+            (currentRole.scopeKind == ScopeKind.self && u.employeeId == null));
+    final showBindingWarning =
+        noBinding && currentRole.scopeKind != ScopeKind.all;
 
     return AdaptiveScaffold(
       title: 'Сотрудники',
-      selectedIndex: 1,
-      items: [
-        NavItem(
-          label: 'Календарь',
-          icon: Icons.calendar_month,
-          onTap: () => context.go('/'),
-        ),
-        NavItem(
-          label: 'Сотрудники',
-          icon: Icons.people,
-          onTap: () => context.go('/employees'),
-        ),
-      ],
+      selectedRoute: '/employees',
       child: Padding(
         padding: EdgeInsets.all(isPhone ? 8 : 12),
         child: !canView
@@ -725,49 +914,200 @@ class _EmployeesPageState extends State<EmployeesPage> {
               )
             : _loading
                 ? const Center(child: CircularProgressIndicator())
-                : Column(
-                    children: [
-                      _heroCard(isPhone),
-                      const SizedBox(height: 12),
-                      _scopeHint(),
-                      if (noBinding &&
-                          currentRole?.scopeKind != ScopeKind.all) ...[
-                        const SizedBox(height: 12),
-                        const Card(
-                          margin: EdgeInsets.zero,
-                          child: Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Row(
-                              children: [
-                                Icon(Icons.warning_amber),
-                                SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    'Для вашей роли не настроена привязка (сотрудник, группа или подразделение). Из-за этого список сейчас пуст.',
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      _filtersCard(),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        child: list.isEmpty
-                            ? _emptyState(noBinding)
-                            : ListView.separated(
-                                itemCount: list.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(height: 10),
-                                itemBuilder: (context, index) {
-                                  return _employeeTile(list[index], canEdit);
-                                },
+                : _employeesAll.isEmpty
+                    ? SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _emptyState(noBinding),
+                            if (_canEditEmployees &&
+                                AuthService.instance.hasPerm(
+                                  AppPermission.editAttendance,
+                                ))
+                              TextButton.icon(
+                                onPressed: () =>
+                                    context.push('/timesheet/import'),
+                                icon: const Icon(Icons.upload_file),
+                                label:
+                                    const Text('Импортировать старый табель'),
                               ),
-                      ),
-                    ],
-                  ),
+                          ],
+                        ),
+                      )
+                    : isDesktop
+                        ? NestedScrollView(
+                            headerSliverBuilder:
+                                (context, innerBoxIsScrolled) => [
+                              SliverToBoxAdapter(
+                                child: Column(
+                                  children: [
+                                    _heroCard(false),
+                                    const SizedBox(height: 12),
+                                    _scopeHint(),
+                                    if (showBindingWarning) ...[
+                                      const SizedBox(height: 12),
+                                      const _MissingScopeWarning(),
+                                    ],
+                                    const SizedBox(height: 12),
+                                    _filtersCard(),
+                                    const SizedBox(height: 12),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            body: list.isEmpty
+                                ? _emptyState(noBinding)
+                                : Row(
+                                    children: [
+                                      Expanded(
+                                          flex: 7,
+                                          child: _desktopList(list, canEdit)),
+                                      const SizedBox(width: 12),
+                                      SizedBox(
+                                        width: 360,
+                                        child: _employeePreview(canEdit),
+                                      ),
+                                    ],
+                                  ),
+                          )
+                        : ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              _heroCard(isPhone),
+                              const SizedBox(height: 12),
+                              _scopeHint(),
+                              if (showBindingWarning) ...[
+                                const SizedBox(height: 12),
+                                const _MissingScopeWarning(),
+                              ],
+                              const SizedBox(height: 12),
+                              _filtersCard(),
+                              const SizedBox(height: 12),
+                              if (list.isEmpty)
+                                SizedBox(
+                                    height: 240, child: _emptyState(noBinding))
+                              else
+                                for (var index = 0;
+                                    index < list.length;
+                                    index++) ...[
+                                  _employeeTile(list[index], canEdit),
+                                  if (index != list.length - 1)
+                                    const SizedBox(height: 10),
+                                ],
+                              const SizedBox(height: 12),
+                            ],
+                          ),
+      ),
+    );
+  }
+}
+
+class _MissingScopeWarning extends StatelessWidget {
+  const _MissingScopeWarning();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Для вашей роли не настроена привязка (сотрудник, группа или подразделение). Из-за этого список сейчас пуст.',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmployeeTableRow extends StatelessWidget {
+  final String name;
+  final String? initials;
+  final String position;
+  final String schedule;
+  final String department;
+  final bool header;
+
+  const _EmployeeTableRow({
+    required this.name,
+    this.initials,
+    required this.position,
+    required this.schedule,
+    required this.department,
+    this.header = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = header
+        ? Theme.of(context).textTheme.labelLarge
+        : Theme.of(context).textTheme.bodyMedium;
+    return Row(
+      children: [
+        Expanded(
+          flex: 4,
+          child: Row(
+            children: [
+              if (!header) ...[
+                CircleAvatar(radius: 18, child: Text(initials ?? '')),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: style,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          flex: 3,
+          child: Text(position, overflow: TextOverflow.ellipsis, style: style),
+        ),
+        Expanded(flex: 2, child: Text(schedule, style: style)),
+        Expanded(
+          flex: 3,
+          child: Text(
+            department,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DetailLine extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _DetailLine({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(child: Text(value, textAlign: TextAlign.right)),
+        ],
       ),
     );
   }

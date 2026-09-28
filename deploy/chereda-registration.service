@@ -1,0 +1,15 @@
+[Unit]
+Description=Chereda organization self-registration worker
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/shift_tracker/deploy
+ExecStart=/usr/bin/python3 /opt/shift_tracker/deploy/registration_worker.py
+TimeoutStartSec=8min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+

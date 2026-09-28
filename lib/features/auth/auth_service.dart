@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import '../../core/api_client.dart';
 import '../../core/id.dart';
 import '../../shared/extensions/iterable_x.dart';
 import '../employees/employees_storage.dart';
+import '../notifications/notifications_service.dart';
 import 'auth_models.dart';
 import 'auth_storage.dart';
 
@@ -20,8 +22,26 @@ class LoginResult {
   const LoginResult.fail(String message) : this._(false, message);
 }
 
+class EmployeeAccountCredentials {
+  final String employeeId;
+  final String fullName;
+  final String login;
+  final String password;
+
+  const EmployeeAccountCredentials({
+    required this.employeeId,
+    required this.fullName,
+    required this.login,
+    required this.password,
+  });
+}
+
 class AuthService extends ChangeNotifier {
-  AuthService._();
+  AuthService._() {
+    ApiClient.instance.onSessionInvalidated = _handleSessionInvalidated;
+    ApiClient.instance.onSessionClearing =
+        NotificationsService.instance.clearSession;
+  }
   static final AuthService instance = AuthService._();
 
   final AuthStorage _storage = AuthStorage();
@@ -44,44 +64,159 @@ class AuthService extends ChangeNotifier {
   bool _serverHasUsers = true;
   bool get hasUsers => _serverHasUsers;
 
+  void _handleSessionInvalidated() {
+    if (_currentUser == null) return;
+    _currentUser = null;
+    _users = const [];
+    _roles = const [];
+    notifyListeners();
+  }
+
   Future<void> init() async {
     final api = ApiClient.instance;
-    try {
-      _serverHasUsers = !await api.bootstrapRequired();
-      final restored = await api.restoreSession();
-      if (restored != null) {
-        _currentUser = UserAccount.fromApiJson(restored);
-        await _reloadServerState();
+    await api.restoreOrganization();
+    if (api.organization == null) {
+      _initialized = true;
+      notifyListeners();
+      return;
+    }
+    final restored = await api.restoreSession();
+    final cached = await Future.wait([
+      _storage.loadUsers(),
+      _storage.loadRoles(),
+    ]);
+    _users = cached[0] as List<UserAccount>;
+    _roles = cached[1] as List<AppRole>;
+
+    final startup = await Future.wait([
+      api.bootstrapRequired().then<Object?>((required) => required).catchError(
+            (_) => null,
+          ),
+    ]);
+    final bootstrapRequired = startup[0] as bool?;
+    if (bootstrapRequired != null) {
+      _serverHasUsers = !bootstrapRequired;
+    }
+    if (restored != null) {
+      _currentUser = UserAccount.fromApiJson(restored);
+      if (_users.every((user) => user.id != _currentUser!.id)) {
+        _users = [..._users, _currentUser!];
       }
-    } catch (_) {
-      _currentUser = null;
-      _users = const [];
-      _roles = const [];
     }
 
     _initialized = true;
     notifyListeners();
+    if (_currentUser != null) {
+      unawaited(_reloadServerStateInBackground());
+    }
+  }
+
+  Future<void> _reloadServerStateInBackground() async {
+    try {
+      await _reloadServerState();
+      notifyListeners();
+    } catch (_) {
+      // Кешированных данных достаточно для работы до восстановления сети.
+    }
+  }
+
+  Future<void> refreshServerState() async {
+    await _reloadServerState();
+    notifyListeners();
+  }
+
+  Future<EmployeeAccountCredentials?> createAccountForEmployee({
+    required EmployeeModel employee,
+    required String login,
+    String? password,
+    bool publishLocalChange = true,
+  }) async {
+    if (!hasPerm(AppPermission.manageUsers) && !isCurrentUserSuperAdmin) {
+      return null;
+    }
+    if (_users.any((user) => user.employeeId == employee.id)) return null;
+
+    final normalizedLogin = login.trim().toLowerCase();
+    if (normalizedLogin.length < 3 ||
+        _users.any((user) => user.login.toLowerCase() == normalizedLogin)) {
+      return null;
+    }
+
+    final parts = employee.fullName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    final lastName = parts.isNotEmpty ? parts.first : 'Сотрудник';
+    final firstName = parts.length > 1 ? parts[1] : 'Пользователь';
+    final middleName = parts.length > 2 ? parts.sublist(2).join(' ') : '';
+    final generatedPassword = password ?? generateReadablePassword();
+
+    try {
+      final data = await ApiClient.instance.request(
+        'POST',
+        '/api/v1/users',
+        body: {
+          'login': normalizedLogin,
+          'password': generatedPassword,
+          'role_id': BuiltInRoleIds.worker,
+          'last_name': lastName,
+          'first_name': firstName,
+          'middle_name': middleName,
+          'department_id': null,
+          'group_id': null,
+          'employee_id': employee.id,
+        },
+      ) as Map<String, dynamic>;
+      final user = UserAccount.fromApiJson(data);
+      _users = [..._users, user];
+      if (publishLocalChange) {
+        await _storage.saveUsers(_users);
+        notifyListeners();
+      }
+      return EmployeeAccountCredentials(
+        employeeId: employee.id,
+        fullName: employee.fullName,
+        login: normalizedLogin,
+        password: generatedPassword,
+      );
+    } on ApiException {
+      return null;
+    }
   }
 
   Future<void> _reloadServerState() async {
     final api = ApiClient.instance;
-    final roleData = await api.request('GET', '/api/v1/roles') as List;
+    final epoch = api.sessionEpoch;
+    final roleFuture = api.request('GET', '/api/v1/roles');
+    final userFuture = () async {
+      try {
+        return await api.request('GET', '/api/v1/users') as List;
+      } on ApiException catch (error) {
+        if (error.statusCode != 403) rethrow;
+        return _currentUser == null ? <dynamic>[] : [_currentUser!.toJson()];
+      }
+    }();
+    final results = await Future.wait([roleFuture, userFuture]);
+    if (epoch != api.sessionEpoch) return;
+    final roleData = results[0] as List;
+    final userData = results[1] as List;
+
     _roles = roleData
         .whereType<Map>()
         .map((item) => AppRole.fromApiJson(Map<String, dynamic>.from(item)))
         .toList();
+    _users = userData.whereType<Map>().map((item) {
+      final json = Map<String, dynamic>.from(item);
+      return json.containsKey('last_name')
+          ? UserAccount.fromApiJson(json)
+          : UserAccount.fromJson(json);
+    }).toList();
 
-    try {
-      final userData = await api.request('GET', '/api/v1/users') as List;
-      _users = userData
-          .whereType<Map>()
-          .map((item) =>
-              UserAccount.fromApiJson(Map<String, dynamic>.from(item)))
-          .toList();
-    } on ApiException catch (error) {
-      if (error.statusCode != 403) rethrow;
-      _users = _currentUser == null ? const [] : [_currentUser!];
-    }
+    await Future.wait([
+      _storage.saveRoles(_roles),
+      _storage.saveUsers(_users),
+    ]);
   }
 
   AppRole? roleById(String? id) {
@@ -98,19 +233,11 @@ class AuthService extends ChangeNotifier {
   }
 
   bool isSuperAdminRoleId(String? roleId) {
-    final role = roleById(roleId);
-    if (role == null) return false;
-    return role.scopeKind == ScopeKind.all &&
-        role.permissions.isEmpty &&
-        role.name.trim().toLowerCase() == 'суперадмин';
+    return roleId == BuiltInRoleIds.superAdmin;
   }
 
   bool get isCurrentUserSuperAdmin {
-    final u = _currentUser;
-    if (u == null) return false;
-    final role = roleById(u.roleId);
-    if (role == null) return false;
-    return role.name.trim().toLowerCase() == 'суперадмин';
+    return isSuperAdminRoleId(_currentUser?.roleId);
   }
 
   bool hasPerm(AppPermission p) {
@@ -120,7 +247,7 @@ class AuthService extends ChangeNotifier {
     final role = roleById(u.roleId);
     if (role == null) return false;
 
-    if (role.name.trim().toLowerCase() == 'суперадмин') return true;
+    if (isSuperAdminRoleId(u.roleId)) return true;
     return role.permissions.contains(p);
   }
 
@@ -131,8 +258,7 @@ class AuthService extends ChangeNotifier {
     final role = roleById(u.roleId);
     if (role == null) return const [];
 
-    if (role.name.trim().toLowerCase() == 'суперадмин' ||
-        role.scopeKind == ScopeKind.all) {
+    if (isSuperAdminRoleId(u.roleId) || role.scopeKind == ScopeKind.all) {
       return employees;
     }
 
@@ -165,8 +291,7 @@ class AuthService extends ChangeNotifier {
     final role = roleById(roleId);
     if (role == null) return 'Роль не найдена.';
 
-    if (role.name.trim().toLowerCase() == 'суперадмин' ||
-        role.scopeKind == ScopeKind.all) {
+    if (isSuperAdminRoleId(roleId) || role.scopeKind == ScopeKind.all) {
       return 'Эта роль видит всё, привязка не требуется.';
     }
 
@@ -182,13 +307,28 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<LoginResult> loginDetailed(String login, String password) async {
+  Future<LoginResult> loginDetailed(
+    String login,
+    String password, {
+    bool rememberSession = true,
+  }) async {
     try {
-      final data = await ApiClient.instance.login(login, password);
+      final data = await ApiClient.instance.login(
+        login,
+        password,
+        rememberSession: rememberSession,
+      );
       _currentUser = UserAccount.fromApiJson(data);
+      _roles = [
+        AppRole.fromApiJson(Map<String, dynamic>.from(data['role'] as Map))
+      ];
+      _users = [_currentUser!];
       _serverHasUsers = true;
-      await _reloadServerState();
+      if (_users.every((user) => user.id != _currentUser!.id)) {
+        _users = [..._users, _currentUser!];
+      }
       notifyListeners();
+      unawaited(_reloadServerStateInBackground());
       return const LoginResult.success();
     } on ApiException catch (error) {
       return LoginResult.fail(error.message);
@@ -205,10 +345,32 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await NotificationsService.instance.disconnect();
     await ApiClient.instance.logout();
     _currentUser = null;
     _users = const [];
     _roles = const [];
+    notifyListeners();
+  }
+
+  Future<void> changeOrganization() async {
+    await NotificationsService.instance.disconnect();
+    await ApiClient.instance.forgetOrganization();
+    _currentUser = null;
+    _users = const [];
+    _roles = const [];
+    _serverHasUsers = true;
+    notifyListeners();
+  }
+
+  Future<void> selectOrganization(String code) async {
+    await ApiClient.instance.selectOrganization(code);
+    _currentUser = null;
+    _users = const [];
+    _roles = const [];
+    // First administrators are provisioned by the platform operator, never
+    // by an unauthenticated mobile client that merely knows the public code.
+    _serverHasUsers = true;
     notifyListeners();
   }
 
@@ -267,7 +429,9 @@ class AuthService extends ChangeNotifier {
     DateTime? employeeScheduleStartDate,
     int employeeShiftHours = 12,
     int employeeBreakHours = 1,
+    List<int> employeeCustomWorkdays = const [1, 2, 3, 4, 5],
   }) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     if (!hasPerm(AppPermission.manageUsers) && !isCurrentUserSuperAdmin) {
       return false;
     }
@@ -325,8 +489,6 @@ class AuthService extends ChangeNotifier {
             return false;
           }
 
-          final employees = await _employeesStorage.load();
-
           final newEmployee = EmployeeModel(
             id: newUuidV4(),
             fullName: [
@@ -345,9 +507,10 @@ class AuthService extends ChangeNotifier {
             scheduleStartDate: employeeScheduleStartDate ?? DateTime.now(),
             shiftHours: employeeShiftHours,
             breakHours: employeeBreakHours,
+            customWorkdays: employeeCustomWorkdays,
           );
 
-          await _employeesStorage.save([...employees, newEmployee]);
+          await _employeesStorage.create(newEmployee);
           emp = newEmployee.id;
         } else {
           if (emp == null || emp.isEmpty) return false;
@@ -356,6 +519,7 @@ class AuthService extends ChangeNotifier {
     }
 
     try {
+      ApiClient.instance.checkSessionEpoch(epoch);
       await ApiClient.instance.request(
         'POST',
         '/api/v1/users',
@@ -377,32 +541,6 @@ class AuthService extends ChangeNotifier {
     } on ApiException {
       return false;
     }
-
-    // Legacy local-storage fallback kept for data migration builds.
-    // ignore: dead_code
-    final p = _storage.createPasswordHash(password);
-
-    final user = UserAccount(
-      id: newUuidV4(),
-      login: normalizedLogin,
-      roleId: role.id,
-      lastName: normalizedLastName,
-      firstName: normalizedFirstName,
-      middleName: normalizedMiddleName,
-      saltB64: p.saltB64,
-      hashB64: p.hashB64,
-      iterations: p.iterations,
-      departmentId: dep,
-      groupId: grp,
-      employeeId: linkedEmployeeId ?? emp,
-      failedLoginAttempts: 0,
-      lockUntilIso: null,
-    );
-
-    _users = [..._users, user];
-    await _storage.saveUsers(_users);
-    notifyListeners();
-    return true;
   }
 
   Future<({EmployeeModel employee, UserAccount user, String password})?>
@@ -417,9 +555,11 @@ class AuthService extends ChangeNotifier {
     required DateTime scheduleStartDate,
     required int shiftHours,
     required int breakHours,
+    required List<int> customWorkdays,
     required String login,
     required String roleId,
   }) async {
+    final epoch = ApiClient.instance.sessionEpoch;
     if (!hasPerm(AppPermission.editEmployees) &&
         !hasPerm(AppPermission.manageUsers) &&
         !isCurrentUserSuperAdmin) {
@@ -443,8 +583,6 @@ class AuthService extends ChangeNotifier {
     final middleName =
         nameParts.length > 2 ? nameParts.sublist(2).join(' ') : '';
 
-    final employees = await _employeesStorage.load();
-
     final employee = EmployeeModel(
       id: newUuidV4(),
       fullName: fullName.trim(),
@@ -457,9 +595,10 @@ class AuthService extends ChangeNotifier {
       scheduleStartDate: scheduleStartDate,
       shiftHours: shiftHours,
       breakHours: breakHours,
+      customWorkdays: customWorkdays,
     );
 
-    await _employeesStorage.save([...employees, employee]);
+    await _employeesStorage.create(employee);
 
     String? boundDepartmentId;
     String? boundGroupId;
@@ -491,6 +630,7 @@ class AuthService extends ChangeNotifier {
 
     final password = generateReadablePassword();
     try {
+      ApiClient.instance.checkSessionEpoch(epoch);
       final data = await ApiClient.instance.request(
         'POST',
         '/api/v1/users',
@@ -513,32 +653,6 @@ class AuthService extends ChangeNotifier {
     } on ApiException {
       return null;
     }
-
-    // ignore: dead_code
-    final p = _storage.createPasswordHash(password);
-
-    final user = UserAccount(
-      id: newUuidV4(),
-      login: normalizedLogin,
-      roleId: role.id,
-      lastName: lastName,
-      firstName: firstName,
-      middleName: middleName,
-      saltB64: p.saltB64,
-      hashB64: p.hashB64,
-      iterations: p.iterations,
-      departmentId: boundDepartmentId,
-      groupId: boundGroupId,
-      employeeId: employee.id,
-      failedLoginAttempts: 0,
-      lockUntilIso: null,
-    );
-
-    _users = [..._users, user];
-    await _storage.saveUsers(_users);
-    notifyListeners();
-
-    return (employee: employee, user: user, password: password);
   }
 
   Future<String?> resetPassword(String userId) async {
@@ -561,28 +675,6 @@ class AuthService extends ChangeNotifier {
     } on ApiException {
       return null;
     }
-
-    // ignore: dead_code
-    final newPassword = generateReadablePassword();
-    final p = _storage.createPasswordHash(newPassword);
-
-    final updated = target.copyWith(
-      saltB64: p.saltB64,
-      hashB64: p.hashB64,
-      iterations: p.iterations,
-      failedLoginAttempts: 0,
-      clearLockUntil: true,
-    );
-
-    _replaceUser(updated);
-    await _storage.saveUsers(_users);
-
-    if (_currentUser?.id == updated.id) {
-      _currentUser = updated;
-    }
-
-    notifyListeners();
-    return newPassword;
   }
 
   Future<bool> updateUserAccess({
@@ -855,71 +947,6 @@ class AuthService extends ChangeNotifier {
     return true;
   }
 
-  List<AppRole> _buildDefaultRoles() {
-    return [
-      const AppRole(
-        id: 'super_admin',
-        name: 'Суперадмин',
-        scopeKind: ScopeKind.all,
-        permissions: <AppPermission>{},
-      ),
-      const AppRole(
-        id: 'manager',
-        name: 'Руководитель',
-        scopeKind: ScopeKind.department,
-        permissions: <AppPermission>{
-          AppPermission.viewCalendar,
-          AppPermission.viewEmployees,
-          AppPermission.viewAttendance,
-          AppPermission.editAttendance,
-          AppPermission.editEmployees,
-          AppPermission.manageUsers,
-          AppPermission.editRolePolicies,
-        },
-      ),
-      const AppRole(
-        id: 'master',
-        name: 'Мастер',
-        scopeKind: ScopeKind.group,
-        permissions: <AppPermission>{
-          AppPermission.viewCalendar,
-          AppPermission.viewEmployees,
-          AppPermission.viewAttendance,
-          AppPermission.editAttendance,
-        },
-      ),
-      const AppRole(
-        id: 'worker',
-        name: 'Рабочий',
-        scopeKind: ScopeKind.self,
-        permissions: <AppPermission>{
-          AppPermission.viewCalendar,
-          AppPermission.viewEmployees,
-          AppPermission.viewAttendance,
-        },
-      ),
-    ];
-  }
-
-  List<AppRole> _buildRolesFromLegacyPolicies(List<RolePolicy> legacyPolicies) {
-    final defaults = _buildDefaultRoles();
-    final byId = <String, AppRole>{
-      for (final r in defaults) r.id: r,
-    };
-
-    for (final policy in legacyPolicies) {
-      final roleId = roleIdFromLegacyRole(policy.role);
-      final existing = byId[roleId];
-      if (existing == null) continue;
-
-      byId[roleId] = existing.copyWith(
-        permissions: policy.permissions,
-      );
-    }
-
-    return byId.values.toList();
-  }
-
   String _generateUniqueRoleId(String raw) {
     final base = _slugifyRoleName(raw);
     if (base.isEmpty) {
@@ -1017,7 +1044,16 @@ class AuthService extends ChangeNotifier {
     return b.toString();
   }
 
-  void _replaceUser(UserAccount updated) {
-    _users = _users.map((u) => u.id == updated.id ? updated : u).toList();
+  String generateReadableLoginCode() {
+    const consonants = 'bcdfghjklmnprstvz';
+    const vowels = 'aeiou';
+    final code = StringBuffer();
+    for (var index = 0; index < 2; index++) {
+      code.write(consonants[_random.nextInt(consonants.length)]);
+      code.write(vowels[_random.nextInt(vowels.length)]);
+    }
+    code.write(_random.nextInt(10));
+    code.write(_random.nextInt(10));
+    return code.toString();
   }
 }

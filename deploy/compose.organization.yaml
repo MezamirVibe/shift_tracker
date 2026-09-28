@@ -1,0 +1,84 @@
+# One isolated deployment per organization, sharing only the HTTPS gateway.
+# docker compose -p chereda-CODE --env-file organizations/CODE.env -f compose.organization.yaml up -d
+services:
+  db:
+    image: postgres:17-alpine
+    mem_limit: 256m
+    pids_limit: 200
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  api:
+    image: ${CHEREDA_API_IMAGE:-deploy-api:latest}
+    mem_limit: 384m
+    pids_limit: 200
+    build:
+      context: ../backend
+    restart: unless-stopped
+    env_file:
+      - path: ./.env.push
+        required: false
+    volumes:
+      - ./secrets/fcm:/run/chereda-fcm:ro
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET:?required}
+      BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?required}
+      ORGANIZATION_CODE: ${ORGANIZATION_CODE:?required}
+      ORGANIZATION_NAME: ${ORGANIZATION_NAME:?required}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
+      REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-30}
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      internal:
+      gateway:
+        aliases: ["org-${ORGANIZATION_CODE}-api"]
+
+  backup:
+    image: postgres:17-alpine
+    mem_limit: 128m
+    pids_limit: 100
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./backup.sh:/usr/local/bin/backup.sh:ro
+      - ./verify-backup.sh:/usr/local/bin/verify-backup.sh:ro
+      - ./backups/${ORGANIZATION_CODE}:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do /bin/sh /usr/local/bin/backup.sh; sleep 86400; done"]
+    depends_on:
+      db: {condition: service_healthy}
+    networks: [internal]
+
+networks:
+  internal:
+  gateway:
+    external: true
+    name: chereda_gateway
+
+volumes:
+  postgres_data:

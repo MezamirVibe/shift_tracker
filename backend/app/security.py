@@ -31,6 +31,7 @@ def create_access_token(user_id: uuid.UUID, token_version: int) -> str:
         "sub": str(user_id),
         "ver": token_version,
         "type": "access",
+        "aud": settings.ORGANIZATION_CODE,
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_MINUTES),
     }
@@ -38,7 +39,9 @@ def create_access_token(user_id: uuid.UUID, token_version: int) -> str:
 
 
 def decode_access_token(token: str) -> dict:
-    return jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+    return jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"],
+                      audience=settings.ORGANIZATION_CODE,
+                      options={"require": ["aud", "sub", "ver", "type", "iat", "exp"]})
 
 
 def new_refresh_token() -> tuple[uuid.UUID, str, str, datetime]:
