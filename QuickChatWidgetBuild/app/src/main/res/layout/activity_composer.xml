@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Что нужно сделать?"
+        android:textStyle="bold"
+        android:textSize="22sp" />
+
+    <EditText
+        android:id="@+id/input_text"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:layout_marginTop="12dp"
+        android:gravity="top|start"
+        android:hint="Например: завтра в 10 напомни скинуть фотографии инспектору"
+        android:inputType="textCapSentences|textMultiLine"
+        android:padding="12dp"
+        android:textSize="17sp" />
+
+    <Button
+        android:id="@+id/btn_mic"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="🎤  Продиктовать"
+        android:textAllCaps="false" />
+
+    <Button
+        android:id="@+id/btn_open_chat"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Скопировать и открыть чат"
+        android:textAllCaps="false" />
+
+    <TextView
+        android:id="@+id/target_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:alpha="0.7"
+        android:textSize="13sp" />
+
+    <Button
+        android:id="@+id/btn_settings"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:layout_marginTop="4dp"
+        android:text="Настроить чат"
+        android:textAllCaps="false" />
+</LinearLayout>
