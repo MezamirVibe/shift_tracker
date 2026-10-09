@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Быстрая запись</string>
+    <string name="widget_description">Быстро открыть форму записи задачи для ChatGPT</string>
+</resources>
